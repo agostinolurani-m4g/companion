@@ -7,7 +7,9 @@ import type { Feature, LineString } from "geojson";
 import type { MapPoiRow, StopRow } from "@/lib/types";
 import { MAP_POI_CATEGORY_COLOR, mapPoiCategoryLabel } from "@/lib/map-poi-ui";
 import { buildWindyEmbed2Url, buildWindyMainSiteUrl } from "@/lib/windy-embed";
+import { nearestPointOnPolyline } from "@/lib/track-geometry";
 import { usePlanner } from "@/context/PlannerProvider";
+import type { Position } from "geojson";
 
 const ACTIVITY_COLORS: Record<string, string> = {
   road_bike: "#2563eb",
@@ -35,6 +37,13 @@ type Props = {
   allowStopDrag?: boolean;
   /** Cambio itinerario: ricalcola il fit mappa (stessi numeri di tappe ma bbox diversa). */
   itineraryId?: string | null;
+  /** Se impostato, mostra solo queste tappe (percorso parziale). */
+  visibleStopIds?: Set<string> | null;
+  /** Traccia completa per cursore → km in altimetria (anche se la linea è tagliata). */
+  fullLineCoords?: Position[] | null;
+  onTrackHoverKm?: (km: number | null) => void;
+  flyToRequest?: { lng: number; lat: number; zoom?: number } | null;
+  onFlyToRequestConsumed?: () => void;
   onRemoveMapPoi?: (id: string) => void;
   className?: string;
 };
@@ -53,6 +62,11 @@ export function MapView({
   onStopDragEnd,
   allowStopDrag = true,
   itineraryId = null,
+  visibleStopIds = null,
+  fullLineCoords = null,
+  onTrackHoverKm,
+  flyToRequest = null,
+  onFlyToRequestConsumed,
   onRemoveMapPoi,
   className,
 }: Props) {
@@ -62,8 +76,18 @@ export function MapView({
   clickRef.current = onMapBackgroundClick;
   const mapPoisRef = useRef(mapPois);
   mapPoisRef.current = mapPois;
-  const stopsRef = useRef(stops);
-  stopsRef.current = stops;
+  const stopsForMap =
+    visibleStopIds != null
+      ? stops.filter((s) => visibleStopIds.has(s.id))
+      : stops;
+  const stopsRef = useRef(stopsForMap);
+  stopsRef.current = stopsForMap;
+  const onTrackHoverRef = useRef(onTrackHoverKm);
+  onTrackHoverRef.current = onTrackHoverKm;
+  const fullLineCoordsRef = useRef(fullLineCoords);
+  fullLineCoordsRef.current = fullLineCoords;
+  const flyConsumedRef = useRef(onFlyToRequestConsumed);
+  flyConsumedRef.current = onFlyToRequestConsumed;
   const onStopSelectRef = useRef(onStopSelect);
   onStopSelectRef.current = onStopSelect;
   const onStopDragEndRef = useRef(onStopDragEnd);
@@ -194,6 +218,43 @@ export function MapView({
   }, [windyOverlay]);
 
   useEffect(() => {
+    if (!mapReady || !flyToRequest || !mapRef.current) return;
+    mapRef.current.flyTo({
+      center: [flyToRequest.lng, flyToRequest.lat],
+      zoom: flyToRequest.zoom ?? 13,
+      duration: 800,
+    });
+    flyConsumedRef.current?.();
+  }, [mapReady, flyToRequest]);
+
+  useEffect(() => {
+    if (!mapReady) return;
+    const map = mapRef.current;
+    if (!map) return;
+    const onMove = (e: maplibregl.MapMouseEvent) => {
+      if (dragSessionRef.current) return;
+      const coords = fullLineCoordsRef.current;
+      const cb = onTrackHoverRef.current;
+      if (!coords?.length || !cb) {
+        cb?.(null);
+        return;
+      }
+      const n = nearestPointOnPolyline(coords, [e.lngLat.lng, e.lngLat.lat]);
+      if (n && n.distKm < 0.08) cb(n.alongKm);
+      else cb(null);
+    };
+    const onLeave = () => {
+      onTrackHoverRef.current?.(null);
+    };
+    map.on("mousemove", onMove);
+    map.getCanvas().addEventListener("mouseleave", onLeave);
+    return () => {
+      map.off("mousemove", onMove);
+      map.getCanvas().removeEventListener("mouseleave", onLeave);
+    };
+  }, [mapReady]);
+
+  useEffect(() => {
     if (!mapReady) return;
     const map = mapRef.current;
     if (!map?.isStyleLoaded()) return;
@@ -270,7 +331,7 @@ export function MapView({
 
     const points: GeoJSON.FeatureCollection = {
       type: "FeatureCollection",
-      features: stops.map((s) => {
+      features: stopsForMap.map((s) => {
         const lng = dragPos?.stopId === s.id ? dragPos.lng : s.lng;
         const lat = dragPos?.stopId === s.id ? dragPos.lat : s.lat;
         return {
@@ -317,7 +378,7 @@ export function MapView({
     } else {
       (map.getSource("stops") as maplibregl.GeoJSONSource).setData(points);
     }
-  }, [mapReady, displayLine, stops, mapPois, color, dragPos]);
+  }, [mapReady, displayLine, stopsForMap, mapPois, color, dragPos]);
 
   useEffect(() => {
     if (!mapReady) return;
@@ -325,7 +386,7 @@ export function MapView({
     if (!map?.isStyleLoaded()) return;
 
     const lineLen = displayLine?.geometry?.coordinates?.length ?? 0;
-    const sig = `${itineraryId ?? ""}|${stops.length}|${mapPois.length}|${lineLen}`;
+    const sig = `${itineraryId ?? ""}|${stopsForMap.length}|${mapPois.length}|${lineLen}`;
     if (sig === fitSigRef.current) return;
     fitSigRef.current = sig;
 
@@ -337,7 +398,7 @@ export function MapView({
         has = true;
       }
     }
-    for (const s of stops) {
+    for (const s of stopsForMap) {
       bounds.extend([s.lng, s.lat]);
       has = true;
     }
@@ -348,7 +409,7 @@ export function MapView({
     if (has) {
       map.fitBounds(bounds, { padding: 48, maxZoom: 13, duration: 500 });
     }
-  }, [mapReady, itineraryId, displayLine, stops, mapPois]);
+  }, [mapReady, itineraryId, displayLine, stopsForMap, mapPois]);
 
   useEffect(() => {
     if (!mapReady) return;

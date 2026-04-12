@@ -1,6 +1,22 @@
 import { NextResponse } from "next/server";
+import type { Feature, LineString } from "geojson";
+import type { Position } from "geojson";
 import { addStop, addStopAtOrder, getItinerary, listStops } from "@/lib/db";
 import { computeInsertionOrderIndex } from "@/lib/stop-insertion";
+
+function coordsFromItineraryLine(lineGeojson: string | null | undefined): Position[] | null {
+  if (!lineGeojson?.trim()) return null;
+  try {
+    const f = JSON.parse(lineGeojson) as Feature<LineString>;
+    const c = f?.geometry?.coordinates;
+    if (f?.geometry?.type === "LineString" && Array.isArray(c) && c.length >= 2) {
+      return c as Position[];
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
 
 export const runtime = "nodejs";
 
@@ -14,7 +30,8 @@ export async function GET(_req: Request, ctx: Ctx) {
 
 export async function POST(req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
-  if (!getItinerary(id)) return NextResponse.json({ error: "Non trovato" }, { status: 404 });
+  const itinerary = getItinerary(id);
+  if (!itinerary) return NextResponse.json({ error: "Non trovato" }, { status: 404 });
   const body = (await req.json()) as {
     segment_type?: string;
     name?: string;
@@ -52,7 +69,8 @@ export async function POST(req: Request, ctx: Ctx) {
     stop = addStopAtOrder(common, Math.max(0, Math.floor(body.order_index)));
   } else if (body.auto_order !== false) {
     const sorted = listStops(id);
-    const k = computeInsertionOrderIndex(sorted, body.lat, body.lng);
+    const lineCoords = coordsFromItineraryLine(itinerary.line_geojson);
+    const k = computeInsertionOrderIndex(sorted, body.lat, body.lng, lineCoords);
     stop = addStopAtOrder(common, k);
   } else {
     stop = addStop(common);

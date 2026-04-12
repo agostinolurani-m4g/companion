@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Feature, LineString } from "geojson";
+import type { Position } from "geojson";
 import { activityToOsrmProfile, normalizeActivityForRouting } from "@/lib/osrm-route";
 import { PlannerProvider, usePlanner } from "@/context/PlannerProvider";
 import { MapView } from "@/components/MapView";
@@ -17,6 +18,12 @@ import { BookingConfirmModal } from "@/components/BookingConfirmModal";
 import { MapActivitySettings } from "@/components/MapActivitySettings";
 import { WeatherTabPanel } from "@/components/WeatherTabPanel";
 import { StopEditSheet } from "@/components/StopEditSheet";
+import { StopsSidebar, type RouteVisualizationMode } from "@/components/StopsSidebar";
+import {
+  cumulativeKmAlong,
+  kmAlongLineForStop,
+  sliceCoordsByKmRange,
+} from "@/lib/track-geometry";
 import type { StopRow } from "@/lib/types";
 
 type Tab = "chat" | "explore" | "weather";
@@ -66,6 +73,14 @@ function Shell() {
   const [pendingWebsiteUrl, setPendingWebsiteUrl] = useState("");
   const [selectedStop, setSelectedStop] = useState<StopRow | null>(null);
   const [relocatingStopId, setRelocatingStopId] = useState<string | null>(null);
+  const [routeViz, setRouteViz] = useState<{
+    mode: RouteVisualizationMode;
+    focusId: string | null;
+  }>({ mode: "full", focusId: null });
+  const [trackHoverKm, setTrackHoverKm] = useState<number | null>(null);
+  const [flyToRequest, setFlyToRequest] = useState<{ lng: number; lat: number; zoom?: number } | null>(
+    null
+  );
   const [lastImport, setLastImport] = useState<{
     track_id: string;
     distance_km: number;
@@ -75,7 +90,112 @@ function Shell() {
   useEffect(() => {
     setSelectedStop(null);
     setRelocatingStopId(null);
+    setRouteViz({ mode: "full", focusId: null });
+    setTrackHoverKm(null);
   }, [activeItineraryId]);
+
+  const sortedStops = useMemo(
+    () => [...stops].sort((a, b) => a.order_index - b.order_index),
+    [stops]
+  );
+
+  const fullCoords = useMemo((): Position[] | null => {
+    const c = displayLine?.geometry?.coordinates;
+    if (!c?.length) return null;
+    return c as Position[];
+  }, [displayLine]);
+
+  const derivedRoute = useMemo(() => {
+    if (!displayLine || !fullCoords || fullCoords.length < 2) {
+      return {
+        lineForMap: displayLine,
+        visibleStopIds: null as Set<string> | null,
+        vizKmRange: null as { startKm: number; endKm: number } | null,
+        stopMeta: [] as { id: string; name: string; km: number }[],
+      };
+    }
+    const cumLast = cumulativeKmAlong(fullCoords)[fullCoords.length - 1];
+    const stopMeta = sortedStops.map((s) => ({
+      id: s.id,
+      name: s.name,
+      km: kmAlongLineForStop(s.lng, s.lat, fullCoords) ?? 0,
+    }));
+
+    const { mode, focusId } = routeViz;
+    if (mode === "full" || !focusId) {
+      return { lineForMap: displayLine, visibleStopIds: null, vizKmRange: null, stopMeta };
+    }
+
+    const focus = sortedStops.find((s) => s.id === focusId);
+    if (!focus) {
+      return { lineForMap: displayLine, visibleStopIds: null, vizKmRange: null, stopMeta };
+    }
+
+    const kmF = kmAlongLineForStop(focus.lng, focus.lat, fullCoords);
+    if (kmF == null) {
+      return { lineForMap: displayLine, visibleStopIds: null, vizKmRange: null, stopMeta };
+    }
+
+    const idx = sortedStops.findIndex((s) => s.id === focusId);
+
+    if (mode === "stop_only") {
+      return {
+        lineForMap: displayLine,
+        visibleStopIds: new Set([focusId]),
+        vizKmRange: null,
+        stopMeta,
+      };
+    }
+
+    if (mode === "from_stop") {
+      const sliced = sliceCoordsByKmRange(fullCoords, kmF, cumLast);
+      const lineForMap: Feature<LineString> = {
+        type: "Feature",
+        properties: {},
+        geometry: { type: "LineString", coordinates: sliced },
+      };
+      const vis = new Set(
+        sortedStops.filter((s) => s.order_index >= focus.order_index).map((s) => s.id)
+      );
+      return {
+        lineForMap,
+        visibleStopIds: vis,
+        vizKmRange: { startKm: kmF, endKm: cumLast },
+        stopMeta,
+      };
+    }
+
+    if (mode === "leg_to_next") {
+      const next = sortedStops[idx + 1];
+      if (!next) {
+        return {
+          lineForMap: displayLine,
+          visibleStopIds: new Set([focusId]),
+          vizKmRange: { startKm: kmF, endKm: kmF },
+          stopMeta,
+        };
+      }
+      const kmN = kmAlongLineForStop(next.lng, next.lat, fullCoords) ?? kmF;
+      const lo = Math.min(kmF, kmN);
+      const hi = Math.max(kmF, kmN);
+      const sliced = sliceCoordsByKmRange(fullCoords, lo, hi);
+      const lineForMap: Feature<LineString> = {
+        type: "Feature",
+        properties: {},
+        geometry: { type: "LineString", coordinates: sliced },
+      };
+      return {
+        lineForMap,
+        visibleStopIds: new Set([focus.id, next.id]),
+        vizKmRange: { startKm: lo, endKm: hi },
+        stopMeta,
+      };
+    }
+
+    return { lineForMap: displayLine, visibleStopIds: null, vizKmRange: null, stopMeta };
+  }, [displayLine, fullCoords, sortedStops, routeViz]);
+
+  const onFlyToConsumed = useCallback(() => setFlyToRequest(null), []);
 
   useEffect(() => {
     if (!relocatingStopId) return;
@@ -406,32 +526,38 @@ function Shell() {
 
         <section className="flex min-h-0 min-w-0 flex-[1.25] flex-col gap-2 overflow-hidden">
           <MapActivitySettings />
-          <div className="relative min-h-[280px] flex-1 sm:min-h-[320px] md:min-h-[380px]">
-            {relocatingStopId && (
-              <div className="pointer-events-auto absolute left-2 right-2 top-2 z-[26] flex flex-wrap items-center justify-between gap-2 rounded-lg border border-sky-600/50 bg-sky-950/95 px-2 py-1.5 text-[11px] text-sky-100 shadow-lg backdrop-blur-sm">
-                <span>Clicca sulla mappa per la nuova posizione della tappa.</span>
-                <button
-                  type="button"
-                  className="rounded bg-zinc-700 px-2 py-0.5 text-[10px] text-zinc-200 hover:bg-zinc-600"
-                  onClick={() => setRelocatingStopId(null)}
-                >
-                  Annulla
-                </button>
-              </div>
-            )}
-            <MapView
-              className="h-full w-full min-h-0"
-              displayLine={displayLine}
-              stops={stops}
-              mapPois={mapPois}
-              activity={itinerary?.activity ?? "hiking"}
-              itineraryId={activeItineraryId}
-              onMapBackgroundClick={onMapBackgroundClick}
-              onStopSelect={onStopSelect}
-              onStopDragEnd={onStopDragEnd}
-              allowStopDrag={!relocatingStopId}
-              onRemoveMapPoi={removeMapPoi}
-            />
+          <div className="flex min-h-[280px] flex-1 overflow-hidden rounded-lg border border-zinc-700/50 sm:min-h-[320px] md:min-h-[380px]">
+            <div className="relative min-h-0 min-w-0 flex-1">
+              {relocatingStopId && (
+                <div className="pointer-events-auto absolute left-2 right-2 top-2 z-[26] flex flex-wrap items-center justify-between gap-2 rounded-lg border border-sky-600/50 bg-sky-950/95 px-2 py-1.5 text-[11px] text-sky-100 shadow-lg backdrop-blur-sm">
+                  <span>Clicca sulla mappa per la nuova posizione della tappa.</span>
+                  <button
+                    type="button"
+                    className="rounded bg-zinc-700 px-2 py-0.5 text-[10px] text-zinc-200 hover:bg-zinc-600"
+                    onClick={() => setRelocatingStopId(null)}
+                  >
+                    Annulla
+                  </button>
+                </div>
+              )}
+              <MapView
+                className="h-full w-full min-h-0"
+                displayLine={derivedRoute.lineForMap}
+                stops={stops}
+                mapPois={mapPois}
+                activity={itinerary?.activity ?? "hiking"}
+                itineraryId={activeItineraryId}
+                visibleStopIds={derivedRoute.visibleStopIds}
+                fullLineCoords={fullCoords}
+                onTrackHoverKm={setTrackHoverKm}
+                flyToRequest={flyToRequest}
+                onFlyToRequestConsumed={onFlyToConsumed}
+                onMapBackgroundClick={onMapBackgroundClick}
+                onStopSelect={onStopSelect}
+                onStopDragEnd={onStopDragEnd}
+                allowStopDrag={!relocatingStopId}
+                onRemoveMapPoi={removeMapPoi}
+              />
             {selectedStop && activeItineraryId === selectedStop.itinerary_id && (
               <StopEditSheet
                 stop={selectedStop}
@@ -461,18 +587,30 @@ function Shell() {
                 }}
               />
             )}
-            <MapClickSheet
-              open={!!pendingWaypoint}
-              name={pendingName}
-              onNameChange={setPendingName}
-              pointKind={pendingPointKind}
-              onPointKindChange={setPendingPointKind}
-              imageUrl={pendingImageUrl}
-              onImageUrlChange={setPendingImageUrl}
-              websiteUrl={pendingWebsiteUrl}
-              onWebsiteUrlChange={setPendingWebsiteUrl}
-              onConfirm={() => void confirmPendingWaypoint()}
-              onCancel={() => setPendingWaypoint(null)}
+              <MapClickSheet
+                open={!!pendingWaypoint}
+                name={pendingName}
+                onNameChange={setPendingName}
+                pointKind={pendingPointKind}
+                onPointKindChange={setPendingPointKind}
+                imageUrl={pendingImageUrl}
+                onImageUrlChange={setPendingImageUrl}
+                websiteUrl={pendingWebsiteUrl}
+                onWebsiteUrlChange={setPendingWebsiteUrl}
+                onConfirm={() => void confirmPendingWaypoint()}
+                onCancel={() => setPendingWaypoint(null)}
+              />
+            </div>
+            <StopsSidebar
+              stops={stops}
+              focusStopId={routeViz.focusId}
+              vizMode={routeViz.mode}
+              onVizModeChange={(mode, focusId) => setRouteViz({ mode, focusId })}
+              onStopClick={(s) => {
+                setPendingWaypoint(null);
+                setSelectedStop(s);
+              }}
+              onFlyToStop={(s) => setFlyToRequest({ lng: s.lng, lat: s.lat, zoom: 14 })}
             />
           </div>
           <MapStatsColumn
@@ -485,7 +623,11 @@ function Shell() {
               void refreshWeather();
             }}
           >
-            <ElevationChart />
+            <ElevationChart
+              hoverKm={trackHoverKm}
+              vizRange={derivedRoute.vizKmRange}
+              stopMarkers={derivedRoute.stopMeta}
+            />
             {stops.length === 1 && (
               <p className="text-center text-[11px] text-zinc-500">
                 Aggiungi almeno <strong className="text-zinc-400">una seconda tappa</strong> (o importa GPX) per

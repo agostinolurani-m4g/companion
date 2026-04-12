@@ -1,7 +1,20 @@
+import type { Position } from "geojson";
 import type { StopRow } from "@/lib/types";
+import { kmAlongLineForStop, nearestPointOnPolyline } from "@/lib/track-geometry";
 
-/** Distanza punto–segmento in spazio lng/lat (approssimazione locale). */
-function distPointToSegment(
+/**
+ * Inserimento tappa “stile planner outdoor” (Komoot / Strava):
+ * con una **LineString** salvata (GPX/OSRM), il click si proietta sulla polyline e la
+ * nuova tappa va **nell’ordine lungo il percorso**, non solo sulla corda tra tappe.
+ * Senza traccia, si usa la corda tra tappe consecutive (fallback).
+ */
+
+const EPS_KM = 0.003;
+/** Oltre questa distanza dalla linea si usa il fallback a corda. */
+const DEFAULT_MAX_SNAP_KM = 2.5;
+
+/** Distanza punto–segmento in spazio lng/lat (approssimazione locale) — fallback senza GPX. */
+function distPointToSegmentDeg(
   p: [number, number],
   a: [number, number],
   b: [number, number]
@@ -21,15 +34,13 @@ function distPointToSegment(
 }
 
 /**
- * Indice `order_index` dove inserire la nuova tappa così che resti “lungo il percorso”
- * tra due tappe consecutive (punto più vicino a un segmento). Se lontano da tutti i segmenti,
- * in coda.
+ * Fallback: solo tappe, nessuna polyline — segmenti retti tra tappe consecutive.
  */
-export function computeInsertionOrderIndex(
+export function computeInsertionOrderIndexChord(
   sortedStops: StopRow[],
   lat: number,
   lng: number,
-  maxDistDeg = 0.15
+  maxDistDeg = 0.02
 ): number {
   const p: [number, number] = [lng, lat];
   if (sortedStops.length === 0) return 0;
@@ -40,7 +51,7 @@ export function computeInsertionOrderIndex(
   for (let i = 0; i < sortedStops.length - 1; i++) {
     const a: [number, number] = [sortedStops[i].lng, sortedStops[i].lat];
     const b: [number, number] = [sortedStops[i + 1].lng, sortedStops[i + 1].lat];
-    const d = distPointToSegment(p, a, b);
+    const d = distPointToSegmentDeg(p, a, b);
     if (d < bestD) {
       bestD = d;
       bestI = i;
@@ -51,4 +62,85 @@ export function computeInsertionOrderIndex(
     return sortedStops[bestI].order_index + 1;
   }
   return sortedStops[sortedStops.length - 1].order_index + 1;
+}
+
+/**
+ * `sortedStops`: ordinati per `order_index`.
+ * `lineCoords`: vertici della traccia (stesso senso del percorso).
+ */
+function insertionOrderFromPathKm(
+  sortedStops: StopRow[],
+  kmClick: number,
+  lineCoords: Position[]
+): number | null {
+  if (sortedStops.length === 0) return 0;
+
+  const withKm = sortedStops.map((s) => {
+    const km = kmAlongLineForStop(s.lng, s.lat, lineCoords);
+    return km == null ? null : { s, km };
+  });
+  if (withKm.some((x) => x === null)) return null;
+
+  const path: { s: StopRow; km: number }[] = withKm as { s: StopRow; km: number }[];
+  path.sort((a, b) => a.km - b.km);
+
+  if (path.length === 1) {
+    const { s, km } = path[0];
+    return kmClick < km - EPS_KM ? s.order_index : s.order_index + 1;
+  }
+
+  /** Primo indice con km > kmClick (+tolleranza) → inserimento tra path[ins-1] e path[ins]. */
+  let ins = 0;
+  while (ins < path.length && path[ins].km <= kmClick + EPS_KM) {
+    ins += 1;
+  }
+  if (ins === 0) {
+    return path[0].s.order_index;
+  }
+  if (ins >= path.length) {
+    return path[path.length - 1].s.order_index + 1;
+  }
+
+  const prev = path[ins - 1];
+  const next = path[ins];
+  const o0 = prev.s.order_index;
+  const o1 = next.s.order_index;
+
+  if (o0 < o1) {
+    return o0 + 1;
+  }
+  if (o0 > o1) {
+    return o1 + 1;
+  }
+  return o0 + 1;
+}
+
+export type InsertionOptions = {
+  /** Distanza massima dalla polyline per usare la geometria (km). */
+  maxSnapKm?: number;
+};
+
+/**
+ * Calcola `order_index` dove inserire la nuova tappa.
+ * Con `lineCoords` (traccia reale) usa la posizione lungo il percorso; altrimenti la corda tra tappe.
+ */
+export function computeInsertionOrderIndex(
+  sortedStops: StopRow[],
+  lat: number,
+  lng: number,
+  lineCoords: Position[] | null | undefined,
+  opts?: InsertionOptions
+): number {
+  const maxSnap = opts?.maxSnapKm ?? DEFAULT_MAX_SNAP_KM;
+  const coords = lineCoords?.length && lineCoords.length >= 2 ? lineCoords : null;
+
+  if (coords) {
+    const hit = nearestPointOnPolyline(coords, [lng, lat]);
+    if (hit && hit.distKm <= maxSnap) {
+      const k = insertionOrderFromPathKm(sortedStops, hit.alongKm, coords);
+      if (k !== null) return k;
+    }
+  }
+
+  return computeInsertionOrderIndexChord(sortedStops, lat, lng);
 }
