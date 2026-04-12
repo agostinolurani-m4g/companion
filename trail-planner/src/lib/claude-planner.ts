@@ -26,6 +26,7 @@ import { rebuildTrackDisplayFromRaw } from "@/lib/track-ingest";
 
 import { getAnthropicApiKey } from "@/lib/env";
 import { formatAnthropicErrorForUser, messagesCreateWithRetry } from "@/lib/anthropic-retry";
+import { buildWindyEmbed2Url } from "@/lib/windy-embed";
 
 const MAX_POINTS_SET_ROUTE_LINE = 500;
 
@@ -57,7 +58,7 @@ Regole:
 - Per aggiungere punti sulla mappa usa **add_waypoint** (preferito: waypoint vs destinazione) oppure **add_stop** con segment_type; ottieni lat/lng da geocode_places se l'utente dice un luogo.
 - OBBLIGATORIO: per aggiungere o cambiare tappe DEVI invocare i tool (add_waypoint, add_stop, replace_stops, upsert_itinerary). Non dire di aver aggiunto una tappa se non hai eseguito il tool e ricevuto ok nel risultato.
 - Usa i tool per salvare itinerari e tappe; per coordinate testuali usa geocode_places.
-- Per meteo usa get_weather con date ISO (YYYY-MM-DD) e coordinate reali. Per mostrare vento/precipitazioni sulla mappa (stile Windy) usa **focus_weather_map** con le stesse coordinate; opzionale anche anteprima browser.
+- Per meteo usa get_weather con date ISO (YYYY-MM-DD) e coordinate reali. Per mostrare pioggia/tuoni (ECMWF, stile Windy) sulla mappa usa **focus_weather_map** con le stesse coordinate; opzionale anche anteprima browser.
 - Per link e risorse web usa suggest_links; per aprire una pagina nel pannello browser dell'utente usa propose_browser_url (solo URL https legittimi).
 - Per email usa draft_email: l'invio reale richiede conferma utente nell'app.
 - Rispetta limiti Nominatim: poche query, testo chiaro.
@@ -273,7 +274,7 @@ function tools(): Anthropic.Tool[] {
     {
       name: "focus_weather_map",
       description:
-        "Mostra sulla mappa l’overlay meteo interattivo (Windy: vento, sovrapposizioni). Centra su lat/lng e zoom. Opzionale: apri anche nel pannello browser dell’app.",
+        "Mostra sulla mappa l’overlay meteo Windy (pioggia e fulmini, modello ECMWF — previsione, non radar live). Centra su lat/lng e zoom. Opzionale: apri anche nel mini-browser.",
       input_schema: {
         type: "object",
         properties: {
@@ -575,8 +576,13 @@ async function runTool(
       zoom = Math.min(12, Math.max(4, Math.round(zoom)));
       events.push({ kind: "weather_overlay", lat, lng, zoom });
       if (input.open_in_browser_preview) {
-        const u = `https://embed.windy.com/embed2.html?lat=${lat}&lon=${lng}&zoom=${zoom}&overlay=wind&product=ecmwf&level=surface`;
-        events.push({ kind: "browser_url", url: u, title: "Windy — meteo" });
+        const u = buildWindyEmbed2Url({
+          lat,
+          lng,
+          zoom,
+          forecastTimeMs: Date.now(),
+        });
+        events.push({ kind: "browser_url", url: u, title: "Windy — pioggia/tuoni" });
       }
       return JSON.stringify({
         ok: true,

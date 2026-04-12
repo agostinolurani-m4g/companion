@@ -6,6 +6,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import type { Feature, LineString } from "geojson";
 import type { MapPoiRow, StopRow } from "@/lib/types";
 import { MAP_POI_CATEGORY_COLOR, mapPoiCategoryLabel } from "@/lib/map-poi-ui";
+import { buildWindyEmbed2Url, buildWindyMainSiteUrl } from "@/lib/windy-embed";
 import { usePlanner } from "@/context/PlannerProvider";
 
 const ACTIVITY_COLORS: Record<string, string> = {
@@ -81,6 +82,15 @@ export function MapView({
   const [selectedPoi, setSelectedPoi] = useState<MapPoiRow | null>(null);
   const { windyOverlay, setWindyOverlay } = usePlanner();
   const windySyncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Ancora temporale fissa per la timeline previsione (non radar). */
+  const windyTimeAnchorRef = useRef<number | null>(null);
+  const [windyHourStep, setWindyHourStep] = useState(0);
+
+  if (!windyOverlay) {
+    windyTimeAnchorRef.current = null;
+  } else if (windyTimeAnchorRef.current === null) {
+    windyTimeAnchorRef.current = Date.now();
+  }
 
   const color = ACTIVITY_COLORS[activity] ?? "#6366f1";
 
@@ -169,6 +179,19 @@ export function MapView({
     }
     wasWindyRef.current = true;
   }, [mapReady, windyOverlay]);
+
+  useEffect(() => {
+    if (!windyOverlay) setWindyHourStep(0);
+  }, [windyOverlay]);
+
+  /** Timeline previsione ECMWF: avanza l’ora (embed Windy non ha autoplay ufficiale). */
+  useEffect(() => {
+    if (!windyOverlay) return;
+    const id = setInterval(() => {
+      setWindyHourStep((h) => (h >= 47 ? 0 : h + 1));
+    }, 2600);
+    return () => clearInterval(id);
+  }, [windyOverlay]);
 
   useEffect(() => {
     if (!mapReady) return;
@@ -493,9 +516,15 @@ export function MapView({
     };
   }, [mapReady, allowStopDrag]);
 
-  const windySrc = windyOverlay
-    ? `https://embed.windy.com/embed2.html?lat=${windyOverlay.lat}&lon=${windyOverlay.lng}&zoom=${windyOverlay.zoom}&overlay=wind&product=ecmwf&level=surface`
-    : null;
+  const windySrc =
+    windyOverlay && windyTimeAnchorRef.current !== null
+      ? buildWindyEmbed2Url({
+          lat: windyOverlay.lat,
+          lng: windyOverlay.lng,
+          zoom: windyOverlay.zoom,
+          forecastTimeMs: windyTimeAnchorRef.current + windyHourStep * 3600000,
+        })
+      : null;
   const windy = windyOverlay;
 
   return (
@@ -505,20 +534,18 @@ export function MapView({
       {windySrc ? (
         <>
           <iframe
-            title="Windy — meteo"
+            title="Windy — pioggia e fulmini (ECMWF)"
             src={windySrc}
             className="pointer-events-none absolute inset-0 z-[1] h-full w-full border-0 bg-slate-900"
           />
           <div className="pointer-events-auto absolute left-2 top-2 z-[40] flex max-w-[calc(100%-1rem)] flex-wrap items-center gap-1.5 rounded-md border border-sky-500/45 bg-zinc-950/92 px-2 py-1 text-[10px] text-sky-100 shadow-md backdrop-blur-sm">
             <span className="font-medium text-sky-200">Windy</span>
             <span className="text-zinc-500">·</span>
-            <span className="text-zinc-400">vento ECMWF</span>
+            <span className="text-zinc-400">pioggia/tuoni ECMWF · timeline</span>
             <a
               className="rounded bg-sky-800/90 px-1.5 py-0.5 text-[9px] text-white hover:bg-sky-700"
               href={
-                windy
-                  ? `https://www.windy.com/?${windy.lat},${windy.lng},${windy.zoom}`
-                  : "https://www.windy.com/"
+                windy ? buildWindyMainSiteUrl(windy.lat, windy.lng, windy.zoom) : "https://www.windy.com/"
               }
               target="_blank"
               rel="noreferrer"

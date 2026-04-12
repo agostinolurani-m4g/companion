@@ -1,5 +1,7 @@
 "use client";
 
+import { useMemo } from "react";
+import { buildWindyMainSiteUrl } from "@/lib/windy-embed";
 import { usePlanner } from "@/context/PlannerProvider";
 
 export function WeatherTabPanel() {
@@ -11,6 +13,13 @@ export function WeatherTabPanel() {
     stops,
     itinerary,
   } = usePlanner();
+
+  const windyMainHref = useMemo(() => {
+    if (stops.length === 0) return "https://www.windy.com/";
+    const sorted = [...stops].sort((a, b) => a.order_index - b.order_index);
+    const mid = sorted[Math.floor(sorted.length / 2)];
+    return buildWindyMainSiteUrl(mid.lat, mid.lng, 8);
+  }, [stops]);
 
   const openWindy = () => {
     if (stops.length === 0) return;
@@ -40,7 +49,7 @@ export function WeatherTabPanel() {
         </button>
         <a
           className="rounded bg-zinc-800 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-700"
-          href="https://www.windy.com/"
+          href={windyMainHref}
           target="_blank"
           rel="noreferrer"
         >
