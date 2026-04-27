@@ -10,8 +10,8 @@ import { kmAlongLineForStop, nearestPointOnPolyline } from "@/lib/track-geometry
  */
 
 const EPS_KM = 0.003;
-/** Oltre questa distanza dalla linea si usa il fallback a corda. */
-const DEFAULT_MAX_SNAP_KM = 2.5;
+/** Oltre questa distanza dalla linea si usa il fallback a corda (server + UI anteprima). */
+export const DEFAULT_MAX_SNAP_KM = 2.5;
 
 /** Distanza punto–segmento in spazio lng/lat (approssimazione locale) — fallback senza GPX. */
 function distPointToSegmentDeg(
@@ -143,4 +143,32 @@ export function computeInsertionOrderIndex(
   }
 
   return computeInsertionOrderIndexChord(sortedStops, lat, lng);
+}
+
+/**
+ * Testo UI: dove finirà la nuova tappa in base a `order_index` di inserimento (prima dell’INSERT).
+ */
+export function describeInsertionPreview(
+  sortedStops: StopRow[],
+  insertionOrder: number,
+  mode: "auto" | "append"
+): string {
+  if (mode === "append") {
+    return "Verrà aggiunta in coda come ultima tappa (destinazione).";
+  }
+  if (sortedStops.length === 0) {
+    return "Prima tappa dell’itinerario.";
+  }
+  const pred = [...sortedStops].filter((s) => s.order_index < insertionOrder).sort((a, b) => b.order_index - a.order_index)[0];
+  const succ = [...sortedStops].filter((s) => s.order_index >= insertionOrder).sort((a, b) => a.order_index - b.order_index)[0];
+  if (!pred && succ) {
+    return `All’inizio, prima di «${succ.name}».`;
+  }
+  if (pred && !succ) {
+    return `In coda, dopo «${pred.name}».`;
+  }
+  if (pred && succ) {
+    return `Tra «${pred.name}» e «${succ.name}».`;
+  }
+  return "Nuova tappa.";
 }

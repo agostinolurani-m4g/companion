@@ -1,0 +1,41 @@
+{
+  "name": "hmr-companion",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3002",
+    "build": "next build",
+    "start": "next start -p 3002",
+    "lint": "eslint",
+    "test": "vitest run",
+    "ingest": "tsx scripts/ingest.ts",
+    "snapshot": "tsx scripts/snapshot-pois.ts",
+    "snapshot:surface": "tsx scripts/snapshot-surface.ts",
+    "seed": "npm run ingest && npm run snapshot",
+    "icons:pwa": "node scripts/generate-pwa-icons.mjs"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.8.0",
+    "maplibre-gl": "^5.22.0",
+    "next": "16.2.3",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "uuid": "^14.0.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/geojson": "^7946.0.16",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@types/uuid": "^10.0.0",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.3",
+    "sharp": "^0.34.2",
+    "tailwindcss": "^4",
+    "tsx": "^4.19.2",
+    "typescript": "^5",
+    "vitest": "^3.2.4"
+  }
+}

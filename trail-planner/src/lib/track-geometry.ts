@@ -68,6 +68,43 @@ export function kmAlongLineForStop(stopLng: number, stopLat: number, coords: Pos
   return n ? n.alongKm : null;
 }
 
+/** Vertici campionati lungo il percorso (per query OSM a corridoio, non bbox globale). */
+export function samplePointsAlongPolyline(
+  coords: Position[],
+  spacingKm: number,
+  maxPoints: number
+): Position[] {
+  if (coords.length < 2) return coords.length === 1 ? [coords[0]] : [];
+  const cum = cumulativeKmAlong(coords);
+  const total = cum[cum.length - 1];
+  const out: Position[] = [coords[0]];
+  if (total < 1e-6) {
+    out.push(coords[coords.length - 1]);
+    return dedupePositions(out);
+  }
+  let nextKm = spacingKm;
+  while (nextKm < total - 1e-9 && out.length < maxPoints - 1) {
+    out.push(positionAtKm(coords, cum, nextKm));
+    nextKm += spacingKm;
+  }
+  const last = coords[coords.length - 1];
+  const olast = out[out.length - 1];
+  if (olast[0] !== last[0] || olast[1] !== last[1]) out.push(last);
+  return dedupePositions(out).slice(0, maxPoints);
+}
+
+function dedupePositions(p: Position[]): Position[] {
+  const s = new Set<string>();
+  const r: Position[] = [];
+  for (const c of p) {
+    const k = `${c[0].toFixed(5)},${c[1].toFixed(5)}`;
+    if (s.has(k)) continue;
+    s.add(k);
+    r.push(c);
+  }
+  return r;
+}
+
 function positionAtKm(coords: Position[], cum: number[], km: number): Position {
   if (km <= cum[0]) return coords[0];
   const last = cum.length - 1;

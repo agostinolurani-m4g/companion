@@ -19,7 +19,7 @@ export function geojsonLineToGpx(name: string, feature: Feature<LineString>): st
     })
     .join("\n");
   return `<?xml version="1.0" encoding="UTF-8"?>
-<gpx version="1.1" creator="Trail Planner AI Local" xmlns="http://www.topografix.com/GPX/1/1">
+<gpx version="1.1" creator="Sentiero (locale)" xmlns="http://www.topografix.com/GPX/1/1">
   <metadata><name>${escapeXml(name)}</name></metadata>
   <trk><name>${escapeXml(name)}</name><trkseg>
 ${pts}

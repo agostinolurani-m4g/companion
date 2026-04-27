@@ -1,7 +1,12 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { LegDaySummaryBar } from "@/components/LegDaySummaryBar";
 import { OsmWaterNearby } from "@/components/OsmWaterNearby";
+import { PublishOutingBar } from "@/components/PublishOutingBar";
+import { SafetyChecklistBar } from "@/components/SafetyChecklistBar";
+import type { LegDayStat } from "@/lib/leg-day-stats";
+import type { TrailServicePoi } from "@/lib/overpass";
 
 type LastImport = {
   track_id: string;
@@ -16,7 +21,17 @@ type Props = {
   onRefreshWeather: () => void;
   onOpenWeatherTab: () => void;
   children: ReactNode;
+  onWaterForMap?: (pois: { lat: number; lng: number }[]) => void;
+  onServicesForMap?: (pois: TrailServicePoi[]) => void;
   className?: string;
+  /** Routing OSRM in corso (manuale o automatico). */
+  routeComputing?: boolean;
+  /** Statistiche per giornata (leg). */
+  legDayStats?: LegDayStat[] | null;
+  activeItineraryId?: string | null;
+  hasActiveUser?: boolean;
+  hasLineOnMap?: boolean;
+  onOutingPublished?: () => void;
 };
 
 export function MapStatsColumn({
@@ -26,12 +41,26 @@ export function MapStatsColumn({
   onRefreshWeather,
   onOpenWeatherTab,
   children,
+  onWaterForMap,
+  onServicesForMap,
   className = "",
+  routeComputing = false,
+  legDayStats = null,
+  activeItineraryId = null,
+  hasActiveUser = false,
+  hasLineOnMap = false,
+  onOutingPublished,
 }: Props) {
   return (
     <div
-      className={`flex max-h-[min(52vh,480px)] shrink-0 flex-col gap-2 overflow-y-auto rounded-lg border border-zinc-800/80 bg-zinc-900/25 p-2 text-[11px] ${className}`}
+      className={`flex max-h-[min(52vh,480px)] shrink-0 flex-col gap-2 overflow-y-auto rounded-xl border border-brand-border/70 bg-brand-surface/50 p-2 text-[11px] text-brand-text ${className}`}
     >
+      {routeComputing ? (
+        <p className="rounded border border-sky-800/50 bg-sky-950/40 px-2 py-1.5 text-[10px] text-sky-100/95">
+          Calcolo percorso sulla strada (OSRM)…
+        </p>
+      ) : null}
+
       {lastImport && (
         <div className="leading-snug text-zinc-400">
           Ultimo import GPX:{" "}
@@ -41,26 +70,41 @@ export function MapStatsColumn({
         </div>
       )}
 
-      <details className="rounded border border-zinc-800/60 bg-zinc-950/40 px-2 py-1.5 text-[10px] leading-snug text-zinc-500">
-        <summary className="cursor-pointer select-none text-zinc-400">Come funziona «Traccia su strada»?</summary>
-        <p className="mt-1.5 border-t border-zinc-800/80 pt-1.5">
-          Il routing segue <strong className="text-zinc-400">OpenStreetMap</strong> (non è un tracciato satellitare).
-          Per <strong className="text-zinc-400">escursionismo / trail</strong>, se configuri{" "}
-          <code className="text-zinc-400">OPENROUTESERVICE_API_KEY</code> in{" "}
-          <code className="text-zinc-400">.env.local</code>, usiamo <strong className="text-zinc-400">OpenRoute Service</strong>{" "}
-          profilo <code className="text-zinc-400">foot-hiking</code> (privilegia sentieri rispetto all’asfalto). Senza
-          chiave resta il server demo <strong className="text-zinc-400">OSRM</strong>, spesso più “stradale”.{" "}
-          <code className="text-zinc-400">cycling</code> = bici; <code className="text-zinc-400">walking</code> = corsa
-          su strada. Con almeno <strong className="text-zinc-400">due tappe</strong> il percorso si aggiorna da solo
-          (dopo ~0,5 s) salvo <strong className="text-zinc-400">GPX</strong> collegato. Dove OSM non ha sentieri tra due
-          punti, importa un <strong className="text-zinc-400">GPX</strong> o aggiungi tappe lungo il percorso reale.
+      <div className="rounded border border-zinc-800/60 bg-zinc-950/35 px-2 py-1.5 text-[10px] text-zinc-500">
+        <span className="font-medium text-zinc-400">Export</span>
+        <p className="mt-0.5 leading-snug">
+          <strong className="text-zinc-300">GPX ↓</strong>: file per dispositivo GPS / app esterne (serve una traccia
+          salvata sulla mappa).
         </p>
-      </details>
+        <p className="mt-0.5 leading-snug">
+          <strong className="text-zinc-300">ICS</strong>: promemoria calendario —{" "}
+          <span className="text-amber-200/80">richiede date inizio/fine</span> sull’itinerario.
+        </p>
+        {activeItineraryId ? (
+          <p className="mt-1 leading-snug">
+            <strong className="text-zinc-300">Riepilogo stampabile</strong> —{" "}
+            <a
+              className="text-sky-300 underline hover:text-sky-200"
+              href={`/api/itineraries/${activeItineraryId}/briefing`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Apri HTML (poi Stampa → PDF)
+            </a>
+          </p>
+        ) : null}
+      </div>
 
-      <p className="text-[10px] leading-snug text-zinc-500">
-        Clic vicino a una <strong className="text-zinc-400">tappa</strong> già presente: modifica, foto, sposta o
-        rimuovi. Clic altrove: aggiungi punto.
-      </p>
+      <SafetyChecklistBar onOpenWeatherTab={onOpenWeatherTab} />
+
+      {legDayStats && legDayStats.length > 0 ? <LegDaySummaryBar legs={legDayStats} /> : null}
+
+      <PublishOutingBar
+        itineraryId={activeItineraryId}
+        hasActiveUser={hasActiveUser}
+        hasLineOnMap={hasLineOnMap}
+        onPublished={onOutingPublished}
+      />
 
       <div className="flex flex-wrap items-center gap-2 border-b border-zinc-800/60 pb-2 text-zinc-500">
         <span>
@@ -91,7 +135,7 @@ export function MapStatsColumn({
         </button>
       </div>
 
-      <OsmWaterNearby />
+      <OsmWaterNearby onWaterForMap={onWaterForMap} onServicesForMap={onServicesForMap} />
 
       {children}
     </div>

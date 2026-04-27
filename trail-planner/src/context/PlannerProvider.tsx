@@ -9,8 +9,8 @@ import React, {
   useState,
 } from "react";
 import type { Feature, LineString } from "geojson";
-import type { ItineraryRow, MapPoiRow, ProfileRow, StopRow } from "@/lib/types";
-import type { PlannerToolEvent } from "@/lib/claude-planner";
+import type { ItineraryRow, MapPoiRow, ProfileRow, RouteVariantRow, StopRow } from "@/lib/types";
+import type { MapPanelMode, PlannerToolEvent } from "@/lib/planner-events";
 import type { WeatherResponse } from "@/lib/weather";
 
 function randomSessionId(): string {
@@ -51,6 +51,10 @@ type PlannerContextValue = {
   refreshWeather: () => Promise<void>;
   /** Itinerario con almeno una traccia GPX importata collegata: non sovrascrivere con OSRM automatico. */
   hasGpxTrack: boolean;
+  /** Pannello mappa: compact (default), expanded, hidden. */
+  mapPanelMode: MapPanelMode;
+  setMapPanelMode: (m: MapPanelMode) => void;
+  routeVariants: RouteVariantRow[];
 };
 
 const PlannerContext = createContext<PlannerContextValue | null>(null);
@@ -80,6 +84,8 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
     zoom: number;
   } | null>(null);
   const [hasGpxTrack, setHasGpxTrack] = useState(false);
+  const [mapPanelMode, setMapPanelModeState] = useState<MapPanelMode>("compact");
+  const [routeVariants, setRouteVariants] = useState<RouteVariantRow[]>([]);
 
   useEffect(() => {
     const k = "trail-planner-session";
@@ -89,6 +95,10 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
       window.localStorage.setItem(k, s);
     }
     setSessionId(s);
+  }, []);
+
+  const setMapPanelMode = useCallback((m: MapPanelMode) => {
+    setMapPanelModeState(m);
   }, []);
 
   const lineFeature = useMemo((): Feature<LineString> | null => {
@@ -125,6 +135,7 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
         setStops([]);
         setMapPois([]);
         setHasGpxTrack(false);
+        setRouteVariants([]);
         return;
       }
       const res = await fetch(`/api/itineraries/${id}`);
@@ -134,11 +145,13 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
         stops: StopRow[];
         map_pois?: MapPoiRow[];
         has_gpx_track?: boolean;
+        route_variants?: RouteVariantRow[];
       };
       setItinerary(j.itinerary);
       setStops(j.stops);
       setMapPois(j.map_pois ?? []);
       setHasGpxTrack(j.has_gpx_track ?? false);
+      setRouteVariants(j.route_variants ?? []);
     },
     []
   );
@@ -280,6 +293,9 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
     removeMapPoi,
     refreshWeather,
     hasGpxTrack,
+    mapPanelMode,
+    setMapPanelMode,
+    routeVariants,
   };
 
   return <PlannerContext.Provider value={value}>{children}</PlannerContext.Provider>;
@@ -291,4 +307,4 @@ export function usePlanner() {
   return ctx;
 }
 
-export type { PlannerToolEvent };
+export type { MapPanelMode, PlannerToolEvent };

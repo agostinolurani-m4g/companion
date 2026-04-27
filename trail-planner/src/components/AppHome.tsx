@@ -13,20 +13,31 @@ import { BrowserPanel } from "@/components/BrowserPanel";
 import { ElevationChart } from "@/components/ElevationChart";
 import { ProfileModal } from "@/components/ProfileModal";
 import { ExploreTab } from "@/components/ExploreTab";
+import { UserHubTab } from "@/components/UserHubTab";
 import { ConfirmEmailModal } from "@/components/ConfirmEmailModal";
 import { BookingConfirmModal } from "@/components/BookingConfirmModal";
 import { MapActivitySettings } from "@/components/MapActivitySettings";
 import { WeatherTabPanel } from "@/components/WeatherTabPanel";
 import { StopEditSheet } from "@/components/StopEditSheet";
 import { StopsSidebar, type RouteVisualizationMode } from "@/components/StopsSidebar";
+import { RouteVariantTabs } from "@/components/RouteVariantTabs";
+import { AvalancheInfoBar } from "@/components/AvalancheInfoBar";
+import { BrandMark } from "@/components/BrandMark";
 import {
   cumulativeKmAlong,
   kmAlongLineForStop,
+  nearestPointOnPolyline,
   sliceCoordsByKmRange,
 } from "@/lib/track-geometry";
-import type { StopRow } from "@/lib/types";
+import { appendInsertionOrderIndex, canStartNextLeg, maxLegIndex, sortStopsByOrder } from "@/lib/leg-stops";
+import { DEFAULT_MAX_SNAP_KM, describeInsertionPreview } from "@/lib/stop-insertion";
+import type { FeatureCollection } from "geojson";
+import { DEMO_GROUP_CAI } from "@/lib/social-constants";
+import type { TrailServicePoi } from "@/lib/overpass";
+import { computeLegDayStats } from "@/lib/leg-day-stats";
+import type { ExplorePlaceRow, StopRow } from "@/lib/types";
 
-type Tab = "chat" | "explore" | "weather";
+type Tab = "chat" | "explore" | "weather" | "me";
 
 function Shell() {
   const {
@@ -45,7 +56,23 @@ function Shell() {
     loadProfile,
     profile,
     hasGpxTrack,
+    mapPanelMode,
+    setMapPanelMode,
+    routeVariants,
   } = usePlanner();
+
+  const activateRouteVariant = useCallback(
+    async (variantId: string) => {
+      if (!activeItineraryId) return;
+      const res = await fetch(`/api/itineraries/${activeItineraryId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ active_route_variant_id: variantId }),
+      });
+      if (res.ok) await selectItinerary(activeItineraryId);
+    },
+    [activeItineraryId, selectItinerary]
+  );
 
   const osrmRequestSeq = useRef(0);
   const osrmRouteBaseline = useRef<{ itineraryId: string | null; key: string | null }>({
@@ -71,6 +98,9 @@ function Shell() {
   const [pendingPointKind, setPendingPointKind] = useState<MapPointKind>("waypoint");
   const [pendingImageUrl, setPendingImageUrl] = useState("");
   const [pendingWebsiteUrl, setPendingWebsiteUrl] = useState("");
+  const [pendingPhone, setPendingPhone] = useState("");
+  /** Giornata (0-based) in cui inserire il punto confermato dalla sheet. */
+  const [pendingLegIndex, setPendingLegIndex] = useState(0);
   const [selectedStop, setSelectedStop] = useState<StopRow | null>(null);
   const [relocatingStopId, setRelocatingStopId] = useState<string | null>(null);
   const [routeViz, setRouteViz] = useState<{
@@ -78,6 +108,9 @@ function Shell() {
     focusId: string | null;
   }>({ mode: "full", focusId: null });
   const [trackHoverKm, setTrackHoverKm] = useState<number | null>(null);
+  const [trackHoverDistKm, setTrackHoverDistKm] = useState(Number.POSITIVE_INFINITY);
+  const [mapWaterPois, setMapWaterPois] = useState<{ lat: number; lng: number }[]>([]);
+  const [mapServicePois, setMapServicePois] = useState<TrailServicePoi[]>([]);
   const [flyToRequest, setFlyToRequest] = useState<{ lng: number; lat: number; zoom?: number } | null>(
     null
   );
@@ -86,24 +119,109 @@ function Shell() {
     distance_km: number;
     points: number;
   } | null>(null);
+  const [routeComputing, setRouteComputing] = useState(false);
+
+  const [socialMapLayer, setSocialMapLayer] = useState<
+    "off" | "friends" | "group" | "following" | "public"
+  >("off");
+  const [socialFeedGeojson, setSocialFeedGeojson] = useState<FeatureCollection | null>(null);
+  const [socialFeedBump, setSocialFeedBump] = useState(0);
+  const [explorePlaces, setExplorePlaces] = useState<ExplorePlaceRow[]>([]);
+  const [outingBump, setOutingBump] = useState(0);
+
+  const loadExplorePlaces = useCallback(async () => {
+    const res = await fetch("/api/explore");
+    const j = (await res.json()) as { places?: ExplorePlaceRow[] };
+    setExplorePlaces(j.places ?? []);
+  }, []);
+
+  useEffect(() => {
+    void loadExplorePlaces();
+  }, [loadExplorePlaces]);
+
+  useEffect(() => {
+    if (socialMapLayer === "off" || !profile?.active_user_id) {
+      setSocialFeedGeojson(null);
+      return;
+    }
+    let cancelled = false;
+    const u = new URL("/api/social/feed-map", window.location.origin);
+    u.searchParams.set("layer", socialMapLayer);
+    if (socialMapLayer === "group") u.searchParams.set("groupId", DEMO_GROUP_CAI);
+    void (async () => {
+      const res = await fetch(u.toString());
+      const j = (await res.json()) as { geojson?: FeatureCollection; error?: string };
+      if (cancelled) return;
+      if (res.ok && j.geojson) setSocialFeedGeojson(j.geojson);
+      else setSocialFeedGeojson(null);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [socialMapLayer, profile?.active_user_id, socialFeedBump]);
 
   useEffect(() => {
     setSelectedStop(null);
     setRelocatingStopId(null);
     setRouteViz({ mode: "full", focusId: null });
     setTrackHoverKm(null);
+    setTrackHoverDistKm(Number.POSITIVE_INFINITY);
+    setMapWaterPois([]);
+    setMapServicePois([]);
   }, [activeItineraryId]);
 
-  const sortedStops = useMemo(
-    () => [...stops].sort((a, b) => a.order_index - b.order_index),
-    [stops]
-  );
+  const sortedStops = useMemo(() => sortStopsByOrder(stops), [stops]);
+
+  const maxAllowedLegIndex = useMemo(() => {
+    const ml = maxLegIndex(sortedStops);
+    if (ml < 0) return 0;
+    return canStartNextLeg(sortedStops) ? ml + 1 : ml;
+  }, [sortedStops]);
+
+  const legDayOptions = useMemo(() => {
+    const ml = maxLegIndex(sortedStops);
+    const seen = new Set<number>();
+    for (const s of sortedStops) seen.add(s.leg_index ?? 0);
+    const sortedLegs = [...seen].sort((a, b) => a - b);
+    const opts = sortedLegs.map((L) => ({ value: L, label: `Giorno ${L + 1}` }));
+    if (sortedStops.length === 0) {
+      return [{ value: 0, label: "Giorno 1" }];
+    }
+    if (canStartNextLeg(sortedStops) && ml >= 0) {
+      opts.push({ value: ml + 1, label: `Giorno ${ml + 2} (nuovo)` });
+    }
+    return opts.length ? opts : [{ value: 0, label: "Giorno 1" }];
+  }, [sortedStops]);
+
+  useEffect(() => {
+    if (pendingLegIndex > maxAllowedLegIndex) setPendingLegIndex(maxAllowedLegIndex);
+  }, [pendingLegIndex, maxAllowedLegIndex]);
 
   const fullCoords = useMemo((): Position[] | null => {
     const c = displayLine?.geometry?.coordinates;
     if (!c?.length) return null;
     return c as Position[];
   }, [displayLine]);
+
+  const legDayStats = useMemo(
+    () => (stops.length ? computeLegDayStats(stops, fullCoords) : []),
+    [stops, fullCoords]
+  );
+
+  const pendingInsertionPreview = useMemo(() => {
+    if (!pendingWaypoint) return { line: "", warn: null as string | null };
+    const { lat, lng } = pendingWaypoint;
+    const k = appendInsertionOrderIndex(sortedStops, pendingLegIndex);
+    const line = describeInsertionPreview(sortedStops, k, "auto");
+    let warn: string | null = null;
+    if (fullCoords && fullCoords.length >= 2) {
+      const hit = nearestPointOnPolyline(fullCoords, [lng, lat]);
+      if (!hit || hit.distKm > DEFAULT_MAX_SNAP_KM) {
+        warn = `Sei oltre ~${DEFAULT_MAX_SNAP_KM} km dalla traccia salvata: l’ordine nella giornata segue l’elenco tappe, non la proiezione sulla curva.`;
+      }
+    }
+    return { line, warn };
+  }, [pendingWaypoint, sortedStops, fullCoords, pendingLegIndex]);
 
   const derivedRoute = useMemo(() => {
     if (!displayLine || !fullCoords || fullCoords.length < 2) {
@@ -248,13 +366,21 @@ function Shell() {
       setPendingPointKind("waypoint");
       setPendingImageUrl("");
       setPendingWebsiteUrl("");
+      setPendingPhone("");
+      const sortedNow = sortStopsByOrder(stops);
+      const ml = maxLegIndex(sortedNow);
+      setPendingLegIndex(ml >= 0 ? ml : 0);
       setPendingWaypoint({ itineraryId: id, lat, lng });
     },
-    [activeItineraryId, createNewItinerary, relocatingStopId, selectItinerary]
+    [activeItineraryId, createNewItinerary, relocatingStopId, selectItinerary, stops]
   );
 
   const confirmPendingWaypoint = async () => {
     if (!pendingWaypoint) return;
+    if (pendingLegIndex < 0 || pendingLegIndex > maxAllowedLegIndex) {
+      alert("Seleziona una giornata valida.");
+      return;
+    }
     const name = pendingName.trim() || "Punto mappa";
     const segment_type =
       pendingPointKind === "destination" ? "stop" : pendingPointKind === "lodging" ? "lodging" : "poi";
@@ -271,17 +397,22 @@ function Shell() {
       pendingPointKind === "lodging" && pendingWebsiteUrl.trim()
         ? pendingWebsiteUrl.trim()
         : null;
+    const phone =
+      pendingPointKind === "lodging" && pendingPhone.trim() ? pendingPhone.trim() : null;
+    const body: Record<string, unknown> = {
+      segment_type,
+      name,
+      lat: pendingWaypoint.lat,
+      lng: pendingWaypoint.lng,
+      image_url,
+      website_url,
+      phone,
+      leg_index: pendingLegIndex,
+    };
     await fetch(`/api/itineraries/${pendingWaypoint.itineraryId}/stops`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        segment_type,
-        name,
-        lat: pendingWaypoint.lat,
-        lng: pendingWaypoint.lng,
-        image_url,
-        website_url,
-      }),
+      body: JSON.stringify(body),
     });
     const id = pendingWaypoint.itineraryId;
     setPendingWaypoint(null);
@@ -382,26 +513,31 @@ function Shell() {
       const activity = normalizeActivityForRouting(itinerary?.activity ?? "hiking");
       const profile = activityToOsrmProfile(activity);
       const seq = ++osrmRequestSeq.current;
-      const res = await fetch("/api/route/osrm", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          coordinates,
-          activity,
-          profile,
-        }),
-      });
-      const j = (await res.json()) as { feature?: Feature<LineString>; error?: string };
-      if (seq !== osrmRequestSeq.current) return;
-      if (res.ok && j.feature?.geometry?.type === "LineString") {
-        await updateLineOnServer(j.feature);
-        return;
-      }
-      if (!opts?.silent) {
-        alert(
-          j.error ??
-            "OSRM non ha trovato un percorso tra queste tappe. Avvicina i punti lungo strade/sentieri in OpenStreetMap, oppure importa un GPX."
-        );
+      setRouteComputing(true);
+      try {
+        const res = await fetch("/api/route/osrm", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            coordinates,
+            activity,
+            profile,
+          }),
+        });
+        const j = (await res.json()) as { feature?: Feature<LineString>; error?: string };
+        if (seq !== osrmRequestSeq.current) return;
+        if (res.ok && j.feature?.geometry?.type === "LineString") {
+          await updateLineOnServer(j.feature);
+          return;
+        }
+        if (!opts?.silent) {
+          alert(
+            j.error ??
+              "OSRM non ha trovato un percorso tra queste tappe. Avvicina i punti lungo strade/sentieri in OpenStreetMap, oppure importa un GPX."
+          );
+        }
+      } finally {
+        if (seq === osrmRequestSeq.current) setRouteComputing(false);
       }
     },
     [activeItineraryId, stops, itinerary?.activity, hasGpxTrack, updateLineOnServer]
@@ -435,183 +571,392 @@ function Shell() {
   }, [activeItineraryId, stopsRouteKey, hasGpxTrack, savedLineGeojson]);
 
   return (
-    <div className="flex h-[100dvh] flex-col bg-zinc-950 text-zinc-100">
-      <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-zinc-800 px-3 py-2">
-        <h1 className="text-sm font-semibold tracking-tight text-emerald-400">Trail Planner</h1>
-        <select
-          className="max-w-[200px] rounded border border-zinc-600 bg-zinc-900 px-2 py-1 text-xs"
-          value={activeItineraryId ?? ""}
-          onChange={(e) => void selectItinerary(e.target.value || null)}
-        >
-          <option value="">— Itinerario —</option>
-          {itineraries.map((it) => (
-            <option key={it.id} value={it.id}>
-              {it.name}
-            </option>
-          ))}
-        </select>
-        <button
-          type="button"
-          className="rounded bg-zinc-800 px-2 py-1 text-xs hover:bg-zinc-700"
-          onClick={() => void createNewItinerary()}
-        >
-          Nuovo
-        </button>
-        <button
-          type="button"
-          className="rounded bg-zinc-800 px-2 py-1 text-xs hover:bg-zinc-700"
-          onClick={() => setProfileOpen(true)}
-        >
-          Profilo
-        </button>
-        <span className="text-xs text-zinc-500">
-          {profile?.display_name ? `Ciao, ${profile.display_name}` : ""}
-        </span>
-        <div className="ml-auto flex flex-wrap gap-1">
+    <div className="flex h-[100dvh] flex-col bg-brand-bg text-brand-text">
+      <header className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-brand-border px-3 py-2.5">
+        <BrandMark className="shrink-0" />
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 sm:max-w-md">
+          <label className="sr-only" htmlFor="itinerary-select">
+            Itinerario attivo
+          </label>
+          <select
+            id="itinerary-select"
+            className="min-w-0 max-w-[min(100%,220px)] flex-1 rounded-lg border border-brand-border bg-brand-surface px-2.5 py-1.5 text-xs text-brand-text focus:border-brand-accent focus:outline-none focus:ring-1 focus:ring-brand-accent/40"
+            value={activeItineraryId ?? ""}
+            onChange={(e) => void selectItinerary(e.target.value || null)}
+          >
+            <option value="">Scegli itinerario…</option>
+            {itineraries.map((it) => (
+              <option key={it.id} value={it.id}>
+                {it.name}
+              </option>
+            ))}
+          </select>
           <button
             type="button"
-            className="rounded bg-zinc-800 px-2 py-1 text-xs"
+            className="rounded-lg border border-brand-border bg-brand-elevated px-2.5 py-1.5 text-xs font-medium text-brand-text hover:bg-brand-border/60"
+            onClick={() => void createNewItinerary()}
+          >
+            Nuovo
+          </button>
+          <button
+            type="button"
+            className="rounded-lg border border-brand-border bg-brand-elevated px-2.5 py-1.5 text-xs font-medium text-brand-text hover:bg-brand-border/60"
+            onClick={() => setProfileOpen(true)}
+          >
+            Profilo
+          </button>
+        </div>
+        {profile?.display_name ? (
+          <span className="hidden text-xs text-brand-muted sm:inline">{profile.display_name}</span>
+        ) : null}
+        <div className="flex w-full flex-wrap gap-1 gap-y-1.5 sm:ml-auto sm:w-auto">
+          <button
+            type="button"
+            disabled={!activeItineraryId}
+            title={activeItineraryId ? "Scarica traccia GPX" : "Seleziona o crea un itinerario"}
+            className="tp-btn-tool"
             onClick={() => void downloadGpx()}
           >
             GPX ↓
           </button>
-          <button type="button" className="rounded bg-zinc-800 px-2 py-1 text-xs" onClick={importGpx}>
+          <button
+            type="button"
+            disabled={!activeItineraryId}
+            title={activeItineraryId ? "Importa file GPX" : "Seleziona o crea un itinerario"}
+            className="tp-btn-tool"
+            onClick={importGpx}
+          >
             GPX ↑
           </button>
-          <button type="button" className="rounded bg-zinc-800 px-2 py-1 text-xs" onClick={() => void downloadIcs()}>
+          <button
+            type="button"
+            disabled={!activeItineraryId}
+            title={activeItineraryId ? "Calendario (.ics)" : "Seleziona o crea un itinerario"}
+            className="tp-btn-tool"
+            onClick={() => void downloadIcs()}
+          >
             ICS
           </button>
           <button
             type="button"
-            className="rounded bg-zinc-800 px-2 py-1 text-xs"
-            title="Ricalcola subito il percorso OSRM (anche se hai importato GPX)"
+            disabled={!activeItineraryId || stops.length < 2}
+            className="tp-btn-tool"
+            title="Ricalcola il percorso sulle strade (OSRM)"
             onClick={() => void drawLineFromStops()}
           >
-            Traccia su strada
+            OSRM
           </button>
           <button
             type="button"
-            className="rounded bg-zinc-800 px-2 py-1 text-xs"
+            className="tp-btn-tool text-brand-muted hover:text-brand-text"
+            title="Info prenotazioni (demo)"
             onClick={() => setBookingOpen(true)}
           >
-            Conferma prenotazione
+            Prenota
           </button>
         </div>
       </header>
 
+      {!activeItineraryId ? (
+        <div className="shrink-0 border-b border-brand-accent/20 bg-brand-accent-dim px-3 py-2.5 text-[11px] leading-relaxed text-brand-muted">
+          <span className="font-medium text-brand-accent">Per iniziare</span> — scegli un itinerario sopra, oppure{" "}
+          <span className="text-brand-text">Nuovo</span> o un punto sulla mappa. La chat pianifica con te;{" "}
+          <span className="text-brand-text">GPX ↑</span> importa una traccia.
+        </div>
+      ) : null}
+
       <div className="flex min-h-0 flex-1 flex-col gap-2 p-2 md:flex-row">
-        <section className="flex min-h-0 w-full min-w-0 flex-1 flex-col gap-2 md:max-w-[min(100%,520px)]">
+        <section
+          className={`flex min-h-0 w-full min-w-0 flex-1 flex-col gap-2 ${
+            mapPanelMode === "hidden" ? "md:max-w-none md:flex-[2]" : "md:max-w-[min(100%,520px)]"
+          }`}
+        >
           <BrowserPanel />
-          <div className="flex shrink-0 gap-1 text-xs">
-            {(["chat", "explore", "weather"] as const).map((t) => (
+          <nav
+            className="flex shrink-0 gap-1 p-0.5"
+            aria-label="Sezioni principali"
+          >
+            {(["chat", "explore", "weather", "me"] as const).map((t) => (
               <button
                 key={t}
                 type="button"
-                className={`rounded px-2 py-1 capitalize ${
-                  tab === t ? "bg-emerald-800 text-white" : "bg-zinc-800 text-zinc-400"
-                }`}
+                className={`tp-tab ${tab === t ? "tp-tab-active" : "tp-tab-inactive"}`}
                 onClick={() => {
                   setTab(t);
                   if (t === "weather") void refreshWeather();
                 }}
               >
-                {t === "chat" ? "Chat" : t === "explore" ? "Esplora" : "Meteo"}
+                {t === "chat"
+                  ? "Chat"
+                  : t === "explore"
+                    ? "Esplora"
+                    : t === "weather"
+                      ? "Meteo"
+                      : "Io"}
               </button>
             ))}
-          </div>
+          </nav>
           {tab === "chat" && <ChatPanel />}
-          {tab === "explore" && <ExploreTab />}
+          {tab === "explore" && (
+            <ExploreTab
+              places={explorePlaces}
+              onRefresh={loadExplorePlaces}
+              onOpenChat={() => setTab("chat")}
+              onStartNewItinerary={() => void createNewItinerary()}
+              onFlyToPlace={(lat, lng) => {
+                setFlyToRequest({ lng, lat, zoom: 12 });
+                setMapPanelMode("expanded");
+              }}
+            />
+          )}
+          {tab === "me" && (
+            <UserHubTab
+              itineraries={itineraries}
+              onSelectItinerary={(id) => void selectItinerary(id)}
+              onOpenProfile={() => setProfileOpen(true)}
+              refreshKey={`${profile?.active_user_id ?? ""}-${outingBump}`}
+              socialMapLayer={socialMapLayer}
+              onSocialMapLayerChange={setSocialMapLayer}
+              onShowSocialOnMap={(layer) => {
+                setSocialMapLayer(layer);
+                setMapPanelMode("expanded");
+              }}
+            />
+          )}
           {tab === "weather" && <WeatherTabPanel />}
         </section>
 
-        <section className="flex min-h-0 min-w-0 flex-[1.25] flex-col gap-2 overflow-hidden">
+        <section
+          className={`flex min-h-0 min-w-0 flex-col gap-2 overflow-hidden ${
+            mapPanelMode === "hidden" ? "md:max-w-md md:shrink-0" : "flex-[1.25]"
+          }`}
+        >
+          <div className="flex flex-wrap items-end justify-between gap-2">
+            <RouteVariantTabs
+              variants={routeVariants}
+              activeVariantId={itinerary?.active_route_variant_id ?? null}
+              onSelect={(id) => void activateRouteVariant(id)}
+            />
+            <label className="flex items-center gap-1 text-[10px] text-brand-muted">
+              <span className="shrink-0 text-brand-faint">Social</span>
+              <select
+                className="max-w-[130px] rounded-lg border border-brand-border bg-brand-surface px-1.5 py-0.5 text-[10px] text-brand-text focus:border-brand-accent focus:outline-none focus:ring-1 focus:ring-brand-accent/30"
+                value={socialMapLayer}
+                onChange={(e) =>
+                  setSocialMapLayer(e.target.value as typeof socialMapLayer)
+                }
+                title="Percorsi di uscite recenti (POC locale)"
+              >
+                <option value="off">Spento</option>
+                <option value="friends">Amici</option>
+                <option value="group">Gruppo CAI</option>
+                <option value="following">Seguiti</option>
+                <option value="public">Pubblico</option>
+              </select>
+            </label>
+            <div className="flex flex-wrap gap-0.5">
+              <button
+                type="button"
+                title="Mappa compatta"
+                className={`rounded-lg px-2 py-0.5 text-[10px] font-medium ${
+                  mapPanelMode === "compact"
+                    ? "bg-brand-accent-dim text-brand-accent ring-1 ring-brand-accent/35"
+                    : "bg-brand-elevated text-brand-muted hover:bg-brand-border/50 hover:text-brand-text"
+                }`}
+                onClick={() => setMapPanelMode("compact")}
+              >
+                Compatta
+              </button>
+              <button
+                type="button"
+                title="Mappa grande"
+                className={`rounded-lg px-2 py-0.5 text-[10px] font-medium ${
+                  mapPanelMode === "expanded"
+                    ? "bg-brand-accent-dim text-brand-accent ring-1 ring-brand-accent/35"
+                    : "bg-brand-elevated text-brand-muted hover:bg-brand-border/50 hover:text-brand-text"
+                }`}
+                onClick={() => setMapPanelMode("expanded")}
+              >
+                Grande
+              </button>
+              <button
+                type="button"
+                title="Nascondi mappa"
+                className={`rounded-lg px-2 py-0.5 text-[10px] font-medium ${
+                  mapPanelMode === "hidden"
+                    ? "bg-brand-accent-dim text-brand-accent ring-1 ring-brand-accent/35"
+                    : "bg-brand-elevated text-brand-muted hover:bg-brand-border/50 hover:text-brand-text"
+                }`}
+                onClick={() => setMapPanelMode("hidden")}
+              >
+                Nascondi
+              </button>
+            </div>
+          </div>
+          <AvalancheInfoBar activity={itinerary?.activity ?? "hiking"} stops={stops} />
           <MapActivitySettings />
-          <div className="flex min-h-[280px] flex-1 overflow-hidden rounded-lg border border-zinc-700/50 sm:min-h-[320px] md:min-h-[380px]">
-            <div className="relative min-h-0 min-w-0 flex-1">
-              {relocatingStopId && (
-                <div className="pointer-events-auto absolute left-2 right-2 top-2 z-[26] flex flex-wrap items-center justify-between gap-2 rounded-lg border border-sky-600/50 bg-sky-950/95 px-2 py-1.5 text-[11px] text-sky-100 shadow-lg backdrop-blur-sm">
-                  <span>Clicca sulla mappa per la nuova posizione della tappa.</span>
+          <div
+            className={`flex overflow-hidden rounded-lg border border-zinc-700/50 transition-[min-height] duration-200 ${
+              mapPanelMode === "hidden"
+                ? "min-h-[140px] shrink-0"
+                : mapPanelMode === "compact"
+                  ? "h-[min(240px,42vh)] min-h-[200px] max-h-[280px] shrink-0"
+                  : "min-h-[280px] flex-1 sm:min-h-[320px] md:min-h-[380px]"
+            }`}
+          >
+            {mapPanelMode === "hidden" ? (
+              <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center gap-2 bg-brand-bg/90 px-4 py-6 text-center">
+                  <p className="text-[11px] text-brand-muted">Mappa nascosta — più spazio per chat.</p>
                   <button
                     type="button"
-                    className="rounded bg-zinc-700 px-2 py-0.5 text-[10px] text-zinc-200 hover:bg-zinc-600"
-                    onClick={() => setRelocatingStopId(null)}
+                    className="rounded-lg bg-brand-accent px-3 py-1.5 text-xs font-medium text-brand-bg hover:brightness-110"
+                    onClick={() => setMapPanelMode("compact")}
                   >
-                    Annulla
+                    Mostra mappa
                   </button>
                 </div>
-              )}
-              <MapView
-                className="h-full w-full min-h-0"
-                displayLine={derivedRoute.lineForMap}
-                stops={stops}
-                mapPois={mapPois}
-                activity={itinerary?.activity ?? "hiking"}
-                itineraryId={activeItineraryId}
-                visibleStopIds={derivedRoute.visibleStopIds}
-                fullLineCoords={fullCoords}
-                onTrackHoverKm={setTrackHoverKm}
-                flyToRequest={flyToRequest}
-                onFlyToRequestConsumed={onFlyToConsumed}
-                onMapBackgroundClick={onMapBackgroundClick}
-                onStopSelect={onStopSelect}
-                onStopDragEnd={onStopDragEnd}
-                allowStopDrag={!relocatingStopId}
-                onRemoveMapPoi={removeMapPoi}
-              />
-            {selectedStop && activeItineraryId === selectedStop.itinerary_id && (
-              <StopEditSheet
-                stop={selectedStop}
-                onClose={() => setSelectedStop(null)}
-                onRemove={async () => {
-                  if (!activeItineraryId) return;
-                  await fetch(`/api/itineraries/${activeItineraryId}/stops/${selectedStop.id}`, {
-                    method: "DELETE",
-                  });
-                  setSelectedStop(null);
-                  await selectItinerary(activeItineraryId);
-                }}
-                onStartRelocate={() => {
-                  setRelocatingStopId(selectedStop.id);
-                  setSelectedStop(null);
-                }}
-                onSave={async (patch) => {
-                  if (!activeItineraryId) return;
-                  const res = await fetch(`/api/itineraries/${activeItineraryId}/stops/${selectedStop.id}`, {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(patch),
-                  });
-                  const j = (await res.json()) as { stop?: StopRow };
-                  if (res.ok && j.stop) setSelectedStop(j.stop);
-                  await selectItinerary(activeItineraryId);
-                }}
-              />
+                <StopsSidebar
+                  stops={stops}
+                  focusStopId={routeViz.focusId}
+                  vizMode={routeViz.mode}
+                  onVizModeChange={(mode, focusId) => setRouteViz({ mode, focusId })}
+                  onStopClick={(s) => {
+                    setPendingWaypoint(null);
+                    setSelectedStop(s);
+                  }}
+                  onFlyToStop={(s) => setFlyToRequest({ lng: s.lng, lat: s.lat, zoom: 14 })}
+                  hasActiveItinerary={!!activeItineraryId}
+                  onReorderLeg={async (legIndex, orderedIds) => {
+                    if (!activeItineraryId) return;
+                    const res = await fetch(`/api/itineraries/${activeItineraryId}/stops/reorder`, {
+                      method: "PATCH",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ orderedIds, legIndex }),
+                    });
+                    if (res.ok) await selectItinerary(activeItineraryId);
+                  }}
+                />
+              </div>
+            ) : (
+              <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+                <div className="relative min-h-0 min-w-0 flex-1">
+                  {relocatingStopId && (
+                    <div className="pointer-events-auto absolute left-2 right-2 top-2 z-[26] flex flex-wrap items-center justify-between gap-2 rounded-lg border border-sky-600/50 bg-sky-950/95 px-2 py-1.5 text-[11px] text-sky-100 shadow-lg backdrop-blur-sm">
+                      <span>Clicca sulla mappa per la nuova posizione della tappa.</span>
+                      <button
+                        type="button"
+                        className="rounded bg-zinc-700 px-2 py-0.5 text-[10px] text-zinc-200 hover:bg-zinc-600"
+                        onClick={() => setRelocatingStopId(null)}
+                      >
+                        Annulla
+                      </button>
+                    </div>
+                  )}
+                  <MapView
+                    className="h-full w-full min-h-0"
+                    mapPanelMode={mapPanelMode}
+                    socialFeedGeojson={socialFeedGeojson}
+                    displayLine={derivedRoute.lineForMap}
+                    stops={stops}
+                    mapPois={mapPois}
+                    activity={itinerary?.activity ?? "hiking"}
+                    itineraryId={activeItineraryId}
+                    visibleStopIds={derivedRoute.visibleStopIds}
+                    fullLineCoords={fullCoords}
+                    onTrackHover={(s) => {
+                      setTrackHoverKm(s.alongKm);
+                      setTrackHoverDistKm(s.distKm);
+                    }}
+                    flyToRequest={flyToRequest}
+                    onFlyToRequestConsumed={onFlyToConsumed}
+                    onMapBackgroundClick={onMapBackgroundClick}
+                    onStopSelect={onStopSelect}
+                    onStopDragEnd={onStopDragEnd}
+                    allowStopDrag={!relocatingStopId}
+                    onRemoveMapPoi={removeMapPoi}
+                    osmWaterPois={mapWaterPois}
+                    osmServicePois={mapServicePois}
+                    catalogExplorePlaces={explorePlaces}
+                  />
+                  {selectedStop && activeItineraryId === selectedStop.itinerary_id && (
+                    <StopEditSheet
+                      stop={selectedStop}
+                      stopIndex={Math.max(
+                        0,
+                        sortedStops.findIndex((s) => s.id === selectedStop.id)
+                      )}
+                      stopsTotal={sortedStops.length}
+                      onClose={() => setSelectedStop(null)}
+                      onRemove={async () => {
+                        if (!activeItineraryId) return;
+                        await fetch(`/api/itineraries/${activeItineraryId}/stops/${selectedStop.id}`, {
+                          method: "DELETE",
+                        });
+                        setSelectedStop(null);
+                        await selectItinerary(activeItineraryId);
+                      }}
+                      onStartRelocate={() => {
+                        setRelocatingStopId(selectedStop.id);
+                        setSelectedStop(null);
+                      }}
+                      onSave={async (patch) => {
+                        if (!activeItineraryId) return;
+                        const res = await fetch(`/api/itineraries/${activeItineraryId}/stops/${selectedStop.id}`, {
+                          method: "PATCH",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify(patch),
+                        });
+                        const j = (await res.json()) as { stop?: StopRow };
+                        if (res.ok && j.stop) setSelectedStop(j.stop);
+                        await selectItinerary(activeItineraryId);
+                      }}
+                    />
+                  )}
+                  <MapClickSheet
+                    open={!!pendingWaypoint}
+                    name={pendingName}
+                    onNameChange={setPendingName}
+                    pointKind={pendingPointKind}
+                    onPointKindChange={setPendingPointKind}
+                    imageUrl={pendingImageUrl}
+                    onImageUrlChange={setPendingImageUrl}
+                    websiteUrl={pendingWebsiteUrl}
+                    onWebsiteUrlChange={setPendingWebsiteUrl}
+                    phone={pendingPhone}
+                    onPhoneChange={setPendingPhone}
+                    legDayIndex={pendingLegIndex}
+                    legDayOptions={legDayOptions}
+                    onLegDayIndexChange={setPendingLegIndex}
+                    insertionPreviewLine={pendingInsertionPreview.line}
+                    insertionWarning={pendingInsertionPreview.warn}
+                    onConfirm={() => void confirmPendingWaypoint()}
+                    onCancel={() => setPendingWaypoint(null)}
+                  />
+                </div>
+                <StopsSidebar
+                  stops={stops}
+                  focusStopId={routeViz.focusId}
+                  vizMode={routeViz.mode}
+                  onVizModeChange={(mode, focusId) => setRouteViz({ mode, focusId })}
+                  onStopClick={(s) => {
+                    setPendingWaypoint(null);
+                    setSelectedStop(s);
+                  }}
+                  onFlyToStop={(s) => setFlyToRequest({ lng: s.lng, lat: s.lat, zoom: 14 })}
+                  hasActiveItinerary={!!activeItineraryId}
+                  onReorderLeg={async (legIndex, orderedIds) => {
+                    if (!activeItineraryId) return;
+                    const res = await fetch(`/api/itineraries/${activeItineraryId}/stops/reorder`, {
+                      method: "PATCH",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ orderedIds, legIndex }),
+                    });
+                    if (res.ok) await selectItinerary(activeItineraryId);
+                  }}
+                />
+              </div>
             )}
-              <MapClickSheet
-                open={!!pendingWaypoint}
-                name={pendingName}
-                onNameChange={setPendingName}
-                pointKind={pendingPointKind}
-                onPointKindChange={setPendingPointKind}
-                imageUrl={pendingImageUrl}
-                onImageUrlChange={setPendingImageUrl}
-                websiteUrl={pendingWebsiteUrl}
-                onWebsiteUrlChange={setPendingWebsiteUrl}
-                onConfirm={() => void confirmPendingWaypoint()}
-                onCancel={() => setPendingWaypoint(null)}
-              />
-            </div>
-            <StopsSidebar
-              stops={stops}
-              focusStopId={routeViz.focusId}
-              vizMode={routeViz.mode}
-              onVizModeChange={(mode, focusId) => setRouteViz({ mode, focusId })}
-              onStopClick={(s) => {
-                setPendingWaypoint(null);
-                setSelectedStop(s);
-              }}
-              onFlyToStop={(s) => setFlyToRequest({ lng: s.lng, lat: s.lat, zoom: 14 })}
-            />
           </div>
           <MapStatsColumn
             lastImport={lastImport}
@@ -622,9 +967,21 @@ function Shell() {
               setTab("weather");
               void refreshWeather();
             }}
+            onWaterForMap={setMapWaterPois}
+            onServicesForMap={setMapServicePois}
+            routeComputing={routeComputing}
+            legDayStats={legDayStats}
+            activeItineraryId={activeItineraryId}
+            hasActiveUser={!!profile?.active_user_id}
+            hasLineOnMap={!!itinerary?.line_geojson?.trim()}
+            onOutingPublished={() => {
+              setOutingBump((x) => x + 1);
+              setSocialFeedBump((x) => x + 1);
+            }}
           >
             <ElevationChart
               hoverKm={trackHoverKm}
+              hoverDistKm={trackHoverDistKm}
               vizRange={derivedRoute.vizKmRange}
               stopMarkers={derivedRoute.stopMeta}
             />

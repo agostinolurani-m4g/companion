@@ -24,6 +24,7 @@ export async function PATCH(req: Request) {
       wind_ms: number;
       frost_temp_c: number;
       timezone: string;
+      active_user_id: string | null;
     }>;
     updateProfile(body);
     return NextResponse.json({ profile: getProfile() });

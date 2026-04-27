@@ -6,7 +6,8 @@
     "dev": "next dev -p 3001",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "vitest run"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.87.0",
@@ -19,6 +20,7 @@
     "uuid": "^13.0.0"
   },
   "devDependencies": {
+    "vitest": "^3.2.4",
     "@tailwindcss/postcss": "^4",
     "@types/better-sqlite3": "^7.6.13",
     "@types/geojson": "^7946.0.16",

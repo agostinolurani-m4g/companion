@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="HMR Companion">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1221"/>
+      <stop offset="1" stop-color="#1c2540"/>
+    </linearGradient>
+    <linearGradient id="peak" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#38bdf8"/>
+      <stop offset="1" stop-color="#0ea5e9"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="56" fill="url(#bg)"/>
+  <g transform="translate(24 28)">
+    <path d="M0 170 L48 96 L80 132 L128 50 L176 132 L208 102 L208 170 Z" fill="url(#peak)"/>
+    <path d="M90 90 L128 50 L166 90 L150 105 L128 82 L106 105 Z" fill="#e0f2fe"/>
+  </g>
+  <text x="128" y="232" font-family="ui-sans-serif,system-ui,sans-serif" font-weight="700" font-size="34" text-anchor="middle" fill="#e0f2fe" letter-spacing="4">HMR</text>
+</svg>

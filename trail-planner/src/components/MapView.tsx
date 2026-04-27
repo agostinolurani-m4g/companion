@@ -3,12 +3,17 @@
 import { useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import type { Feature, LineString } from "geojson";
-import type { MapPoiRow, StopRow } from "@/lib/types";
+import type { Feature, FeatureCollection, LineString } from "geojson";
+import type { ExplorePlaceRow, MapPoiRow, StopRow } from "@/lib/types";
+import type { TrailServicePoi } from "@/lib/overpass";
 import { MAP_POI_CATEGORY_COLOR, mapPoiCategoryLabel } from "@/lib/map-poi-ui";
 import { buildWindyEmbed2Url, buildWindyMainSiteUrl } from "@/lib/windy-embed";
+import { trackSnapMaxDistKm } from "@/lib/map-track-ui";
+import { isPassThroughPoint } from "@/lib/stop-segment";
 import { nearestPointOnPolyline } from "@/lib/track-geometry";
 import { usePlanner } from "@/context/PlannerProvider";
+import type { MapPanelMode } from "@/lib/planner-events";
+import { googleMapsSearchUrl } from "@/lib/maps-links";
 import type { Position } from "geojson";
 
 const ACTIVITY_COLORS: Record<string, string> = {
@@ -41,16 +46,34 @@ type Props = {
   visibleStopIds?: Set<string> | null;
   /** Traccia completa per cursore → km in altimetria (anche se la linea è tagliata). */
   fullLineCoords?: Position[] | null;
-  onTrackHoverKm?: (km: number | null) => void;
+  /** Cursore sulla traccia: km lungo linea se entro soglia (dipende dallo zoom), altrimenti null + distanza dal percorso. */
+  onTrackHover?: (state: { alongKm: number | null; distKm: number }) => void;
   flyToRequest?: { lng: number; lat: number; zoom?: number } | null;
   onFlyToRequestConsumed?: () => void;
   onRemoveMapPoi?: (id: string) => void;
   className?: string;
+  /** Cambio layout contenitore: serve MapLibre per ridimensionare. */
+  mapPanelMode?: MapPanelMode;
+  /** Feed sociale (uscite amici/gruppi) — linee tratteggiate sopra la traccia principale. */
+  socialFeedGeojson?: FeatureCollection | null;
+  /** Fontane / acqua OSM lungo bbox percorso (cerchi piccoli). */
+  osmWaterPois?: { lat: number; lng: number }[];
+  /** Rifugi e servizi quando l’utente attiva il toggle nel pannello OSM. */
+  osmServicePois?: TrailServicePoi[];
+  /** Luoghi dal catalogo Esplora (tabella locale, non solo POI itinerario). */
+  catalogExplorePlaces?: ExplorePlaceRow[];
 };
 
 function poiColor(category: string): string {
   return MAP_POI_CATEGORY_COLOR[category] ?? MAP_POI_CATEGORY_COLOR.other;
 }
+
+const TRAIL_SERVICE_LABEL: Record<TrailServicePoi["kind"], string> = {
+  hut: "Rifugio",
+  bivouac: "Bivacco",
+  shelter: "Riparo / ricovero",
+  restaurant: "Ristoro",
+};
 
 export function MapView({
   displayLine,
@@ -64,11 +87,16 @@ export function MapView({
   itineraryId = null,
   visibleStopIds = null,
   fullLineCoords = null,
-  onTrackHoverKm,
+  onTrackHover,
   flyToRequest = null,
   onFlyToRequestConsumed,
   onRemoveMapPoi,
   className,
+  mapPanelMode = "compact",
+  socialFeedGeojson = null,
+  osmWaterPois = [],
+  osmServicePois = [],
+  catalogExplorePlaces = [],
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -76,14 +104,16 @@ export function MapView({
   clickRef.current = onMapBackgroundClick;
   const mapPoisRef = useRef(mapPois);
   mapPoisRef.current = mapPois;
+  const osmServicePoisRef = useRef(osmServicePois);
+  osmServicePoisRef.current = osmServicePois;
   const stopsForMap =
     visibleStopIds != null
       ? stops.filter((s) => visibleStopIds.has(s.id))
       : stops;
   const stopsRef = useRef(stopsForMap);
   stopsRef.current = stopsForMap;
-  const onTrackHoverRef = useRef(onTrackHoverKm);
-  onTrackHoverRef.current = onTrackHoverKm;
+  const onTrackHoverRef = useRef(onTrackHover);
+  onTrackHoverRef.current = onTrackHover;
   const fullLineCoordsRef = useRef(fullLineCoords);
   fullLineCoordsRef.current = fullLineCoords;
   const flyConsumedRef = useRef(onFlyToRequestConsumed);
@@ -104,11 +134,18 @@ export function MapView({
   allowStopDragRef.current = allowStopDrag;
   const [mapReady, setMapReady] = useState(false);
   const [selectedPoi, setSelectedPoi] = useState<MapPoiRow | null>(null);
+  const [selectedOsmService, setSelectedOsmService] = useState<TrailServicePoi | null>(null);
   const { windyOverlay, setWindyOverlay } = usePlanner();
   const windySyncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Ancora temporale fissa per la timeline previsione (non radar). */
   const windyTimeAnchorRef = useRef<number | null>(null);
   const [windyHourStep, setWindyHourStep] = useState(0);
+  /** Punto proiettato sulla traccia per marker rosso + hover altimetria. */
+  const [trackSnap, setTrackSnap] = useState<{
+    lng: number;
+    lat: number;
+    alongKm: number;
+  } | null>(null);
 
   if (!windyOverlay) {
     windyTimeAnchorRef.current = null;
@@ -166,6 +203,50 @@ export function MapView({
     if (!map) return;
     requestAnimationFrame(() => map.resize());
   }, [mapReady, windyOverlay]);
+
+  useEffect(() => {
+    if (!mapReady) return;
+    const map = mapRef.current;
+    if (!map) return;
+    requestAnimationFrame(() => map.resize());
+  }, [mapReady, mapPanelMode]);
+
+  useEffect(() => {
+    if (!mapReady) return;
+    const map = mapRef.current;
+    if (!map?.isStyleLoaded()) return;
+    const data: FeatureCollection = socialFeedGeojson ?? {
+      type: "FeatureCollection",
+      features: [],
+    };
+    if (!map.getSource("social-feed")) {
+      map.addSource("social-feed", { type: "geojson", data });
+      map.addLayer({
+        id: "social-feed-line",
+        type: "line",
+        source: "social-feed",
+        paint: {
+          "line-color": "#c084fc",
+          "line-width": 3,
+          "line-opacity": 0.72,
+          "line-dasharray": [1.2, 1.2],
+        },
+      });
+    } else {
+      (map.getSource("social-feed") as maplibregl.GeoJSONSource).setData(data);
+    }
+  }, [mapReady, socialFeedGeojson]);
+
+  useEffect(() => {
+    if (!mapReady || !containerRef.current || !mapRef.current) return;
+    const map = mapRef.current;
+    const el = containerRef.current;
+    const ro = new ResizeObserver(() => {
+      requestAnimationFrame(() => map.resize());
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [mapReady]);
 
   useEffect(() => {
     if (!mapReady || !windyOverlay) return;
@@ -233,18 +314,47 @@ export function MapView({
     if (!map) return;
     const onMove = (e: maplibregl.MapMouseEvent) => {
       if (dragSessionRef.current) return;
-      const coords = fullLineCoordsRef.current;
+      const canvas = map.getCanvas();
       const cb = onTrackHoverRef.current;
+      const coords = fullLineCoordsRef.current;
+
+      const hitPoi =
+        map.getLayer("explore-poi-circles") &&
+        map.queryRenderedFeatures(e.point, { layers: ["explore-poi-circles"] }).length > 0;
+      const hitCatalog =
+        map.getLayer("catalog-explore-circles") &&
+        map.queryRenderedFeatures(e.point, { layers: ["catalog-explore-circles"] }).length > 0;
+      const hitStop =
+        map.getLayer("stops-circle") &&
+        map.queryRenderedFeatures(e.point, { layers: ["stops-circle"] }).length > 0;
+      if (hitPoi || hitCatalog || hitStop) {
+        setTrackSnap(null);
+        cb?.({ alongKm: null, distKm: Number.POSITIVE_INFINITY });
+        return;
+      }
+
       if (!coords?.length || !cb) {
-        cb?.(null);
+        setTrackSnap(null);
+        cb?.({ alongKm: null, distKm: Number.POSITIVE_INFINITY });
+        canvas.style.cursor = "";
         return;
       }
       const n = nearestPointOnPolyline(coords, [e.lngLat.lng, e.lngLat.lat]);
-      if (n && n.distKm < 0.08) cb(n.alongKm);
-      else cb(null);
+      const maxD = trackSnapMaxDistKm(map.getZoom());
+      if (n && n.distKm < maxD) {
+        cb({ alongKm: n.alongKm, distKm: n.distKm });
+        setTrackSnap({ lng: n.closest[0], lat: n.closest[1], alongKm: n.alongKm });
+        canvas.style.cursor = "crosshair";
+      } else {
+        cb({ alongKm: null, distKm: n?.distKm ?? Number.POSITIVE_INFINITY });
+        setTrackSnap(null);
+        canvas.style.cursor = "";
+      }
     };
     const onLeave = () => {
-      onTrackHoverRef.current?.(null);
+      onTrackHoverRef.current?.({ alongKm: null, distKm: Number.POSITIVE_INFINITY });
+      setTrackSnap(null);
+      map.getCanvas().style.cursor = "";
     };
     map.on("mousemove", onMove);
     map.getCanvas().addEventListener("mouseleave", onLeave);
@@ -253,6 +363,26 @@ export function MapView({
       map.getCanvas().removeEventListener("mouseleave", onLeave);
     };
   }, [mapReady]);
+
+  useEffect(() => {
+    if (!mapReady) return;
+    const map = mapRef.current;
+    if (!map?.getSource("track-snap")) return;
+    const fc: GeoJSON.FeatureCollection =
+      trackSnap != null
+        ? {
+            type: "FeatureCollection",
+            features: [
+              {
+                type: "Feature",
+                properties: {},
+                geometry: { type: "Point", coordinates: [trackSnap.lng, trackSnap.lat] },
+              },
+            ],
+          }
+        : { type: "FeatureCollection", features: [] };
+    (map.getSource("track-snap") as maplibregl.GeoJSONSource).setData(fc);
+  }, [mapReady, trackSnap]);
 
   useEffect(() => {
     if (!mapReady) return;
@@ -279,6 +409,23 @@ export function MapView({
     } else {
       (map.getSource("route") as maplibregl.GeoJSONSource).setData(routeGeo);
       map.setPaintProperty("route-line", "line-color", color);
+    }
+
+    const emptySnap: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
+    if (!map.getSource("track-snap")) {
+      map.addSource("track-snap", { type: "geojson", data: emptySnap });
+      map.addLayer({
+        id: "track-snap-dot",
+        type: "circle",
+        source: "track-snap",
+        paint: {
+          "circle-radius": 5,
+          "circle-color": "#ef4444",
+          "circle-opacity": 0.95,
+          "circle-stroke-width": 1.5,
+          "circle-stroke-color": "#fafafa",
+        },
+      });
     }
 
     const exploreFc: GeoJSON.FeatureCollection = {
@@ -329,6 +476,53 @@ export function MapView({
       (map.getSource("explore-pois") as maplibregl.GeoJSONSource).setData(exploreFc);
     }
 
+    const catalogFc: GeoJSON.FeatureCollection = {
+      type: "FeatureCollection",
+      features: catalogExplorePlaces.map((p) => ({
+        type: "Feature" as const,
+        properties: {
+          id: p.id,
+          name: p.name,
+        },
+        geometry: { type: "Point", coordinates: [p.lng, p.lat] },
+      })),
+    };
+
+    if (!map.getSource("catalog-explore")) {
+      map.addSource("catalog-explore", { type: "geojson", data: catalogFc });
+      map.addLayer({
+        id: "catalog-explore-circles",
+        type: "circle",
+        source: "catalog-explore",
+        paint: {
+          "circle-radius": 8,
+          "circle-color": "#a855f7",
+          "circle-opacity": 0.88,
+          "circle-stroke-width": 2,
+          "circle-stroke-color": "#fafafa",
+        },
+      });
+      map.addLayer({
+        id: "catalog-explore-label",
+        type: "symbol",
+        source: "catalog-explore",
+        layout: {
+          "text-field": ["get", "name"],
+          "text-size": 9,
+          "text-offset": [0, 1.15],
+          "text-anchor": "top",
+          "text-max-width": 10,
+        },
+        paint: {
+          "text-color": "#e9d5ff",
+          "text-halo-color": "#18181b",
+          "text-halo-width": 1,
+        },
+      });
+    } else {
+      (map.getSource("catalog-explore") as maplibregl.GeoJSONSource).setData(catalogFc);
+    }
+
     const points: GeoJSON.FeatureCollection = {
       type: "FeatureCollection",
       features: stopsForMap.map((s) => {
@@ -340,6 +534,8 @@ export function MapView({
             name: s.name,
             stopId: s.id,
             hasPhoto: s.image_url ? 1 : 0,
+            wr: s.waypoint_role,
+            passThrough: isPassThroughPoint(s) ? 1 : 0,
           },
           geometry: { type: "Point", coordinates: [lng, lat] },
         };
@@ -353,10 +549,93 @@ export function MapView({
         type: "circle",
         source: "stops",
         paint: {
-          "circle-radius": ["case", [">", ["get", "hasPhoto"], 0], 9, 7],
-          "circle-color": ["case", [">", ["get", "hasPhoto"], 0], "#fde047", "#fef08a"],
-          "circle-stroke-width": 2,
-          "circle-stroke-color": "#1e293b",
+          "circle-radius": [
+            "case",
+            ["==", ["get", "passThrough"], 1],
+            ["case", [">", ["get", "hasPhoto"], 0], 6, 4],
+            [
+              "case",
+              [">", ["get", "hasPhoto"], 0],
+              9,
+              [
+                "match",
+                ["get", "wr"],
+                "trip_start",
+                10,
+                "trip_end",
+                10,
+                "leg_start",
+                8,
+                "leg_end",
+                8,
+                "via",
+                6,
+                "poi",
+                5,
+                7,
+              ],
+            ],
+          ],
+          "circle-color": [
+            "case",
+            ["==", ["get", "passThrough"], 1],
+            ["case", [">", ["get", "hasPhoto"], 0], "#fde047", "#94a3b8"],
+            [
+              "case",
+              [">", ["get", "hasPhoto"], 0],
+              "#fde047",
+              [
+                "match",
+                ["get", "wr"],
+                "trip_start",
+                "#22c55e",
+                "trip_end",
+                "#fb7185",
+                "leg_start",
+                "#38bdf8",
+                "leg_end",
+                "#fb923c",
+                "via",
+                "#cbd5e1",
+                "poi",
+                "#94a3b8",
+                "#cbd5e1",
+              ],
+            ],
+          ],
+          "circle-stroke-width": [
+            "case",
+            ["==", ["get", "passThrough"], 1],
+            1.5,
+            2,
+          ],
+          "circle-stroke-color": [
+            "case",
+            ["==", ["get", "passThrough"], 1],
+            ["case", [">", ["get", "hasPhoto"], 0], "#1e293b", "#475569"],
+            [
+              "case",
+              [">", ["get", "hasPhoto"], 0],
+              "#1e293b",
+              [
+                "match",
+                ["get", "wr"],
+                "trip_start",
+                "#14532d",
+                "trip_end",
+                "#9f1239",
+                "leg_start",
+                "#075985",
+                "leg_end",
+                "#9a3412",
+                "via",
+                "#334155",
+                "poi",
+                "#475569",
+                "#334155",
+              ],
+            ],
+          ],
         },
       });
       map.addLayer({
@@ -365,12 +644,12 @@ export function MapView({
         source: "stops",
         layout: {
           "text-field": ["get", "name"],
-          "text-size": 11,
+          "text-size": ["case", ["==", ["get", "passThrough"], 1], 9, 11],
           "text-offset": [0, 1.2],
           "text-anchor": "top",
         },
         paint: {
-          "text-color": "#0f172a",
+          "text-color": ["case", ["==", ["get", "passThrough"], 1], "#94a3b8", "#0f172a"],
           "text-halo-color": "#fff",
           "text-halo-width": 1,
         },
@@ -378,7 +657,78 @@ export function MapView({
     } else {
       (map.getSource("stops") as maplibregl.GeoJSONSource).setData(points);
     }
-  }, [mapReady, displayLine, stopsForMap, mapPois, color, dragPos]);
+  }, [mapReady, displayLine, stopsForMap, mapPois, catalogExplorePlaces, color, dragPos]);
+
+  useEffect(() => {
+    if (!mapReady) return;
+    const map = mapRef.current;
+    if (!map?.isStyleLoaded()) return;
+
+    const waterFc: GeoJSON.FeatureCollection = {
+      type: "FeatureCollection",
+      features: osmWaterPois.map((p, i) => ({
+        type: "Feature" as const,
+        properties: { i },
+        geometry: { type: "Point", coordinates: [p.lng, p.lat] },
+      })),
+    };
+    const svcFc: GeoJSON.FeatureCollection = {
+      type: "FeatureCollection",
+      features: osmServicePois.map((p, idx) => ({
+        type: "Feature" as const,
+        properties: { kind: p.kind, name: p.name ?? "", idx },
+        geometry: { type: "Point", coordinates: [p.lng, p.lat] },
+      })),
+    };
+
+    if (!map.getSource("osm-water")) {
+      map.addSource("osm-water", { type: "geojson", data: waterFc });
+      map.addLayer({
+        id: "osm-water-circles",
+        type: "circle",
+        source: "osm-water",
+        paint: {
+          "circle-radius": 3.5,
+          "circle-color": "#22d3ee",
+          "circle-opacity": 0.9,
+          "circle-stroke-width": 1,
+          "circle-stroke-color": "#164e63",
+        },
+      });
+    } else {
+      (map.getSource("osm-water") as maplibregl.GeoJSONSource).setData(waterFc);
+    }
+
+    if (!map.getSource("osm-services")) {
+      map.addSource("osm-services", { type: "geojson", data: svcFc });
+      map.addLayer({
+        id: "osm-services-circles",
+        type: "circle",
+        source: "osm-services",
+        paint: {
+          "circle-radius": 4,
+          "circle-color": [
+            "match",
+            ["get", "kind"],
+            "hut",
+            "#fb923c",
+            "bivouac",
+            "#c084fc",
+            "shelter",
+            "#94a3b8",
+            "restaurant",
+            "#fde047",
+            "#64748b",
+          ],
+          "circle-opacity": 0.92,
+          "circle-stroke-width": 1,
+          "circle-stroke-color": "#1e293b",
+        },
+      });
+    } else {
+      (map.getSource("osm-services") as maplibregl.GeoJSONSource).setData(svcFc);
+    }
+  }, [mapReady, osmWaterPois, osmServicePois]);
 
   useEffect(() => {
     if (!mapReady) return;
@@ -386,7 +736,7 @@ export function MapView({
     if (!map?.isStyleLoaded()) return;
 
     const lineLen = displayLine?.geometry?.coordinates?.length ?? 0;
-    const sig = `${itineraryId ?? ""}|${stopsForMap.length}|${mapPois.length}|${lineLen}`;
+    const sig = `${itineraryId ?? ""}|${stopsForMap.length}|${mapPois.length}|${catalogExplorePlaces.length}|${lineLen}`;
     if (sig === fitSigRef.current) return;
     fitSigRef.current = sig;
 
@@ -406,10 +756,14 @@ export function MapView({
       bounds.extend([p.lng, p.lat]);
       has = true;
     }
+    for (const p of catalogExplorePlaces) {
+      bounds.extend([p.lng, p.lat]);
+      has = true;
+    }
     if (has) {
       map.fitBounds(bounds, { padding: 48, maxZoom: 13, duration: 500 });
     }
-  }, [mapReady, itineraryId, displayLine, stopsForMap, mapPois]);
+  }, [mapReady, itineraryId, displayLine, stopsForMap, mapPois, catalogExplorePlaces]);
 
   useEffect(() => {
     if (!mapReady) return;
@@ -429,6 +783,7 @@ export function MapView({
           if (id) {
             const poi = mapPoisRef.current.find((p) => p.id === id);
             if (poi) {
+              setSelectedOsmService(null);
               setSelectedPoi(poi);
               hitExplore = true;
             }
@@ -436,6 +791,25 @@ export function MapView({
         }
       }
       if (hitExplore) return;
+
+      if (map.getLayer("catalog-explore-circles")) {
+        const catHits = map.queryRenderedFeatures(e.point, { layers: ["catalog-explore-circles"] });
+        if (catHits.length) return;
+      }
+
+      if (map.getLayer("osm-services-circles")) {
+        const svcHits = map.queryRenderedFeatures(e.point, { layers: ["osm-services-circles"] });
+        if (svcHits.length) {
+          const idx = svcHits[0].properties?.idx as number | undefined;
+          const p =
+            idx != null && Number.isFinite(idx) ? osmServicePoisRef.current[idx] : undefined;
+          if (p) {
+            setSelectedPoi(null);
+            setSelectedOsmService(p);
+            return;
+          }
+        }
+      }
 
       if (
         !allowStopDragRef.current &&
@@ -462,6 +836,7 @@ export function MapView({
       }
 
       setSelectedPoi(null);
+      setSelectedOsmService(null);
       clickRef.current(e.lngLat.lng, e.lngLat.lat);
     };
 
@@ -544,6 +919,24 @@ export function MapView({
   useEffect(() => {
     if (!mapReady) return;
     const map = mapRef.current;
+    if (!map?.getLayer("osm-services-circles")) return;
+    const enter = () => {
+      map.getCanvas().style.cursor = "pointer";
+    };
+    const leave = () => {
+      map.getCanvas().style.cursor = "";
+    };
+    map.on("mouseenter", "osm-services-circles", enter);
+    map.on("mouseleave", "osm-services-circles", leave);
+    return () => {
+      map.off("mouseenter", "osm-services-circles", enter);
+      map.off("mouseleave", "osm-services-circles", leave);
+    };
+  }, [mapReady]);
+
+  useEffect(() => {
+    if (!mapReady) return;
+    const map = mapRef.current;
     if (!map?.getLayer("explore-poi-circles")) return;
     const enter = () => {
       map.getCanvas().style.cursor = "pointer";
@@ -556,6 +949,24 @@ export function MapView({
     return () => {
       map.off("mouseenter", "explore-poi-circles", enter);
       map.off("mouseleave", "explore-poi-circles", leave);
+    };
+  }, [mapReady]);
+
+  useEffect(() => {
+    if (!mapReady) return;
+    const map = mapRef.current;
+    if (!map?.getLayer("catalog-explore-circles")) return;
+    const enter = () => {
+      map.getCanvas().style.cursor = "pointer";
+    };
+    const leave = () => {
+      map.getCanvas().style.cursor = "";
+    };
+    map.on("mouseenter", "catalog-explore-circles", enter);
+    map.on("mouseleave", "catalog-explore-circles", leave);
+    return () => {
+      map.off("mouseenter", "catalog-explore-circles", enter);
+      map.off("mouseleave", "catalog-explore-circles", leave);
     };
   }, [mapReady]);
 
@@ -627,6 +1038,80 @@ export function MapView({
         ref={containerRef}
         className="relative z-[15] h-full w-full min-h-[200px]"
       />
+      {selectedOsmService && (
+        <div className="pointer-events-auto absolute bottom-2 left-2 right-2 z-[46] max-h-[min(55vh,420px)] overflow-y-auto rounded-lg border border-orange-700/50 bg-zinc-950/98 p-3 shadow-xl backdrop-blur-sm md:left-auto md:right-2 md:max-w-sm">
+          <div className="mb-2 flex items-start justify-between gap-2">
+            <div>
+              <p className="text-[10px] font-medium uppercase text-orange-400/95">
+                {TRAIL_SERVICE_LABEL[selectedOsmService.kind]} · OpenStreetMap
+              </p>
+              <h3 className="text-sm font-semibold text-zinc-50">
+                {selectedOsmService.name ?? "Senza nome"}
+              </h3>
+            </div>
+            <button
+              type="button"
+              className="shrink-0 rounded bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-400 hover:bg-zinc-700"
+              onClick={() => setSelectedOsmService(null)}
+            >
+              Chiudi
+            </button>
+          </div>
+          {selectedOsmService.image_url ? (
+            <div className="mb-2 overflow-hidden rounded-md border border-zinc-700/80">
+              <img
+                src={selectedOsmService.image_url}
+                alt=""
+                className="max-h-52 w-full object-cover"
+                loading="lazy"
+                referrerPolicy="no-referrer"
+              />
+            </div>
+          ) : null}
+          {selectedOsmService.description ? (
+            <p className="whitespace-pre-wrap text-xs leading-relaxed text-zinc-300">
+              {selectedOsmService.description}
+            </p>
+          ) : (
+            <p className="text-xs text-zinc-500">Nessuna descrizione su OSM per questo punto.</p>
+          )}
+          <p className="mt-2 text-[10px] text-zinc-500">
+            {selectedOsmService.lat.toFixed(5)}, {selectedOsmService.lng.toFixed(5)}
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {selectedOsmService.website ? (
+              <a
+                href={selectedOsmService.website}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded bg-emerald-800 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-emerald-700"
+              >
+                Prenota / sito
+              </a>
+            ) : null}
+            {selectedOsmService.phone ? (
+              <a
+                href={`tel:${selectedOsmService.phone.trim()}`}
+                className="rounded bg-zinc-700 px-3 py-1.5 text-[11px] text-zinc-100 hover:bg-zinc-600"
+              >
+                Chiama
+              </a>
+            ) : null}
+            <a
+              href={googleMapsSearchUrl(
+                selectedOsmService.lat,
+                selectedOsmService.lng,
+                selectedOsmService.name ?? "rifugio"
+              )}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="rounded border border-zinc-600 px-3 py-1.5 text-[11px] text-sky-400 hover:bg-zinc-800"
+            >
+              Google Maps
+            </a>
+          </div>
+        </div>
+      )}
       {selectedPoi && (
         <div className="pointer-events-auto absolute bottom-2 left-2 right-2 z-[45] max-h-[min(55vh,380px)] overflow-y-auto rounded-lg border border-zinc-600 bg-zinc-950/98 p-3 shadow-xl backdrop-blur-sm md:left-auto md:right-2 md:max-w-sm">
           <div className="mb-2 flex items-start justify-between gap-2">
@@ -661,6 +1146,36 @@ export function MapView({
           <p className="mt-2 text-[10px] text-zinc-500">
             {selectedPoi.lat.toFixed(5)}, {selectedPoi.lng.toFixed(5)}
           </p>
+          <p className="mt-1 text-[11px]">
+            <a
+              href={googleMapsSearchUrl(selectedPoi.lat, selectedPoi.lng, selectedPoi.name)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sky-400 underline hover:text-sky-300"
+            >
+              Apri in Google Maps
+            </a>
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {selectedPoi.website_url && /^https?:\/\//i.test(selectedPoi.website_url.trim()) ? (
+              <a
+                href={selectedPoi.website_url.trim()}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded bg-emerald-800/90 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-emerald-700"
+              >
+                Sito / prenota
+              </a>
+            ) : null}
+            {selectedPoi.phone?.trim() ? (
+              <a
+                href={`tel:${selectedPoi.phone.trim()}`}
+                className="rounded bg-zinc-700 px-2.5 py-1 text-[11px] text-zinc-100 hover:bg-zinc-600"
+              >
+                Chiama
+              </a>
+            ) : null}
+          </div>
           {onRemoveMapPoi ? (
             <button
               type="button"

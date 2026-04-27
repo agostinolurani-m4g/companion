@@ -36,6 +36,9 @@ yarn-error.log*
 # SQLite locale
 /data/
 
+# vitest DB isolato
+/.test/
+
 # vercel
 .vercel
 

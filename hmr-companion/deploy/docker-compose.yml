@@ -1,0 +1,48 @@
+# HMR Companion — produzione su VPS (~4€/mese es. Hetzner CX22)
+# Build immagine dalla root dell'app (cartella padre di `deploy/`).
+
+services:
+  hmr:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "3002"
+      HOSTNAME: 0.0.0.0
+      HMR_DB_PATH: /data/hmr.db
+      INGEST_TOKEN: ${INGEST_TOKEN:?set INGEST_TOKEN in .env}
+      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
+      MAPILLARY_ACCESS_TOKEN: ${MAPILLARY_ACCESS_TOKEN:-}
+    volumes:
+      - hmr_db:/data
+    expose:
+      - "3002"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3002/api/track/default"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      HMR_DOMAIN: ${HMR_DOMAIN:?set HMR_DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - hmr
+
+volumes:
+  hmr_db:
+  caddy_data:
+  caddy_config:

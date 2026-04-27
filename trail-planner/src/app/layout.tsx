@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Trail Planner AI",
-  description: "Itinerari outdoor, mappa e planner AI (uso locale)",
+  title: "Sentiero · itinerari outdoor",
+  description: "Pianifica sentieri con mappa e assistente. Dati sul tuo computer (SQLite).",
 };
 
 export default function RootLayout({
@@ -27,7 +27,9 @@ export default function RootLayout({
       lang="it"
       className={`${geistSans.variable} ${geistMono.variable} h-full min-h-0 antialiased`}
     >
-      <body className="h-full min-h-0 flex flex-col">{children}</body>
+      <body className="flex h-full min-h-0 flex-col bg-brand-bg text-brand-text antialiased selection:bg-brand-accent/25 selection:text-brand-text">
+        {children}
+      </body>
     </html>
   );
 }

@@ -43,3 +43,8 @@ next-env.d.ts
 # Studio
 /data/
 /output/
+
+# Trail Planner (app in trail-planner/)
+trail-planner/data/
+trail-planner/.next/
+trail-planner/node_modules/

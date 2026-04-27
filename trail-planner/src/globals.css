@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+/* —— Sentiero: brand tokens (semplice: un accento, neutri) —— */
+:root {
+  --brand-bg: #09090b;
+  --brand-surface: #141416;
+  --brand-elevated: #1c1c1f;
+  --brand-border: #2e2e33;
+  --brand-text: #f4f4f5;
+  --brand-muted: #a1a1aa;
+  --brand-faint: #52525b;
+  --brand-accent: #2dd4bf;
+  --brand-accent-dim: rgba(45, 212, 191, 0.12);
+  --brand-warn: #fbbf24;
+}
+
+@theme inline {
+  --color-brand-bg: var(--brand-bg);
+  --color-brand-surface: var(--brand-surface);
+  --color-brand-elevated: var(--brand-elevated);
+  --color-brand-border: var(--brand-border);
+  --color-brand-text: var(--brand-text);
+  --color-brand-muted: var(--brand-muted);
+  --color-brand-faint: var(--brand-faint);
+  --color-brand-accent: var(--brand-accent);
+  --color-brand-accent-dim: var(--brand-accent-dim);
+  --color-brand-warn: var(--brand-warn);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--brand-bg);
+  color: var(--brand-text);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer components {
+  /* Pannelli interni */
+  .tp-panel {
+    @apply rounded-xl border border-brand-border/80 bg-brand-surface/90;
+  }
+
+  .tp-tab {
+    @apply rounded-full px-3 py-1.5 text-xs font-medium transition-colors;
+  }
+  .tp-tab-inactive {
+    @apply bg-brand-elevated text-brand-muted hover:bg-brand-border/40 hover:text-brand-text;
+  }
+  .tp-tab-active {
+    @apply bg-brand-accent-dim text-brand-accent ring-1 ring-brand-accent/35;
+  }
+
+  .tp-btn-tool {
+    @apply rounded-lg border border-brand-border bg-brand-elevated px-2 py-1 text-xs text-brand-text transition-colors hover:border-brand-muted hover:bg-brand-border/50 disabled:pointer-events-none disabled:opacity-35;
+  }
+}

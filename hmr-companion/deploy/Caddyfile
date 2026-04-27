@@ -1,0 +1,11 @@
+# Caddy 2 — TLS automatico per il dominio in $HMR_DOMAIN
+# Avvio: dalla cartella `deploy/` → `docker compose up -d`
+
+{$HMR_DOMAIN} {
+	encode gzip zstd
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+	reverse_proxy hmr:3002
+}

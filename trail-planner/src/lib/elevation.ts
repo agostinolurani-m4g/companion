@@ -17,17 +17,23 @@ export async function sampleElevationsForLine(
   }
 
   const locations = sampled.map((c) => ({ latitude: c[1], longitude: c[0] }));
-  const res = await fetch("https://api.open-elevation.com/api/v1/lookup", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({ locations }),
-    next: { revalidate: 3600 },
-  });
-  if (!res.ok) {
+  let elevationM: number[];
+  try {
+    const res = await fetch("https://api.open-elevation.com/api/v1/lookup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ locations }),
+      signal: AbortSignal.timeout(14_000),
+      next: { revalidate: 3600 },
+    });
+    if (!res.ok) {
+      return fallbackFlatProfile(sampled);
+    }
+    const j = (await res.json()) as { results: { elevation: number }[] };
+    elevationM = j.results.map((r) => r.elevation);
+  } catch {
     return fallbackFlatProfile(sampled);
   }
-  const j = (await res.json()) as { results: { elevation: number }[] };
-  const elevationM = j.results.map((r) => r.elevation);
   const distanceKm: number[] = [0];
   for (let i = 1; i < sampled.length; i++) {
     const d = haversineKm(sampled[i - 1], sampled[i]);

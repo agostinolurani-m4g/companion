@@ -1,0 +1,95 @@
+@import "tailwindcss";
+
+:root {
+  --hmr-bg: #0b1221;
+  --hmr-surface: #141b2d;
+  --hmr-elev: #1c2540;
+  --hmr-border: #2b3558;
+  --hmr-text: #f6f8ff;
+  --hmr-muted: #9aa7c7;
+  --hmr-faint: #5a6588;
+  --hmr-accent: #38bdf8;
+  --hmr-accent-dim: rgba(56, 189, 248, 0.14);
+  --hmr-warn: #fbbf24;
+  --hmr-danger: #f87171;
+  --hmr-safe: #4ade80;
+
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-top: env(safe-area-inset-top, 0px);
+}
+
+@theme inline {
+  --color-hmr-bg: var(--hmr-bg);
+  --color-hmr-surface: var(--hmr-surface);
+  --color-hmr-elev: var(--hmr-elev);
+  --color-hmr-border: var(--hmr-border);
+  --color-hmr-text: var(--hmr-text);
+  --color-hmr-muted: var(--hmr-muted);
+  --color-hmr-faint: var(--hmr-faint);
+  --color-hmr-accent: var(--hmr-accent);
+  --color-hmr-accent-dim: var(--hmr-accent-dim);
+  --color-hmr-warn: var(--hmr-warn);
+  --color-hmr-danger: var(--hmr-danger);
+  --color-hmr-safe: var(--hmr-safe);
+}
+
+html,
+body {
+  height: 100%;
+  min-height: 100%;
+}
+
+body {
+  background: var(--hmr-bg);
+  color: var(--hmr-text);
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  overscroll-behavior-y: none;
+}
+
+/* MapLibre dark UI tweaks */
+.maplibregl-ctrl-attrib {
+  background: rgba(11, 18, 33, 0.6) !important;
+  color: var(--hmr-muted) !important;
+}
+.maplibregl-ctrl-attrib a {
+  color: var(--hmr-muted) !important;
+}
+.maplibregl-canvas {
+  outline: none;
+}
+
+@layer components {
+  .hmr-panel {
+    @apply rounded-2xl border border-[color:var(--hmr-border)] bg-[color:var(--hmr-surface)]/95;
+  }
+  .hmr-chip {
+    @apply inline-flex items-center gap-1 rounded-full border border-transparent px-3 py-1 text-xs font-medium transition-colors;
+    min-height: 32px;
+  }
+  .hmr-chip-off {
+    @apply border-[color:var(--hmr-border)] bg-[color:var(--hmr-elev)] text-[color:var(--hmr-muted)];
+  }
+  .hmr-chip-on {
+    background: var(--hmr-accent-dim);
+    border-color: rgba(56, 189, 248, 0.35);
+    color: var(--hmr-accent);
+  }
+  .hmr-tap {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  .hmr-btn {
+    @apply inline-flex items-center justify-center rounded-xl border border-[color:var(--hmr-border)] bg-[color:var(--hmr-elev)] px-3 py-2 text-sm font-medium text-[color:var(--hmr-text)] transition-colors hover:border-[color:var(--hmr-muted)] disabled:pointer-events-none disabled:opacity-50;
+    min-height: 44px;
+  }
+  .hmr-btn-accent {
+    background: var(--hmr-accent-dim);
+    border-color: rgba(56, 189, 248, 0.5);
+    color: var(--hmr-accent);
+  }
+}
+
+/* Drag handle */
+.hmr-grab {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0) 60%);
+}

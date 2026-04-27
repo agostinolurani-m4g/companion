@@ -13,20 +13,47 @@ import {
   getTrack,
   getLatestTrackForItinerary,
   insertMapPoi,
+  insertRouteVariant,
   linkTrackToItinerary,
   listMapPois,
+  setActiveRouteVariant,
   updateTrackMetrics,
+  getActiveUserId,
+  listOutingsForMapFeed,
+  listOutingsForRouteWithAuthors,
+  searchCanonicalRoutesByName,
 } from "@/lib/db";
 import { geocodeNominatim } from "@/lib/geocoding";
 import { fetchOpenMeteoForecast } from "@/lib/weather";
 import { duckDuckGoSearch } from "@/lib/ddg-search";
 import type { Feature, LineString, Position } from "geojson";
+
+function featureLineFromGeojsonInput(raw: string): Feature<LineString> | null {
+  try {
+    const parsed = JSON.parse(raw) as LineString | { geometry: LineString };
+    const line =
+      "geometry" in parsed && parsed.geometry?.type === "LineString"
+        ? parsed.geometry
+        : (parsed as LineString);
+    if (line.type !== "LineString" || !Array.isArray(line.coordinates)) return null;
+    return { type: "Feature", properties: {}, geometry: line };
+  } catch {
+    return null;
+  }
+}
 import { segmentSummariesEqualDistance } from "@/lib/track-stats";
 import { rebuildTrackDisplayFromRaw } from "@/lib/track-ingest";
 
 import { getAnthropicApiKey } from "@/lib/env";
 import { formatAnthropicErrorForUser, messagesCreateWithRetry } from "@/lib/anthropic-retry";
+import {
+  enrichAndPersistMapPoiIfRefuge,
+  enrichAndPersistStopIfLodging,
+} from "@/lib/lodging-enrich";
+import type { PlannerToolEvent } from "@/lib/planner-events";
 import { buildWindyEmbed2Url } from "@/lib/windy-embed";
+
+export type { PlannerToolEvent } from "@/lib/planner-events";
 
 const MAX_POINTS_SET_ROUTE_LINE = 500;
 
@@ -34,20 +61,16 @@ function lineStringVertexCount(line: LineString): number {
   return Array.isArray(line.coordinates) ? line.coordinates.length : 0;
 }
 
+/** Default: Haiku 4.5 (più economico). Override: `ANTHROPIC_MODEL` in .env.local */
 export const PLANNER_MODEL =
-  process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-20250514";
-
-export type PlannerToolEvent =
-  | { kind: "browser_url"; url: string; title?: string }
-  | { kind: "draft_email"; to: string; subject: string; body: string }
-  | { kind: "weather_overlay"; lat: number; lng: number; zoom: number };
+  process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5";
 
 /** Eventi inviati al client durante l’esecuzione (stream) — ragionamento visibile mentre lavori. */
 export type PlannerProgressEvent =
   | { type: "assistant_text"; text: string }
   | { type: "tool"; name: string; inputSummary: string };
 
-const SYSTEM = `Sei Trail Planner, assistente per itinerari outdoor (ciclismo, trekking, sci alpinismo, trail running).
+const SYSTEM = `Sei l’assistente **Sentiero**, per itinerari outdoor (ciclismo, trekking, sci alpinismo, trail running).
 Lingua: italiano.
 Regole:
 - Mentre pianifichi, **spiega sempre in italiano** cosa stai facendo (breve ragionamento) **nei messaggi di testo** che precedono o accompagnano i tool: cosa cerchi, perché scegli certe tappe o coordinate, cosa ti aspetti dal risultato. Non usare solo tool senza testo esplicativo quando il turno è complesso.
@@ -55,12 +78,17 @@ Regole:
 - set_route_line accetta al massimo ${MAX_POINTS_SET_ROUTE_LINE} punti; per tracce lunghe l'utente deve aver importato GPX (restituisce track_id) oppure usare set_route_from_track.
 - Per **ciclismo** (road_bike, mtb, gravel): quando il percorso ha lunghe tratte tra una tappa e l’altra, aggiungi **più waypoint intermedi** lungo la direzione plausibile (città, incroci, valichi) con add_waypoint role=waypoint così il routing stradale ha più vertici e segue meglio le strade. Non limitarti a partenza e arrivo se la distanza è grande.
 - Per **punti del percorso** (tappe ordinate) usa **add_waypoint** / **add_stop**. Per **luoghi da esplorare** (rifugi, boschi, strade panoramiche, vette, paesi, punti acqua) senza necessariamente includerli come tappa di navigazione, usa **add_map_poi** con descrizione e opzionale URL foto (https); coordinate da geocode_places.
+- **Rifugi (lodging / POI refuge)**: il **server** compone e **salva in SQLite** sito, telefono e immagine (OpenStreetMap vicino al punto + Wikipedia per la foto se serve) **automaticamente** quando crei o aggiorni la tappa; non devi ripetere la ricerca ogni volta. Puoi usare **suggest_links** solo per verifiche o dati extra; non inventare numeri.
 - Per aggiungere punti sulla mappa usa **add_waypoint** (preferito: waypoint vs destinazione) oppure **add_stop** con segment_type; ottieni lat/lng da geocode_places se l'utente dice un luogo.
 - OBBLIGATORIO: per aggiungere o cambiare tappe DEVI invocare i tool (add_waypoint, add_stop, replace_stops, upsert_itinerary). Non dire di aver aggiunto una tappa se non hai eseguito il tool e ricevuto ok nel risultato.
 - Usa i tool per salvare itinerari e tappe; per coordinate testuali usa geocode_places.
 - Per meteo usa get_weather con date ISO (YYYY-MM-DD) e coordinate reali. Per mostrare pioggia/tuoni (ECMWF, stile Windy) sulla mappa usa **focus_weather_map** con le stesse coordinate; opzionale anche anteprima browser.
+- Per la **dimensione del pannello mappa** usa **set_map_panel**: **expanded** quando servono confronti tra percorsi, dettaglio geografico o molte tappe visibili; **compact** (predefinito in app) per chat prevalentemente testuale; **hidden** se l’utente chiede di concentrarsi su chat/meteo senza mappa. Non abusare: al massimo una volta per turno se utile.
+- Per **confrontare più percorsi** (es. 5 varianti): usa **add_route_variant** per salvare ogni alternativa con etichetta e geometria; **set_active_route_variant** per mostrarne una sulla mappa. Spiega le differenze nel testo.
+- **Social (POC locale, SQLite)**: percorsi canonici (tabella routes) e uscite (tabella outings) sono dati demo nel database. Usa **list_friend_outings** per attività recenti visibili come amico; **get_route_outings** per lo storico su un route_id; **search_routes** per cercare percorsi per nome. Cita amici o condizioni (neve, meteo) **solo** se compaiono nei risultati dei tool. Se non c’è utente attivo nel profilo, spiega che serve impostarlo nell’app. Per **vedere le linee sulla mappa**: l’utente usa la tab **Io** (pulsanti «Mostra: Amici/…») o il menu **Social** sulla mappa; puoi suggerirlo quando parla di feed o uscite altrui.
 - Per link e risorse web usa suggest_links; per aprire una pagina nel pannello browser dell'utente usa propose_browser_url (solo URL https legittimi).
 - Per email usa draft_email: l'invio reale richiede conferma utente nell'app.
+- Per **riepilogo stampabile / PDF** usa **get_printable_briefing** con itinerary_id: restituisce il path API; l’utente apre la pagina HTML e usa Stampa → PDF (c’è anche il link nel pannello statistiche mappa).
 - Rispetta limiti Nominatim: poche query, testo chiaro.
 - Attività sportive: road_bike, mtb, gravel, hiking, running, ski_mountaineering, trail_running, nordic_ski.`;
 
@@ -124,6 +152,9 @@ function tools(): Anthropic.Tool[] {
           lat: { type: "number" },
           lng: { type: "number" },
           notes: { type: "string" },
+          image_url: { type: "string", description: "URL https foto (rifugio/POI)" },
+          website_url: { type: "string", description: "Sito ufficiale o prenotazioni" },
+          phone: { type: "string", description: "Telefono struttura (solo se verificato)" },
         },
         required: ["itinerary_id", "segment_type", "name", "lat", "lng"],
       },
@@ -146,6 +177,9 @@ function tools(): Anthropic.Tool[] {
               "waypoint = tappa sul percorso (poi); destination = destinazione / obiettivo principale (stop)",
           },
           notes: { type: "string" },
+          image_url: { type: "string", description: "URL https foto (opzionale)" },
+          website_url: { type: "string", description: "Sito (opzionale)" },
+          phone: { type: "string", description: "Telefono (opzionale, verificato)" },
         },
         required: ["itinerary_id", "name", "lat", "lng", "role"],
       },
@@ -169,6 +203,11 @@ function tools(): Anthropic.Tool[] {
             type: "string",
             description: "URL https di un’immagine (es. Wikimedia, sito ufficiale rifugio)",
           },
+          website_url: {
+            type: "string",
+            description: "Sito ufficiale o pagina prenotazioni (https)",
+          },
+          phone: { type: "string", description: "Telefono contatto se noto" },
           category: {
             type: "string",
             enum: [
@@ -272,6 +311,100 @@ function tools(): Anthropic.Tool[] {
       },
     },
     {
+      name: "set_map_panel",
+      description:
+        "Imposta quanto spazio occupa la mappa: compact (piccola), expanded (grande), hidden (nascosta). Usa expanded per confronti visivi o editing fit; hidden se l’utente vuole solo testo.",
+      input_schema: {
+        type: "object",
+        properties: {
+          mode: {
+            type: "string",
+            enum: ["compact", "expanded", "hidden"],
+          },
+          reason: { type: "string", description: "Motivo breve (opzionale)" },
+        },
+        required: ["mode"],
+      },
+    },
+    {
+      name: "add_route_variant",
+      description:
+        "Aggiunge una variante di percorso alternativa (linea GeoJSON) all’itinerario per confronti. Se line_geojson è omesso, duplica la linea attuale dell’itinerario.",
+      input_schema: {
+        type: "object",
+        properties: {
+          itinerary_id: { type: "string" },
+          label: { type: "string", description: 'Es. "Variante A — più panoramica"' },
+          line_geojson: {
+            type: "string",
+            description: "Feature GeoJSON completa o solo geometry LineString (JSON string)",
+          },
+          sort_order: { type: "number" },
+        },
+        required: ["itinerary_id", "label"],
+      },
+    },
+    {
+      name: "set_active_route_variant",
+      description:
+        "Mostra sulla mappa la variante selezionata (copia la geometria sulla linea principale dell’itinerario).",
+      input_schema: {
+        type: "object",
+        properties: {
+          itinerary_id: { type: "string" },
+          variant_id: { type: "string" },
+        },
+        required: ["itinerary_id", "variant_id"],
+      },
+    },
+    {
+      name: "list_friend_outings",
+      description:
+        "Elenco uscite recenti visibili nel contesto «amici» (POC: utente attivo nel profilo). Utile per citare chi è andato dove e le condizioni.",
+      input_schema: {
+        type: "object",
+        properties: {
+          max_days: { type: "number", description: "Finestra giorni (default 21, max 60)" },
+        },
+      },
+    },
+    {
+      name: "get_route_outings",
+      description:
+        "Storico uscite sullo stesso percorso canonico (route_id): autore, date, note, neve/meteo se presenti.",
+      input_schema: {
+        type: "object",
+        properties: {
+          route_id: { type: "string" },
+        },
+        required: ["route_id"],
+      },
+    },
+    {
+      name: "search_routes",
+      description:
+        "Cerca percorsi canonici per nome (tabella routes nel DB locale).",
+      input_schema: {
+        type: "object",
+        properties: {
+          query: { type: "string" },
+        },
+        required: ["query"],
+      },
+    },
+    {
+      name: "get_printable_briefing",
+      description:
+        "Riepilogo HTML stampabile dell’itinerario (tappe, giornate, note piano): restituisce il path API da aprire nel browser (Stampa → PDF).",
+      input_schema: {
+        type: "object",
+        properties: {
+          itinerary_id: { type: "string" },
+        },
+        required: ["itinerary_id"],
+      },
+    },
+    {
       name: "focus_weather_map",
       description:
         "Mostra sulla mappa l’overlay meteo Windy (pioggia e fulmini, modello ECMWF — previsione, non radar live). Centra su lat/lng e zoom. Opzionale: apri anche nel mini-browser.",
@@ -361,25 +494,51 @@ async function runTool(
         lng: number;
         notes?: string;
       }>;
-      replaceStopsFromTool(itinerary_id, stops);
+      const n = stops.length;
+      const enriched = stops.map((s, i) => {
+        let waypoint_role: import("@/lib/types").WaypointRole;
+        if (n === 1) waypoint_role = "trip_start";
+        else if (i === 0) waypoint_role = "trip_start";
+        else if (i === n - 1) waypoint_role = "trip_end";
+        else waypoint_role = s.segment_type === "poi" ? "poi" : "via";
+        return { ...s, waypoint_role };
+      });
+      replaceStopsFromTool(itinerary_id, enriched);
       return JSON.stringify({ ok: true, count: stops.length });
     }
     case "add_stop": {
       focus.id = input.itinerary_id as string;
-      const s = addStop({
+      let img = (input.image_url as string | undefined)?.trim() || null;
+      if (img && !/^https:\/\//i.test(img)) img = null;
+      let web = (input.website_url as string | undefined)?.trim() || null;
+      if (web && !/^https?:\/\//i.test(web)) web = null;
+      const phone = (input.phone as string | undefined)?.trim() || null;
+      let s = addStop({
         itinerary_id: input.itinerary_id as string,
         segment_type: input.segment_type as string,
         name: input.name as string,
         lat: input.lat as number,
         lng: input.lng as number,
         notes: (input.notes as string) ?? null,
+        image_url: img,
+        website_url: web,
+        phone: phone || null,
       });
+      if (s.segment_type === "lodging") {
+        const e = await enrichAndPersistStopIfLodging(s.itinerary_id, s.id);
+        if (e) s = e;
+      }
       return JSON.stringify({ ok: true, stop: s });
     }
     case "add_waypoint": {
       focus.id = input.itinerary_id as string;
       const role = input.role as string;
       const segment_type = role === "destination" ? "stop" : "poi";
+      let img = (input.image_url as string | undefined)?.trim() || null;
+      if (img && !/^https:\/\//i.test(img)) img = null;
+      let web = (input.website_url as string | undefined)?.trim() || null;
+      if (web && !/^https?:\/\//i.test(web)) web = null;
+      const phone = (input.phone as string | undefined)?.trim() || null;
       const s = addStop({
         itinerary_id: input.itinerary_id as string,
         segment_type,
@@ -387,6 +546,9 @@ async function runTool(
         lat: input.lat as number,
         lng: input.lng as number,
         notes: (input.notes as string) ?? null,
+        image_url: img,
+        website_url: web,
+        phone: phone || null,
       });
       return JSON.stringify({
         ok: true,
@@ -401,16 +563,27 @@ async function runTool(
       if (image_url && !/^https:\/\//i.test(image_url)) {
         image_url = null;
       }
-      const row = insertMapPoi({
+      let website_url = (input.website_url as string | undefined)?.trim() || null;
+      if (website_url && !/^https?:\/\//i.test(website_url)) {
+        website_url = null;
+      }
+      const phone = (input.phone as string | undefined)?.trim() || null;
+      let row = insertMapPoi({
         itinerary_id,
         name: input.name as string,
         lat: input.lat as number,
         lng: input.lng as number,
         description: (input.description as string) ?? "",
         image_url,
+        website_url,
+        phone: phone || null,
         category: (input.category as string) ?? "other",
         source: "chat",
       });
+      if (row.category === "refuge") {
+        const e = await enrichAndPersistMapPoiIfRefuge(itinerary_id, row.id);
+        if (e) row = e;
+      }
       return JSON.stringify({ ok: true, map_poi: row });
     }
     case "set_route_line": {
@@ -568,6 +741,121 @@ async function runTool(
       );
       return JSON.stringify(w);
     }
+    case "set_map_panel": {
+      const mode = input.mode as string;
+      if (mode !== "compact" && mode !== "expanded" && mode !== "hidden") {
+        return JSON.stringify({ ok: false, error: "mode deve essere compact, expanded o hidden" });
+      }
+      events.push({ kind: "map_panel", mode });
+      return JSON.stringify({ ok: true, mode });
+    }
+    case "add_route_variant": {
+      const itinerary_id = input.itinerary_id as string;
+      focus.id = itinerary_id;
+      const it = getItinerary(itinerary_id);
+      if (!it) return JSON.stringify({ ok: false, error: "itinerario non trovato" });
+      let rawIn = (input.line_geojson as string | undefined)?.trim();
+      if (!rawIn) {
+        if (!it.line_geojson) {
+          return JSON.stringify({
+            ok: false,
+            error: "Nessuna linea sull’itinerario: passa line_geojson o disegna un percorso prima.",
+          });
+        }
+        rawIn = it.line_geojson;
+      }
+      const feat = featureLineFromGeojsonInput(rawIn);
+      if (!feat) return JSON.stringify({ ok: false, error: "line_geojson non valido (serve LineString)" });
+      const n = lineStringVertexCount(feat.geometry);
+      if (n > MAX_POINTS_SET_ROUTE_LINE) {
+        return JSON.stringify({
+          ok: false,
+          error: `Troppi vertici (${n}). Massimo ${MAX_POINTS_SET_ROUTE_LINE}.`,
+        });
+      }
+      const label = String(input.label ?? "Variante").trim() || "Variante";
+      const sort_order = input.sort_order as number | undefined;
+      const row = insertRouteVariant({
+        itinerary_id,
+        label,
+        line_geojson: JSON.stringify(feat),
+        sort_order: Number.isFinite(sort_order) ? sort_order : undefined,
+      });
+      return JSON.stringify({ ok: true, variant: row });
+    }
+    case "set_active_route_variant": {
+      const itinerary_id = input.itinerary_id as string;
+      const variant_id = input.variant_id as string;
+      focus.id = itinerary_id;
+      const row = setActiveRouteVariant(itinerary_id, variant_id);
+      if (!row) return JSON.stringify({ ok: false, error: "variante non trovata per questo itinerario" });
+      return JSON.stringify({ ok: true, itinerary: row });
+    }
+    case "list_friend_outings": {
+      const viewer = getActiveUserId();
+      if (!viewer) {
+        return JSON.stringify({
+          ok: false,
+          error:
+            "Nessun utente attivo: nell’app apri Profilo e scegli un utente nel selettore POC social.",
+        });
+      }
+      let maxDays = Number(input.max_days ?? 21);
+      if (!Number.isFinite(maxDays)) maxDays = 21;
+      maxDays = Math.min(60, Math.max(1, Math.round(maxDays)));
+      const rows = listOutingsForMapFeed({
+        viewerUserId: viewer,
+        layer: "friends",
+        maxDays,
+      });
+      const slim = rows.map((r) => ({
+        outing_id: r.id,
+        route_id: r.route_id,
+        route_name: r.route_name,
+        author_name: r.author_display_name,
+        started_at: r.started_at,
+        notes: r.notes,
+        snow_conditions_text: r.snow_conditions_text,
+        weather_snapshot_json: r.weather_snapshot_json,
+        visibility: r.visibility,
+      }));
+      return JSON.stringify({ ok: true, viewer_user_id: viewer, count: slim.length, outings: slim });
+    }
+    case "get_route_outings": {
+      const route_id = input.route_id as string;
+      if (!route_id?.trim()) {
+        return JSON.stringify({ ok: false, error: "route_id obbligatorio" });
+      }
+      const rows = listOutingsForRouteWithAuthors(route_id.trim(), 20);
+      return JSON.stringify({ ok: true, route_id: route_id.trim(), outings: rows });
+    }
+    case "search_routes": {
+      const query = String(input.query ?? "").trim();
+      const rows = searchCanonicalRoutesByName(query, 15);
+      return JSON.stringify({
+        ok: true,
+        query,
+        routes: rows.map((r) => ({
+          id: r.id,
+          name: r.name,
+          summary: r.summary,
+          activity_kind: r.activity_kind,
+          region: r.region,
+        })),
+      });
+    }
+    case "get_printable_briefing": {
+      const itinerary_id = String(input.itinerary_id ?? "").trim();
+      if (!getItinerary(itinerary_id)) {
+        return JSON.stringify({ ok: false, error: "Itinerario non trovato" });
+      }
+      const path = `/api/itineraries/${itinerary_id}/briefing`;
+      return JSON.stringify({
+        ok: true,
+        path,
+        hint: "Apri questo path sulla stessa origine dell’app (es. http://localhost:3001) per la pagina stampabile.",
+      });
+    }
     case "focus_weather_map": {
       const lat = input.lat as number;
       const lng = input.lng as number;
@@ -654,6 +942,7 @@ export async function runPlannerTurn(params: {
     const stops = listStops(params.itineraryId);
     const mapPois = listMapPois(params.itineraryId);
     const prof = getProfile();
+    const socialUid = getActiveUserId();
     const latestTr = getLatestTrackForItinerary(params.itineraryId);
     const trLine = latestTr
       ? `- Ultima traccia GPX: track_id=${latestTr.id}, ~${(latestTr.distance_m / 1000).toFixed(1)} km, ${latestTr.point_count} punti originali (usa get_track_summary, non chiedere il GPX in chat)\n`
@@ -661,11 +950,24 @@ export async function runPlannerTurn(params: {
     const poiLine =
       mapPois.length > 0
         ? `- POI esplorativi già sulla mappa (${mapPois.length}): ${mapPois
-            .map((p) => `${p.name} [${p.category}]`)
+            .map((p) => `${p.name} [${p.category}]${p.website_url ? " (web)" : ""}${p.phone ? " (tel)" : ""}`)
             .slice(0, 15)
             .join("; ")}${mapPois.length > 15 ? "…" : ""}\n`
         : "";
-    itineraryContext = `\nContesto attuale:\n- Itinerario id: ${params.itineraryId}\n- Nome: ${it?.name ?? "?"}\n- Date: ${it?.start_date ?? "?"} → ${it?.end_date ?? "?"}\n- Attività: ${it?.activity ?? "?"}\n${trLine}${poiLine}- Tappe:\n${stops.map((s) => `  - ${s.name} (${s.segment_type}) ${s.lat},${s.lng}`).join("\n")}\n- Soglie allerta profilo: pioggia > ${prof.rain_mm_h} mm/h equiv., vento > ${prof.wind_ms} m/s, gelo < ${prof.frost_temp_c}°C\n`;
+    const socialLine = socialUid
+      ? `- Utente social attivo (profilo): ${socialUid} — tab Io e menu Social sulla mappa per vedere uscite altrui\n`
+      : `- Nessun utente social attivo: per feed amici sulla mappa serve impostare «Utente attivo» in Profilo\n`;
+    const stopLines = stops
+      .map((s) => {
+        const extras: string[] = [];
+        if (s.image_url) extras.push("foto");
+        if (s.website_url) extras.push(`sito:${String(s.website_url).slice(0, 48)}`);
+        if (s.phone) extras.push(`tel:${s.phone}`);
+        const x = extras.length ? ` · ${extras.join(", ")}` : "";
+        return `  - ${s.name} [${s.segment_type}, ruolo=${s.waypoint_role ?? "?"}] ${s.lat},${s.lng}${x}`;
+      })
+      .join("\n");
+    itineraryContext = `\nContesto attuale:\n- Itinerario id: ${params.itineraryId}\n- Nome: ${it?.name ?? "?"}\n- Date: ${it?.start_date ?? "?"} → ${it?.end_date ?? "?"}\n- Attività: ${it?.activity ?? "?"}\n${socialLine}${trLine}${poiLine}- Tappe:\n${stopLines}\n- Soglie allerta profilo: pioggia > ${prof.rain_mm_h} mm/h equiv., vento > ${prof.wind_ms} m/s, gelo < ${prof.frost_temp_c}°C\n`;
   }
 
   const messages: Anthropic.MessageParam[] = [

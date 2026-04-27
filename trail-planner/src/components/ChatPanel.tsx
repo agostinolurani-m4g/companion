@@ -1,10 +1,38 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { usePlanner } from "@/context/PlannerProvider";
-import type { PlannerToolEvent } from "@/lib/claude-planner";
+import type { PlannerToolEvent } from "@/lib/planner-events";
+import { renderMarkdownLite } from "@/lib/chat-markdown-lite";
 
 type Msg = { role: "user" | "assistant"; content: string };
+
+const QUICK_PROMPTS: { label: string; text: string }[] = [
+  {
+    label: "Itinerario 2 giorni",
+    text: "Proponi un itinerario escursionistico di 2 giorni in zona montagna, con tappe per pernottamento in rifugio e dislivello realistico.",
+  },
+  {
+    label: "Rifugio sulla mappa",
+    text: "Aggiungi una tappa rifugio (lodging) o un POI refuge con nome e coordinate sul mio itinerario attivo: i contatti e la foto si salvano da soli nel database.",
+  },
+  {
+    label: "Meteo + tappe",
+    text: "Controlla le previsioni meteo per le date del mio itinerario e suggerisci se conviene posticipare o cambiare tappa.",
+  },
+  {
+    label: "Varianti percorso",
+    text: "Crea due varianti del percorso (una più panoramica, una più veloce) e spiega pro e contro.",
+  },
+  {
+    label: "Social sulla mappa",
+    text: "Riassumi le uscite recenti visibili come amici (list_friend_outings) e spiega come vederle sulla mappa (tab Io e livello Social Amici).",
+  },
+  {
+    label: "Ciclismo",
+    text: "Pianifica un giro in bici da strada con waypoint intermedi lungo il percorso così il routing segue le strade.",
+  },
+];
 
 export function ChatPanel() {
   const {
@@ -15,12 +43,14 @@ export function ChatPanel() {
     setPendingBrowser,
     setDraftEmail,
     setWindyOverlay,
+    setMapPanelMode,
   } = usePlanner();
   const [input, setInput] = useState("");
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [loading, setLoading] = useState(false);
   /** Testo ragionamento + log tool mentre la risposta è in arrivo */
   const [liveTrace, setLiveTrace] = useState("");
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -35,6 +65,12 @@ export function ChatPanel() {
     })();
   }, [sessionId]);
 
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [msgs, loading, liveTrace]);
+
   const applySideEffects = useCallback(
     (events: PlannerToolEvent[]) => {
       for (const ev of events) {
@@ -47,9 +83,12 @@ export function ChatPanel() {
         if (ev.kind === "weather_overlay") {
           setWindyOverlay({ lat: ev.lat, lng: ev.lng, zoom: ev.zoom });
         }
+        if (ev.kind === "map_panel") {
+          setMapPanelMode(ev.mode);
+        }
       }
     },
-    [setDraftEmail, setPendingBrowser, setWindyOverlay]
+    [setDraftEmail, setMapPanelMode, setPendingBrowser, setWindyOverlay]
   );
 
   const refreshMapAfterChat = useCallback(
@@ -62,6 +101,26 @@ export function ChatPanel() {
     },
     [activeItineraryId, loadItineraries, selectItinerary]
   );
+
+  const clearChat = useCallback(async () => {
+    if (!sessionId || loading) return;
+    const res = await fetch(
+      `/api/chat/messages?sessionId=${encodeURIComponent(sessionId)}`,
+      { method: "DELETE" }
+    );
+    if (!res.ok) {
+      const j = (await res.json().catch(() => ({}))) as { error?: string };
+      setMsgs((m) => [
+        ...m,
+        {
+          role: "assistant" as const,
+          content: j.error ?? `Impossibile svuotare la chat (${res.status})`,
+        },
+      ]);
+      return;
+    }
+    setMsgs([]);
+  }, [sessionId, loading]);
 
   const send = async () => {
     const t = input.trim();
@@ -155,28 +214,58 @@ export function ChatPanel() {
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col rounded-lg border border-zinc-700/50 bg-zinc-900/40">
-      <div className="border-b border-zinc-700/50 px-3 py-2 text-xs font-medium text-zinc-400">
-        Chat planner
+    <div className="tp-panel flex min-h-0 flex-1 flex-col">
+      <div className="flex items-center justify-between gap-2 border-b border-brand-border/80 px-3 py-2.5">
+        <span className="text-xs font-medium text-brand-muted">Assistente</span>
+        <button
+          type="button"
+          title="Cancella tutti i messaggi di questa sessione"
+          disabled={!sessionId || loading || msgs.length === 0}
+          onClick={() => void clearChat()}
+          className="shrink-0 rounded-lg border border-brand-border bg-brand-elevated px-2 py-1 text-[11px] font-medium text-brand-muted hover:border-brand-muted hover:text-brand-text disabled:pointer-events-none disabled:opacity-35"
+        >
+          Svuota
+        </button>
       </div>
-      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-2 text-sm">
+      <div
+        ref={scrollRef}
+        className="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-2 text-sm"
+      >
         {msgs.length === 0 && (
-          <p className="text-zinc-500">
-            Descrivi il percorso. L’AI mostra qui sotto il ragionamento mentre usa i tool; la risposta finale
-            arriva a fine turno.
-          </p>
+          <div className="space-y-2 text-brand-muted">
+            <p className="text-[13px] leading-relaxed text-brand-text/90">
+              Scrivi cosa vuoi fare o tocca un suggerimento. Serve un{" "}
+              <strong className="font-medium text-brand-text">itinerario selezionato</strong> in alto per salvare tappe
+              e mappa.
+            </p>
+            <p className="text-[11px] leading-relaxed">
+              Mentre l’assistente lavora vedi il riepilogo qui sotto; la risposta completa arriva a fine turno.
+            </p>
+          </div>
         )}
         {msgs.map((m, i) => (
           <div
             key={i}
             className={
               m.role === "user"
-                ? "ml-8 rounded-lg bg-emerald-900/40 px-2 py-1.5 text-emerald-50"
-                : "mr-8 rounded-lg bg-zinc-800/80 px-2 py-1.5 text-zinc-100"
+                ? "ml-8 rounded-lg bg-brand-accent-dim px-2 py-1.5 text-brand-text ring-1 ring-brand-accent/20"
+                : "mr-8 rounded-lg bg-brand-elevated px-2 py-1.5 text-brand-text ring-1 ring-brand-border/60"
             }
           >
-            <span className="text-[10px] uppercase text-zinc-500">{m.role}</span>
-            <p className="whitespace-pre-wrap">{m.content}</p>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] uppercase text-brand-faint">{m.role}</span>
+              {m.role === "assistant" ? (
+                <button
+                  type="button"
+                  className="rounded px-1.5 py-0.5 text-[10px] text-brand-faint hover:bg-brand-border/50 hover:text-brand-text"
+                  title="Copia messaggio"
+                  onClick={() => void navigator.clipboard.writeText(m.content)}
+                >
+                  Copia
+                </button>
+              ) : null}
+            </div>
+            <p className="whitespace-pre-wrap">{renderMarkdownLite(m.content, `m${i}`)}</p>
           </div>
         ))}
         {loading && liveTrace && (
@@ -184,17 +273,33 @@ export function ChatPanel() {
             <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-amber-400/90">
               In corso…
             </div>
-            <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap font-sans text-zinc-300">
+            <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap font-sans text-brand-muted">
               {liveTrace}
             </pre>
           </div>
         )}
-        {loading && !liveTrace && <p className="text-xs text-zinc-500">Connessione…</p>}
+        {loading && !liveTrace && (
+          <p className="text-xs text-brand-muted">Connessione…</p>
+        )}
       </div>
-      <div className="flex gap-2 border-t border-zinc-700/50 p-2">
+      <div className="flex flex-wrap gap-1 border-t border-brand-border/60 px-2 pt-2">
+        {QUICK_PROMPTS.map((q) => (
+          <button
+            key={q.label}
+            type="button"
+            disabled={loading || !sessionId}
+            title={q.text}
+            className="rounded-full border border-brand-border bg-brand-elevated px-2 py-0.5 text-[10px] text-brand-muted hover:border-brand-accent/40 hover:text-brand-accent disabled:opacity-40"
+            onClick={() => setInput(q.text)}
+          >
+            {q.label}
+          </button>
+        ))}
+      </div>
+      <div className="flex gap-2 border-t border-brand-border/80 p-2">
         <textarea
-          className="min-h-[72px] flex-1 resize-none rounded border border-zinc-600 bg-zinc-950 px-2 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-600"
-          placeholder="Messaggio…"
+          className="min-h-[72px] flex-1 resize-none rounded-lg border border-brand-border bg-brand-bg px-2 py-1.5 text-sm text-brand-text placeholder:text-brand-faint focus:border-brand-accent focus:outline-none focus:ring-1 focus:ring-brand-accent/30"
+          placeholder="Chiedi un itinerario, una tappa, la meteo…"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
@@ -208,7 +313,7 @@ export function ChatPanel() {
           type="button"
           onClick={() => void send()}
           disabled={loading || !sessionId}
-          className="self-end rounded bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-40"
+          className="self-end rounded-lg bg-brand-accent px-3 py-1.5 text-sm font-medium text-brand-bg hover:brightness-110 disabled:opacity-40"
         >
           Invia
         </button>
