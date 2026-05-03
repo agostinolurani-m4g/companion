@@ -45,9 +45,9 @@ RUN if [ -f /tmp/builddata/hmr.db ]; then \
   && rm -rf /tmp/builddata
 
 COPY scripts/docker-entrypoint.sh /app/docker-entrypoint.sh
-RUN chmod +x /app/docker-entrypoint.sh && chown nextjs:nodejs /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh
 
-USER nextjs
+# Entrypoint parte come root, fa chown su /data (volume), poi esegue Node come nextjs.
 EXPOSE 3002
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
