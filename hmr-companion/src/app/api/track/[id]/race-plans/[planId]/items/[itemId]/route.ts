@@ -9,6 +9,7 @@ import {
   updateRacePlanItem,
 } from "@/lib/db";
 import { RACE_PLAN_ITEM_KINDS, type RacePlanItemKind } from "@/lib/race-plan-types";
+import { requireAuthenticated } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
@@ -35,6 +36,8 @@ type PatchBody = {
 };
 
 export async function PATCH(req: Request, ctx: Ctx) {
+  const auth = await requireAuthenticated();
+  if (!auth) return NextResponse.json({ error: "Non autenticato" }, { status: 401 });
   const { id: trackId, planId, itemId } = await ctx.params;
   const track = getTrack(trackId);
   if (!track) return NextResponse.json({ error: "Track non trovato" }, { status: 404 });
@@ -83,6 +86,8 @@ export async function PATCH(req: Request, ctx: Ctx) {
 }
 
 export async function DELETE(_req: Request, ctx: Ctx) {
+  const auth = await requireAuthenticated();
+  if (!auth) return NextResponse.json({ error: "Non autenticato" }, { status: 401 });
   const { id: trackId, planId, itemId } = await ctx.params;
   const track = getTrack(trackId);
   if (!track) return NextResponse.json({ error: "Track non trovato" }, { status: 404 });

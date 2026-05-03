@@ -190,6 +190,25 @@ function initSchema(db: Database.Database): void {
       PRIMARY KEY (track_id, pano_id)
     );
     CREATE INDEX IF NOT EXISTS idx_sv_points_track_km ON track_street_view_points(track_id, along_km);
+
+    CREATE TABLE IF NOT EXISTS auth_magic_links (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      expires_at INTEGER NOT NULL,
+      used_at INTEGER,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_auth_magic_links_email ON auth_magic_links(email, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS auth_sessions (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      expires_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_auth_sessions_email ON auth_sessions(email, created_at DESC);
   `);
   migrateTracksElevProfileScales(db);
 }
@@ -212,8 +231,10 @@ function migrateTracksElevProfileScales(db: Database.Database): void {
 
 const GEO_CACHE_SV_PREFIX = "sv:";
 const GEO_CACHE_MLY_PREFIX = "mly:";
+const GEO_CACHE_HARVEST_PREFIX = "harvest:";
 const GEO_CACHE_TTL_SV_SEC = 30 * 24 * 3600;
 const GEO_CACHE_TTL_MLY_SEC = 24 * 3600;
+const GEO_CACHE_TTL_HARVEST_SEC = 30 * 24 * 3600;
 
 /** Cache JSON per coordinate Street View o bbox Mapillary (TTL in memoria DB). */
 export function geoCacheGet(key: string): unknown | null {
@@ -226,7 +247,9 @@ export function geoCacheGet(key: string): unknown | null {
       ? GEO_CACHE_TTL_SV_SEC
       : key.startsWith(GEO_CACHE_MLY_PREFIX)
         ? GEO_CACHE_TTL_MLY_SEC
-        : 7 * 24 * 3600;
+        : key.startsWith(GEO_CACHE_HARVEST_PREFIX)
+          ? GEO_CACHE_TTL_HARVEST_SEC
+          : 7 * 24 * 3600;
   const now = Math.floor(Date.now() / 1000);
   if (now - row.fetched_at > ttl) return null;
   try {
@@ -380,6 +403,23 @@ export type TrackSurfaceSegmentRow = {
   km_end: number;
   surface: TrackSurfaceKind;
   source: string;
+};
+
+export type AuthMagicLinkRow = {
+  id: string;
+  email: string;
+  token_hash: string;
+  expires_at: number;
+  used_at: number | null;
+  created_at: number;
+};
+
+export type AuthSessionRow = {
+  id: string;
+  email: string;
+  token_hash: string;
+  expires_at: number;
+  created_at: number;
 };
 
 export function listTrackSurfaceSegments(trackId: string): TrackSurfaceSegmentRow[] {
@@ -686,4 +726,64 @@ export function upsertTrackStreetViewPoints(trackId: string, items: StreetViewAl
     }
   });
   tx();
+}
+
+export function insertAuthMagicLink(input: {
+  id: string;
+  email: string;
+  token_hash: string;
+  expires_at: number;
+  created_at: number;
+}): void {
+  getDb()
+    .prepare(
+      `INSERT INTO auth_magic_links (id, email, token_hash, expires_at, created_at)
+       VALUES (@id, @email, @token_hash, @expires_at, @created_at)`
+    )
+    .run(input);
+}
+
+export function getAuthMagicLinkByTokenHash(tokenHash: string): AuthMagicLinkRow | undefined {
+  return getDb()
+    .prepare(`SELECT * FROM auth_magic_links WHERE token_hash = ?`)
+    .get(tokenHash) as AuthMagicLinkRow | undefined;
+}
+
+export function markAuthMagicLinkUsed(id: string, usedAt: number): void {
+  getDb().prepare(`UPDATE auth_magic_links SET used_at = ? WHERE id = ?`).run(usedAt, id);
+}
+
+export function pruneAuthMagicLinks(now: number): void {
+  getDb()
+    .prepare(`DELETE FROM auth_magic_links WHERE expires_at <= ? OR used_at IS NOT NULL`)
+    .run(now);
+}
+
+export function insertAuthSession(input: {
+  id: string;
+  email: string;
+  token_hash: string;
+  expires_at: number;
+  created_at: number;
+}): void {
+  getDb()
+    .prepare(
+      `INSERT INTO auth_sessions (id, email, token_hash, expires_at, created_at)
+       VALUES (@id, @email, @token_hash, @expires_at, @created_at)`
+    )
+    .run(input);
+}
+
+export function getAuthSessionByTokenHash(tokenHash: string): AuthSessionRow | undefined {
+  return getDb()
+    .prepare(`SELECT * FROM auth_sessions WHERE token_hash = ?`)
+    .get(tokenHash) as AuthSessionRow | undefined;
+}
+
+export function deleteAuthSessionById(id: string): void {
+  getDb().prepare(`DELETE FROM auth_sessions WHERE id = ?`).run(id);
+}
+
+export function pruneAuthSessions(now: number): void {
+  getDb().prepare(`DELETE FROM auth_sessions WHERE expires_at <= ?`).run(now);
 }

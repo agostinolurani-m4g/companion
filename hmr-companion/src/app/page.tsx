@@ -10,11 +10,16 @@ import {
 } from "@/lib/db";
 import type { StoredCoord } from "@/lib/track-coords";
 import HmrApp from "@/components/HmrApp";
+import LoginGate from "@/components/LoginGate";
+import { getCurrentSessionEmail } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export default async function HomePage() {
+  const sessionEmail = await getCurrentSessionEmail();
+  if (!sessionEmail) return <LoginGate />;
+
   const track = getFirstTrack();
   if (!track) return <EmptyState />;
 
@@ -36,6 +41,7 @@ export default async function HomePage() {
 
   return (
     <HmrApp
+      sessionEmail={sessionEmail}
       initial={{
         id: track.id,
         name: track.name,

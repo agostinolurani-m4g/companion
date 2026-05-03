@@ -28,10 +28,18 @@ const MAX_DETOUR_M: Record<PoiCategory, number> = {
   bus: 2500,
 };
 
+/**
+ * Harvest da click mappa: salva in DB anche POI lontani dal GPX (proiezione sulla traccia),
+ * così restano in elenco quando ti avvicini o scrolli la lista.
+ */
+const HARVEST_RELAXED_MAX_DETOUR_M = 15_000;
+
 export type InsertOsmPoisResult = {
   inserted: number;
   skippedDetour: number;
   skippedUnclassified: number;
+  /** OSM classificato ma fuori dalle categorie richieste (filtro harvest). */
+  skippedCategoryFilter: number;
   /** Righe appena inserite (INSERT ha dato changes > 0). */
   pois: PoiRow[];
 };
@@ -40,7 +48,8 @@ export function insertOsmNodesForTrack(
   db: Database.Database,
   trackId: string,
   coords: StoredCoord[],
-  nodes: OsmNode[]
+  nodes: OsmNode[],
+  opts?: { allowedCategories?: PoiCategory[]; relaxedDetourForHarvest?: boolean }
 ): InsertOsmPoisResult {
   const positions: Position[] = coords.map((c) =>
     c[2] != null ? [c[0], c[1], c[2]] : [c[0], c[1]]
@@ -61,8 +70,13 @@ export function insertOsmNodesForTrack(
   let inserted = 0;
   let skippedDetour = 0;
   let skippedUnclassified = 0;
+  let skippedCategoryFilter = 0;
   const pois: PoiRow[] = [];
   const now = Date.now();
+  const allowed =
+    opts?.allowedCategories && opts.allowedCategories.length > 0
+      ? new Set(opts.allowedCategories)
+      : null;
 
   const run = () => {
     for (const n of nodes) {
@@ -73,7 +87,13 @@ export function insertOsmNodesForTrack(
         skippedUnclassified += 1;
         continue;
       }
-      const maxM = MAX_DETOUR_M[klass.category];
+      if (allowed && !allowed.has(klass.category)) {
+        skippedCategoryFilter += 1;
+        continue;
+      }
+      const maxM = opts?.relaxedDetourForHarvest
+        ? HARVEST_RELAXED_MAX_DETOUR_M
+        : MAX_DETOUR_M[klass.category];
       const projected = nearestPointOnPolyline(positions, [n.lon, n.lat], cum);
       if (!projected) continue;
       const detourM = Math.round(projected.distKm * 1000);
@@ -119,5 +139,5 @@ export function insertOsmNodesForTrack(
 
   db.transaction(run)();
 
-  return { inserted, skippedDetour, skippedUnclassified, pois };
+  return { inserted, skippedDetour, skippedUnclassified, skippedCategoryFilter, pois };
 }

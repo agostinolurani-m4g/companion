@@ -9,6 +9,11 @@ type Props = {
   bbox: Bbox;
 };
 
+type BeforeInstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
+};
+
 function formatBytes(n: number) {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
@@ -21,6 +26,9 @@ export default function OfflineStatus({ trackId, bbox }: Props) {
   const [quota, setQuota] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [prefetchMsg, setPrefetchMsg] = useState<string | null>(null);
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [isIos, setIsIos] = useState(false);
+  const [isStandalone, setIsStandalone] = useState(false);
 
   useEffect(() => {
     setOnline(typeof navigator !== "undefined" ? navigator.onLine : true);
@@ -31,6 +39,41 @@ export default function OfflineStatus({ trackId, bbox }: Props) {
     return () => {
       window.removeEventListener("online", on);
       window.removeEventListener("offline", off);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const ua = window.navigator.userAgent.toLowerCase();
+    const iOS =
+      /iphone|ipad|ipod/.test(ua) ||
+      (window.navigator.platform === "MacIntel" && window.navigator.maxTouchPoints > 1);
+    const standalone =
+      window.matchMedia?.("(display-mode: standalone)")?.matches ||
+      Boolean((window.navigator as Navigator & { standalone?: boolean }).standalone);
+
+    setIsIos(iOS);
+    setIsStandalone(standalone);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const onBeforeInstallPrompt = (ev: Event) => {
+      ev.preventDefault();
+      setInstallPrompt(ev as BeforeInstallPromptEvent);
+    };
+    const onInstalled = () => {
+      setInstallPrompt(null);
+      setIsStandalone(true);
+    };
+
+    window.addEventListener("beforeinstallprompt", onBeforeInstallPrompt);
+    window.addEventListener("appinstalled", onInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onBeforeInstallPrompt);
+      window.removeEventListener("appinstalled", onInstalled);
     };
   }, []);
 
@@ -112,6 +155,13 @@ export default function OfflineStatus({ trackId, bbox }: Props) {
     }
   }, [onPrefetchTiles, warmApis]);
 
+  const onInstallApp = useCallback(async () => {
+    if (!installPrompt) return;
+    await installPrompt.prompt();
+    await installPrompt.userChoice.catch(() => null);
+    setInstallPrompt(null);
+  }, [installPrompt]);
+
   return (
     <div className="pointer-events-auto absolute bottom-[calc(var(--safe-bottom)+5.5rem)] left-3 z-30 md:bottom-[calc(var(--safe-bottom)+1rem)]">
       <button
@@ -129,8 +179,28 @@ export default function OfflineStatus({ trackId, bbox }: Props) {
         <div className="hmr-panel mt-2 w-[min(20rem,calc(100vw-1.5rem))] space-y-2 rounded-xl border border-[color:var(--hmr-border)]/80 p-3 text-xs shadow-xl">
           <p className="text-[color:var(--hmr-muted)]">
             Per la gara: con Wi‑Fi, tocca <strong>Prepara offline</strong> (API + tile OSM/Topo ~80–150 MB).
-            Poi installa l’app dalla schermata home del browser.
+            Poi installa l’app sulla schermata Home.
           </p>
+          {!isStandalone && installPrompt && (
+            <button
+              type="button"
+              onClick={() => void onInstallApp()}
+              className="hmr-btn hmr-btn-accent hmr-tap w-full text-[11px]"
+            >
+              Installa app
+            </button>
+          )}
+          {!isStandalone && isIos && (
+            <p className="text-[10px] text-[color:var(--hmr-faint)]">
+              iPhone/iPad: in Safari tocca <strong>Condividi</strong> e poi{" "}
+              <strong>Aggiungi a Home</strong> (iOS non mostra il popup automatico di installazione).
+            </p>
+          )}
+          {isStandalone && (
+            <p className="text-[10px] text-[color:var(--hmr-faint)]">
+              App installata: avviala dalla Home per avere esperienza fullscreen.
+            </p>
+          )}
           {quota && (
             <p className="text-[color:var(--hmr-faint)]">
               Storage: <span className="text-[color:var(--hmr-text)]">{quota}</span>

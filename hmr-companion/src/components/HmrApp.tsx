@@ -54,11 +54,17 @@ export type TrackPayload = {
   surfaceSegments?: TrackSurfaceSegmentRow[];
 };
 
-export default function HmrApp({ initial }: { initial: TrackPayload }) {
+export default function HmrApp({
+  initial,
+  sessionEmail,
+}: {
+  initial: TrackPayload;
+  sessionEmail: string;
+}) {
   const [tab, setTab] = useState<Tab>("dashboard");
   const [snap, setSnap] = useState<SheetSnap>("half");
   const [visibleCategories, setVisibleCategories] = useState<Set<PoiCategory>>(
-    () => new Set<PoiCategory>(["water", "restaurant", "shop", "lodging", "hut"])
+    () => new Set<PoiCategory>(CATEGORY_ORDER)
   );
   const [showResupply, setShowResupply] = useState(true);
   const [showSections, setShowSections] = useState(true);
@@ -74,6 +80,9 @@ export default function HmrApp({ initial }: { initial: TrackPayload }) {
   const [poiHarvestMode, setPoiHarvestMode] = useState(false);
   const [poiHarvestBusy, setPoiHarvestBusy] = useState(false);
   const [poiHarvestMsg, setPoiHarvestMsg] = useState<string | null>(null);
+  const [poiHarvestCategories, setPoiHarvestCategories] = useState<Set<PoiCategory>>(
+    () => new Set<PoiCategory>(CATEGORY_ORDER)
+  );
 
   const [streetViewPoints, setStreetViewPoints] = useState<StreetViewAlongItem[]>([]);
   const [mapillaryPoints, setMapillaryPoints] = useState<MapillaryAlongItem[]>([]);
@@ -135,6 +144,19 @@ export default function HmrApp({ initial }: { initial: TrackPayload }) {
   }, []);
 
   const resetPins = useCallback(() => setPins({ a: null, b: null }), []);
+
+  const nudgeMeasurementTarget = useCallback(
+    (deltaKm: number) => {
+      setPins((prev) => {
+        if (prev.a == null) return prev;
+        const base = prev.b ?? prev.a;
+        const nextB = Math.max(0, Math.min(initial.length_km, base + deltaKm));
+        if (Math.abs(nextB - prev.a) < 1e-6) return prev;
+        return { a: prev.a, b: nextB };
+      });
+    },
+    [initial.length_km]
+  );
 
   const onTrackKmPick = useCallback((km: number) => {
     setMapPickedKm(km);
@@ -391,8 +413,21 @@ export default function HmrApp({ initial }: { initial: TrackPayload }) {
     setPois((prev) => prev.filter((p) => p.id !== poiId));
   }, []);
 
+  const onTogglePoiHarvestCategory = useCallback((c: PoiCategory) => {
+    setPoiHarvestCategories((prev) => {
+      const next = new Set(prev);
+      if (next.has(c)) next.delete(c);
+      else next.add(c);
+      return next;
+    });
+  }, []);
+
   const onPoiHarvestClick = useCallback(
     async (lat: number, lng: number) => {
+      if (poiHarvestCategories.size === 0) {
+        setPoiHarvestMsg("Seleziona almeno una categoria da cercare.");
+        return;
+      }
       setPoiHarvestBusy(true);
       setPoiHarvestMsg(null);
       try {
@@ -401,7 +436,12 @@ export default function HmrApp({ initial }: { initial: TrackPayload }) {
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ lat, lng, radiusM: 450 }),
+            body: JSON.stringify({
+              lat,
+              lng,
+              radiusM: 2500,
+              categories: Array.from(poiHarvestCategories),
+            }),
           }
         );
         const j = (await r.json()) as {
@@ -409,8 +449,10 @@ export default function HmrApp({ initial }: { initial: TrackPayload }) {
           inserted?: number;
           skippedDetour?: number;
           skippedUnclassified?: number;
+          skippedCategoryFilter?: number;
           osmReturned?: number;
           pois?: PoiRow[];
+          fromOverpassCache?: boolean;
         };
         if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
         const newPois = j.pois ?? [];
@@ -422,9 +464,13 @@ export default function HmrApp({ initial }: { initial: TrackPayload }) {
           });
         }
         const su = j.skippedUnclassified ?? 0;
+        const sf = j.skippedCategoryFilter ?? 0;
+        const cacheHint = j.fromOverpassCache ? " · cache Overpass" : "";
         setPoiHarvestMsg(
-          `OSM ${j.osmReturned ?? 0} oggetti · +${j.inserted ?? 0} in elenco · oltre percorso ${j.skippedDetour ?? 0}` +
-            (su > 0 ? ` · tag non mappati ${su}` : "")
+          `OSM ${j.osmReturned ?? 0} oggetti · +${j.inserted ?? 0} in elenco · oltre soglia import ${j.skippedDetour ?? 0}` +
+            (su > 0 ? ` · tag non mappati ${su}` : "") +
+            (sf > 0 ? ` · fuori filtro ${sf}` : "") +
+            cacheHint
         );
       } catch (e) {
         setPoiHarvestMsg((e as Error).message);
@@ -432,7 +478,7 @@ export default function HmrApp({ initial }: { initial: TrackPayload }) {
         setPoiHarvestBusy(false);
       }
     },
-    [initial.id]
+    [initial.id, poiHarvestCategories]
   );
 
   const togglePoiHarvestMode = useCallback(() => {
@@ -501,6 +547,20 @@ export default function HmrApp({ initial }: { initial: TrackPayload }) {
             <span className="truncate text-sm font-semibold">{initial.name}</span>
           </div>
           <div className="ml-auto flex min-w-0 flex-col items-end gap-1">
+            <div className="flex items-center gap-2 text-[9px] text-[color:var(--hmr-faint)]">
+              <span className="max-w-[11rem] truncate">{sessionEmail}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  void fetch("/api/auth/logout", { method: "POST" }).finally(() => {
+                    window.location.reload();
+                  });
+                }}
+                className="hmr-btn hmr-tap rounded-md px-2 py-0.5 text-[10px]"
+              >
+                Esci
+              </button>
+            </div>
             <div className="grid grid-cols-3 gap-2 text-[10px] text-[color:var(--hmr-muted)]">
               <Stat label="Dist." value={`${initial.length_km.toFixed(0)} km`} />
               <Stat label="D+" value={`${Math.round(initial.elev_gain_m)} m`} />
@@ -518,21 +578,7 @@ export default function HmrApp({ initial }: { initial: TrackPayload }) {
             )}
           </div>
         </div>
-        <div className="pointer-events-auto flex flex-wrap gap-2">
-          {CATEGORY_ORDER.map((cat) => {
-            const on = visibleCategories.has(cat);
-            return (
-              <button
-                key={cat}
-                type="button"
-                onClick={() => onToggleCategory(cat)}
-                className={`hmr-chip ${on ? "hmr-chip-on" : "hmr-chip-off"}`}
-                aria-pressed={on}
-              >
-                {labelForCategory(cat)}
-              </button>
-            );
-          })}
+        <div className="pointer-events-auto flex flex-wrap items-start gap-2">
           <button
             type="button"
             onClick={() => setShowSections((v) => !v)}
@@ -561,18 +607,72 @@ export default function HmrApp({ initial }: { initial: TrackPayload }) {
             disabled={poiHarvestBusy}
             className={`hmr-chip ${poiHarvestMode ? "hmr-chip-on" : "hmr-chip-off"}`}
             aria-pressed={poiHarvestMode}
-            title="Clic sulla mappa: scarica POI OpenStreetMap attorno al punto (raggio ~450 m) e aggiunge quelli vicini al percorso"
+            title="Clic sulla mappa: cerca su OpenStreetMap nel raggio (~450 m) le categorie selezionate nel pannello verde"
           >
             {poiHarvestBusy ? "⏳ OSM…" : "🔍 OSM qui"}
           </button>
+          <details className="relative">
+            <summary className="hmr-chip hmr-chip-off cursor-pointer list-none select-none">
+              🧰 Filtri POI
+            </summary>
+            <div className="hmr-panel absolute right-0 z-40 mt-2 w-44 rounded-lg border border-[color:var(--hmr-border)]/80 p-2 text-xs shadow-xl">
+              <p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-[color:var(--hmr-faint)]">
+                Mostra categorie
+              </p>
+              <div className="space-y-1">
+                {CATEGORY_ORDER.map((cat) => (
+                  <label key={cat} className="flex cursor-pointer items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={visibleCategories.has(cat)}
+                      onChange={() => onToggleCategory(cat)}
+                    />
+                    <span>{labelForCategory(cat)}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          </details>
         </div>
       </header>
       {poiHarvestMode && (
         <div className="pointer-events-none absolute left-3 right-3 top-[7.5rem] z-30 flex justify-center">
-          <div className="pointer-events-auto max-w-md rounded-md border border-emerald-500/40 bg-[color:var(--hmr-panel-bg)] px-3 py-2 text-center text-[11px] leading-snug text-[color:var(--hmr-muted)] shadow-lg">
+          <div className="pointer-events-auto max-w-lg rounded-md border border-emerald-500/40 bg-[color:var(--hmr-panel-bg)] px-3 py-2 text-center text-[11px] leading-snug text-[color:var(--hmr-muted)] shadow-lg">
             <span className="font-medium text-emerald-200/95">Cerca POI OSM</span>
             {" — "}
-            Clicca sulla mappa sul paese o sull&apos;incrocio (non serve essere sulla linea gara).
+            Scegli le categorie, poi clicca sulla mappa (cerchio fino ~2,5 km verso OSM; in DB fino ~15 km dal GPX). In lista alza «detour» se non vedi i nuovi POI.
+            <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-[10px]">
+              <button
+                type="button"
+                className="hmr-btn hmr-tap rounded-md px-2 py-1"
+                onClick={() =>
+                  setPoiHarvestCategories(
+                    new Set<PoiCategory>(["shop", "restaurant", "lodging"])
+                  )
+                }
+              >
+                Spesa + cibo + letto
+              </button>
+              <button
+                type="button"
+                className="hmr-btn hmr-tap rounded-md px-2 py-1"
+                onClick={() => setPoiHarvestCategories(new Set(CATEGORY_ORDER))}
+              >
+                Tutte
+              </button>
+            </div>
+            <div className="mt-2 flex flex-wrap justify-center gap-x-3 gap-y-1 text-left text-[10px]">
+              {CATEGORY_ORDER.map((cat) => (
+                <label key={`harvest-${cat}`} className="flex cursor-pointer items-center gap-1">
+                  <input
+                    type="checkbox"
+                    checked={poiHarvestCategories.has(cat)}
+                    onChange={() => onTogglePoiHarvestCategory(cat)}
+                  />
+                  <span>{labelForCategory(cat)}</span>
+                </label>
+              ))}
+            </div>
             {poiHarvestMsg && (
               <span className="mt-1 block text-[color:var(--hmr-faint)]">{poiHarvestMsg}</span>
             )}
@@ -585,9 +685,11 @@ export default function HmrApp({ initial }: { initial: TrackPayload }) {
       {measurement && (
         <MeasurementOverlay
           measurement={measurement}
+          trackLengthKm={initial.length_km}
           hoverKm={hoverKm}
           hoverElev={hoverElev}
           onReset={resetPins}
+          onNudgeTarget={nudgeMeasurementTarget}
           hoverTerrainLabel={hoverTerrainLabel}
           abSegmentTerrainLabel={abSegmentTerrainLabel}
           hasSurfaceData={surfaceBands.length > 0}
@@ -765,9 +867,11 @@ type MeasurementInfo = {
 
 function MeasurementOverlay({
   measurement,
+  trackLengthKm,
   hoverKm,
   hoverElev,
   onReset,
+  onNudgeTarget,
   hoverTerrainLabel,
   abSegmentTerrainLabel,
   hasSurfaceData,
@@ -776,9 +880,11 @@ function MeasurementOverlay({
   terrainSaving,
 }: {
   measurement: MeasurementInfo;
+  trackLengthKm: number;
   hoverKm: number | null;
   hoverElev: number | null;
   onReset: () => void;
+  onNudgeTarget: (deltaKm: number) => void;
   hoverTerrainLabel: string | null;
   abSegmentTerrainLabel: string | null;
   hasSurfaceData: boolean;
@@ -844,6 +950,30 @@ function MeasurementOverlay({
             {Math.round(deltaElev)} m
           </p>
         )}
+        <div className="mt-2 border-t border-[color:var(--hmr-border)]/60 pt-2 md:hidden">
+          <p className="mb-1 text-[10px] text-[color:var(--hmr-muted)]">
+            Parziale rapido (mobile)
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {(
+              [
+                { label: "+5 km", deltaKm: 5 },
+                { label: "+10 km", deltaKm: 10 },
+                { label: "+20 km", deltaKm: 20 },
+              ] as const
+            ).map((item) => (
+              <button
+                key={item.label}
+                type="button"
+                onClick={() => onNudgeTarget(item.deltaKm)}
+                className="hmr-btn hmr-tap rounded-lg px-2 py-1 text-[10px]"
+                disabled={measurement.aKm >= trackLengthKm - 0.05}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </div>
         {hoverKm != null && (
           <p className="mt-1 text-[10px] text-[color:var(--hmr-muted)]">
             Cursore: km {hoverKm.toFixed(1)}

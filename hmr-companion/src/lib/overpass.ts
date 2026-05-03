@@ -5,6 +5,7 @@
  */
 
 import type { Position } from "geojson";
+import type { PoiCategory } from "./db";
 
 const DEFAULT_INTERPRETERS = [
   "https://overpass-api.de/api/interpreter",
@@ -458,6 +459,80 @@ export function allPoiOverpassLineStrings(): string[] {
   return out;
 }
 
+/** Mappa categorie app → gruppi query Overpass (vedi BBOX_LINES). */
+export function bboxKeysForPoiCategories(categories: PoiCategory[]): BboxCategoryKey[] {
+  const keys = new Set<BboxCategoryKey>();
+  for (const c of categories) {
+    switch (c) {
+      case "water":
+        keys.add("water");
+        break;
+      case "hut":
+        keys.add("hut");
+        break;
+      case "lodging":
+        keys.add("lodging");
+        break;
+      case "shop":
+        keys.add("shop");
+        break;
+      case "restaurant":
+        keys.add("food");
+        break;
+      case "pharmacy":
+        keys.add("health");
+        break;
+      case "atm":
+      case "bus":
+        keys.add("utilities");
+        break;
+      default:
+        break;
+    }
+  }
+  return Array.from(keys);
+}
+
+function overpassLinesForBboxKeys(keys: BboxCategoryKey[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const key of keys) {
+    for (const line of BBOX_LINES[key]) {
+      if (!seen.has(line)) {
+        seen.add(line);
+        out.push(line);
+      }
+    }
+  }
+  return out;
+}
+
+/** Raggio harvest su mappa: clamp per non stressare Overpass (max 5 km). */
+export function clampPoiHarvestRadiusM(radiusM: number): number {
+  return Math.max(80, Math.min(5000, Math.round(radiusM)));
+}
+
+/**
+ * Interroga Overpass in un cerchio attorno a un punto.
+ * `bboxKeys`: null o [] = tutte le categorie snapshot; altrimenti solo i gruppi indicati.
+ */
+export async function fetchPoiTypesAround(
+  lat: number,
+  lon: number,
+  radiusM: number,
+  bboxKeys: BboxCategoryKey[] | null
+): Promise<OsmNode[]> {
+  const r = clampPoiHarvestRadiusM(radiusM);
+  const keys =
+    bboxKeys && bboxKeys.length > 0
+      ? bboxKeys
+      : (Object.keys(BBOX_LINES) as BboxCategoryKey[]);
+  const lines = overpassLinesForBboxKeys(keys);
+  const body = lines.map((l) => `  ${l}(around:${r},${lat},${lon});`).join("\n");
+  const q = `[out:json][timeout:90];\n(\n${body}\n);\nout center;`;
+  return fetchOverpass(q);
+}
+
 /**
  * Interroga Overpass in un cerchio (come `around:`) attorno a un punto sulla mappa:
  * utile per “cerca POI qui” con raggio piccolo (paese, incrocio).
@@ -468,11 +543,7 @@ export async function fetchAllPoiTypesAround(
   lon: number,
   radiusM: number
 ): Promise<OsmNode[]> {
-  const r = Math.max(80, Math.min(2000, Math.round(radiusM)));
-  const lines = allPoiOverpassLineStrings();
-  const body = lines.map((l) => `  ${l}(around:${r},${lat},${lon});`).join("\n");
-  const q = `[out:json][timeout:90];\n(\n${body}\n);\nout center;`;
-  return fetchOverpass(q);
+  return fetchPoiTypesAround(lat, lon, radiusM, null);
 }
 
 export async function fetchCategoryInBbox(
@@ -525,8 +596,6 @@ export function osmOpeningHoursFromTags(tags: Record<string, string>): string | 
 }
 
 /* ---------------- Mapping OSM → PoiCategory ---------------- */
-
-import type { PoiCategory } from "./db";
 
 export type ClassifiedOsm = {
   category: PoiCategory;

@@ -111,11 +111,11 @@ export default function ElevationChart({
     pinAX != null && bandBX != null ? Math.max(pinAX, bandBX) : null;
 
   return (
-    <div className="hmr-panel relative min-h-[44px] overflow-hidden py-1.5">
-      <div className="mx-auto w-full max-h-[min(28vw,6.25rem)] min-h-[3rem]">
+    <div className="hmr-panel relative min-h-[48px] overflow-hidden py-1.5">
+      <div className="mx-auto w-full max-h-[min(31vw,6.8rem)] min-h-[3.2rem]">
         <svg
           viewBox={`0 0 ${CHART_W} ${CHART_H}`}
-          className="block h-full w-full max-h-[min(28vw,6.25rem)] min-h-[3rem]"
+          className="block h-full w-full max-h-[min(31vw,6.8rem)] min-h-[3.2rem]"
           preserveAspectRatio="xMidYMid meet"
           style={{ touchAction: "none", cursor: "crosshair" }}
           onPointerMove={(e) => {

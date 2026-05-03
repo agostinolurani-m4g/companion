@@ -103,7 +103,7 @@ export async function GET(req: Request, ctx: Ctx) {
   const cumKm = cumFromStored(stored);
 
   try {
-    const collected = await collectStreetViewAlongTrack({
+    const { items: collected, diagnostics } = await collectStreetViewAlongTrack({
       coords,
       cumKm,
       storedCoords: stored,
@@ -121,6 +121,7 @@ export async function GET(req: Request, ctx: Ctx) {
       items,
       source: "live" as const,
       params,
+      diagnostics,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Errore Street View";

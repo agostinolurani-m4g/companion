@@ -8,6 +8,7 @@ import {
   normalizeRacePlanKms,
 } from "@/lib/db";
 import { RACE_PLAN_ITEM_KINDS, type RacePlanItemKind } from "@/lib/race-plan-types";
+import { requireAuthenticated } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
@@ -21,6 +22,8 @@ function guardPlan(trackId: string, planId: string) {
 }
 
 export async function GET(_req: Request, ctx: Ctx) {
+  const auth = await requireAuthenticated();
+  if (!auth) return NextResponse.json({ error: "Non autenticato" }, { status: 401 });
   const { id: trackId, planId } = await ctx.params;
   const track = getTrack(trackId);
   if (!track) return NextResponse.json({ error: "Track non trovato" }, { status: 404 });
@@ -41,6 +44,8 @@ type PostBody = {
 };
 
 export async function POST(req: Request, ctx: Ctx) {
+  const auth = await requireAuthenticated();
+  if (!auth) return NextResponse.json({ error: "Non autenticato" }, { status: 401 });
   const { id: trackId, planId } = await ctx.params;
   const track = getTrack(trackId);
   if (!track) return NextResponse.json({ error: "Track non trovato" }, { status: 404 });

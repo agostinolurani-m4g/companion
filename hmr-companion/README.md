@@ -82,6 +82,10 @@ preserva e le celle mancanti verranno ri-richieste).
 | Nome | Obbligatoria | Default | Note |
 |---|---|---|---|
 | `INGEST_TOKEN` | sì (in prod) | — | proteggere `POST /api/admin/ingest` |
+| `HMR_ALLOWED_EMAILS` | sì (consigliata) | `agostino.lurani@gmail.com` | whitelist email login (comma-separated) |
+| `HMR_APP_URL` | sì (con auth email) | `http://localhost:3002` | base URL usata nel magic link |
+| `RESEND_API_KEY` | sì (con auth email) | — | API key Resend per inviare link login |
+| `HMR_AUTH_FROM_EMAIL` | no | `HMR Companion <onboarding@resend.dev>` | mittente email magic link |
 | `HMR_DB_PATH` | no | `data/hmr.db` | path del file SQLite |
 | `HMR_GPX_FILENAME` | no | `Hellenic_Mountain_Race_2026.gpx` | nome del GPX da ingest |
 | `HMR_OVERPASS_UA` | no | `hmr-companion/0.1` | User-Agent per Overpass |
@@ -117,6 +121,13 @@ preserva e le celle mancanti verranno ri-richieste).
    (Dashboard → Manuale) per continuare a vedere "prossimo rifornimento".
 4. Il GPX ufficiale è scaricabile da `/api/track/hmr-2026/gpx` come backup
    per Wahoo / Garmin.
+
+## Accesso (login email)
+
+- L'app usa login via **magic link** (email) con sessione persistente (~14 giorni).
+- Solo le email nella whitelist `HMR_ALLOWED_EMAILS` possono accedere.
+- Configura `RESEND_API_KEY` e (in produzione) un mittente verificato in `HMR_AUTH_FROM_EMAIL`.
+- In locale puoi testare con sender `onboarding@resend.dev` (limiti Resend free tier).
 
 ## Note sui dati
 

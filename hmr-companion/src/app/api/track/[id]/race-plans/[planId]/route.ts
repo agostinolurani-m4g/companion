@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { deleteRacePlan, getRacePlan, getTrack, updateRacePlan } from "@/lib/db";
+import { requireAuthenticated } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
@@ -13,6 +14,8 @@ function assertPlanOnTrack(trackId: string, planId: string) {
 }
 
 export async function PATCH(req: Request, ctx: Ctx) {
+  const auth = await requireAuthenticated();
+  if (!auth) return NextResponse.json({ error: "Non autenticato" }, { status: 401 });
   const { id: trackId, planId } = await ctx.params;
   const track = getTrack(trackId);
   if (!track) return NextResponse.json({ error: "Track non trovato" }, { status: 404 });
@@ -30,6 +33,8 @@ export async function PATCH(req: Request, ctx: Ctx) {
 }
 
 export async function DELETE(_req: Request, ctx: Ctx) {
+  const auth = await requireAuthenticated();
+  if (!auth) return NextResponse.json({ error: "Non autenticato" }, { status: 401 });
   const { id: trackId, planId } = await ctx.params;
   const track = getTrack(trackId);
   if (!track) return NextResponse.json({ error: "Track non trovato" }, { status: 404 });

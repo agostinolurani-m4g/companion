@@ -63,6 +63,10 @@ export default function RacePlanPanel({
     () => racePlans.find((p) => p.id === selectedPlanId) ?? null,
     [racePlans, selectedPlanId]
   );
+  const stageItems = useMemo(
+    () => (activePlan?.items ?? []).filter((it) => it.kind === "stage"),
+    [activePlan]
+  );
 
   const applyMapKm = useCallback(
     (field: "km_start" | "km_end") => {
@@ -441,6 +445,28 @@ export default function RacePlanPanel({
           </div>
 
           <div>
+            {stageItems.length > 0 && (
+              <div className="mb-3">
+                <h3 className="mb-2 text-[10px] uppercase tracking-wide text-[color:var(--hmr-muted)]">
+                  Tappe piano ({stageItems.length})
+                </h3>
+                <ul className="space-y-1.5">
+                  {stageItems.map((it, idx) => (
+                    <li
+                      key={`stage-${it.id}`}
+                      className="hmr-panel flex items-center justify-between px-3 py-1.5 text-xs"
+                    >
+                      <span className="truncate">
+                        Tappa {idx + 1}: {it.title || "Senza titolo"}
+                      </span>
+                      <span className="shrink-0 text-[color:var(--hmr-muted)]">
+                        {it.km_start.toFixed(1)}→{it.km_end.toFixed(1)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             <h3 className="mb-2 text-[10px] uppercase tracking-wide text-[color:var(--hmr-muted)]">
               Voci ({activePlan?.items.length ?? 0})
             </h3>

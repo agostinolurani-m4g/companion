@@ -6,12 +6,15 @@ import {
   listRacePlansWithItems,
   type RacePlanWithItems,
 } from "@/lib/db";
+import { requireAuthenticated } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(_req: Request, ctx: Ctx) {
+  const auth = await requireAuthenticated();
+  if (!auth) return NextResponse.json({ error: "Non autenticato" }, { status: 401 });
   const { id: trackId } = await ctx.params;
   const track = getTrack(trackId);
   if (!track) return NextResponse.json({ error: "Track non trovato" }, { status: 404 });
@@ -22,6 +25,8 @@ export async function GET(_req: Request, ctx: Ctx) {
 type PostBody = { name?: string };
 
 export async function POST(req: Request, ctx: Ctx) {
+  const auth = await requireAuthenticated();
+  if (!auth) return NextResponse.json({ error: "Non autenticato" }, { status: 401 });
   const { id: trackId } = await ctx.params;
   const track = getTrack(trackId);
   if (!track) return NextResponse.json({ error: "Track non trovato" }, { status: 404 });
