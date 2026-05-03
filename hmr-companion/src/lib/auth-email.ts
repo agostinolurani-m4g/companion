@@ -2,9 +2,14 @@ import { Resend } from "resend";
 
 let resendClient: Resend | null = null;
 
+/** Accesso dinamico: così Next non inlines la chiave al build Docker (dove env è vuota). */
+function envStr(key: string): string | undefined {
+  return process.env[key]?.trim();
+}
+
 function getResendClient(): Resend {
   if (resendClient) return resendClient;
-  const apiKey = process.env.RESEND_API_KEY?.trim();
+  const apiKey = envStr("RESEND_API_KEY");
   if (!apiKey) throw new Error("RESEND_API_KEY mancante");
   resendClient = new Resend(apiKey);
   return resendClient;
@@ -15,7 +20,8 @@ export async function sendMagicLinkEmail(input: {
   magicLinkUrl: string;
   expiresInMinutes: number;
 }) {
-  const from = process.env.HMR_AUTH_FROM_EMAIL?.trim() || "HMR Companion <onboarding@resend.dev>";
+  const from =
+    envStr("HMR_AUTH_FROM_EMAIL") || "HMR Companion <onboarding@resend.dev>";
   const resend = getResendClient();
   await resend.emails.send({
     from,

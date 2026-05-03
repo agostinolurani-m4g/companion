@@ -14,19 +14,31 @@ export const AUTH_COOKIE_NAME = "hmr_auth_session";
 const MAGIC_LINK_TTL_MS = 15 * 60 * 1000;
 const SESSION_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 
-const ALLOWED_EMAILS = new Set(
-  (process.env.HMR_ALLOWED_EMAILS ?? "agostino.lurani@gmail.com")
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean)
-);
+/** Lettura runtime (no `process.env.NAME` letterale → evita inline vuoto al build Docker). */
+function envStr(key: string): string | undefined {
+  return process.env[key]?.trim();
+}
+
+let allowedEmailsCache: Set<string> | null = null;
+function allowedEmails(): Set<string> {
+  if (allowedEmailsCache) return allowedEmailsCache;
+  const raw =
+    envStr("HMR_ALLOWED_EMAILS") || "agostino.lurani@gmail.com";
+  allowedEmailsCache = new Set(
+    raw
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean)
+  );
+  return allowedEmailsCache;
+}
 
 export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
 export function isAllowedEmail(email: string): boolean {
-  return ALLOWED_EMAILS.has(normalizeEmail(email));
+  return allowedEmails().has(normalizeEmail(email));
 }
 
 export function createOpaqueToken(): string {
@@ -46,7 +58,7 @@ export function createSessionExpiry(now: number): number {
 }
 
 export function getAuthBaseUrl(): string {
-  const envUrl = process.env.HMR_APP_URL?.trim();
+  const envUrl = envStr("HMR_APP_URL");
   if (envUrl) return envUrl.replace(/\/+$/, "");
   return "http://localhost:3002";
 }

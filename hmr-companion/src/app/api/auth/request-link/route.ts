@@ -40,9 +40,25 @@ export async function POST(req: Request) {
     const magicLinkUrl = `${getAuthBaseUrl()}/api/auth/verify?token=${encodeURIComponent(token)}`;
     await sendMagicLinkEmail({ to: email, magicLinkUrl, expiresInMinutes: 15 });
     return NextResponse.json({ ok: true });
-  } catch {
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[auth/request-link]", msg);
+    if (/RESEND_API_KEY mancante/i.test(msg)) {
+      return NextResponse.json(
+        {
+          error:
+            "RESEND_API_KEY non visibile al processo Next.js. Rebuild immagine dopo aver aggiornato docker-compose (env a runtime) oppure verifica bug inline env.",
+        },
+        { status: 500 }
+      );
+    }
     return NextResponse.json(
-      { error: "Invio email non configurato. Imposta RESEND_API_KEY." },
+      {
+        error:
+          msg.length > 0 && msg.length < 280
+            ? `Invio email fallito: ${msg}`
+            : "Invio email fallito. Controlla log server e configurazione Resend (mittente, dominio).",
+      },
       { status: 500 }
     );
   }
