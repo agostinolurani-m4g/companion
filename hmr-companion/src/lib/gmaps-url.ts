@@ -11,9 +11,24 @@
  * e ritorna l'URL finale (utile da salvare per riapertura one-tap).
  */
 
-/** Apre Google Maps con il layer Street View centrato su lat/lng (cbll). */
-export function googleMapsStreetViewLayerUrl(lat: number, lng: number): string {
-  return `https://www.google.com/maps?q=&layer=c&cbll=${lat},${lng}`;
+/**
+ * Apre Street View in Google Maps (web + app iOS/Android).
+ * Evita `q=` vuoto + solo `layer=c` (su mobile spesso finisce nella ricerca).
+ * @see https://developers.google.com/maps/documentation/urls/get-started
+ */
+export function googleMapsStreetViewLayerUrl(
+  lat: number,
+  lng: number,
+  panoId?: string | null
+): string {
+  const viewpoint = `${lat},${lng}`;
+  const base = new URL("https://www.google.com/maps/@");
+  base.searchParams.set("api", "1");
+  base.searchParams.set("map_action", "pano");
+  base.searchParams.set("viewpoint", viewpoint);
+  const pid = panoId?.trim();
+  if (pid) base.searchParams.set("pano", pid);
+  return base.toString();
 }
 
 export class GmapsParseError extends Error {

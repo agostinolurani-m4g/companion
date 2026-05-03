@@ -99,9 +99,15 @@ describe("parseGoogleMapsUrl", () => {
 });
 
 describe("googleMapsStreetViewLayerUrl", () => {
-  it("include cbll con coordinate", () => {
+  it("usa map_action=pano e viewpoint", () => {
     const u = googleMapsStreetViewLayerUrl(40.1, 22.2);
-    expect(u).toContain("layer=c");
-    expect(u).toContain("cbll=40.1,22.2");
+    expect(u).toContain("map_action=pano");
+    expect(u).toContain("viewpoint=");
+    expect(u).toContain("40.1");
+    expect(u).toContain("22.2");
+  });
+  it("include pano se passato", () => {
+    const u = googleMapsStreetViewLayerUrl(40, 22, "abc123_xyz");
+    expect(u).toContain("pano=abc123_xyz");
   });
 });

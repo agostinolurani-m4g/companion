@@ -668,7 +668,7 @@ function streetViewRowToItem(row: TrackStreetViewPointRow): StreetViewAlongItem 
     copyright: row.copyright,
     sample_lat: row.sample_lat,
     sample_lng: row.sample_lng,
-    maps_url: googleMapsStreetViewLayerUrl(row.lat, row.lng),
+    maps_url: googleMapsStreetViewLayerUrl(row.lat, row.lng, row.pano_id),
   };
 }
 

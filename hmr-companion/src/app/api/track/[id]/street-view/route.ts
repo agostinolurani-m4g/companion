@@ -22,7 +22,8 @@ function num(q: string | null, fallback: number, min: number, max: number): numb
 function withMapsUrls(items: StreetViewAlongItem[]): StreetViewAlongItem[] {
   return items.map((it) => ({
     ...it,
-    maps_url: it.maps_url ?? googleMapsStreetViewLayerUrl(it.lat, it.lng),
+    maps_url:
+      it.maps_url ?? googleMapsStreetViewLayerUrl(it.lat, it.lng, it.pano_id),
   }));
 }
 
