@@ -38,10 +38,12 @@ export type MapViewProps = {
   onSelectPoi?: (poi: PoiRow) => void;
   /** Annotazioni piano gara (solo layer; click gestito da trackClickMode). */
   racePlanItems?: RacePlanItemRow[];
-  trackClickMode?: "measure" | "racePlan" | "poiHarvest";
+  trackClickMode?: "measure" | "racePlan" | "poiHarvest" | "addPoi";
   onTrackKmPick?: (km: number) => void;
   /** Modalità “cerca POI OSM”: clic ovunque sulla mappa (non solo sulla traccia). */
   onPoiHarvestClick?: (lat: number, lng: number) => void;
+  /** Aggiungi POI: clic sulla mappa → coordinate WGS84. */
+  onAddPoiMapClick?: (lat: number, lng: number) => void;
   /** Segmenti km con superficie (da `npm run snapshot:surface`). */
   surfaceSegments?: Array<{ km_start: number; km_end: number; surface: TrackSurfaceKind }>;
   /** Street View lungo traccia (API server). */
@@ -114,6 +116,7 @@ export default function MapView(props: MapViewProps) {
   const trackClickModeRef = useRef(props.trackClickMode ?? "measure");
   const onTrackKmPickRef = useRef(props.onTrackKmPick);
   const onPoiHarvestClickRef = useRef(props.onPoiHarvestClick);
+  const onAddPoiMapClickRef = useRef(props.onAddPoiMapClick);
   const lastHoverEmitRef = useRef<number | null>(null);
   const hoverRafRef = useRef<number | null>(null);
 
@@ -135,13 +138,18 @@ export default function MapView(props: MapViewProps) {
   useEffect(() => {
     onPoiHarvestClickRef.current = props.onPoiHarvestClick;
   }, [props.onPoiHarvestClick]);
+  useEffect(() => {
+    onAddPoiMapClickRef.current = props.onAddPoiMapClick;
+  }, [props.onAddPoiMapClick]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
     try {
       map.getCanvas().style.cursor =
-        props.trackClickMode === "poiHarvest" ? "crosshair" : "";
+        props.trackClickMode === "poiHarvest" || props.trackClickMode === "addPoi"
+          ? "crosshair"
+          : "";
     } catch {
       /* canvas non pronto */
     }
@@ -292,7 +300,10 @@ export default function MapView(props: MapViewProps) {
       readyRef.current = true;
       tryFit();
       map.getCanvas().style.cursor =
-        trackClickModeRef.current === "poiHarvest" ? "crosshair" : "";
+        trackClickModeRef.current === "poiHarvest" ||
+        trackClickModeRef.current === "addPoi"
+          ? "crosshair"
+          : "";
       map.addSource("track", {
         type: "geojson",
         data: {
@@ -861,6 +872,10 @@ export default function MapView(props: MapViewProps) {
         if (hits && hits.length > 0) return;
         if (trackClickModeRef.current === "poiHarvest") {
           onPoiHarvestClickRef.current?.(e.lngLat.lat, e.lngLat.lng);
+          return;
+        }
+        if (trackClickModeRef.current === "addPoi") {
+          onAddPoiMapClickRef.current?.(e.lngLat.lat, e.lngLat.lng);
           return;
         }
         const r = projectAtPointerPx(e);

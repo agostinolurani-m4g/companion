@@ -30,8 +30,11 @@ import AddPoiSheet from "./AddPoiSheet";
 import RacePlanPanel from "./RacePlanPanel";
 import AlongMediaControls from "./AlongMediaControls";
 import OfflineStatus from "./OfflineStatus";
+import RoadbookPanel from "./RoadbookPanel";
+import RaceBriefPanel from "./RaceBriefPanel";
 
-type Tab = "dashboard" | "list" | "checkpoints" | "racePlan";
+export type HmrTab = "dashboard" | "race" | "roadbook" | "list" | "checkpoints" | "racePlan";
+type Tab = HmrTab;
 
 export type TrackPayload = {
   id: string;
@@ -57,11 +60,13 @@ export type TrackPayload = {
 export default function HmrApp({
   initial,
   sessionEmail,
+  initialTab = "dashboard",
 }: {
   initial: TrackPayload;
   sessionEmail: string;
+  initialTab?: Tab;
 }) {
-  const [tab, setTab] = useState<Tab>("dashboard");
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [snap, setSnap] = useState<SheetSnap>("half");
   const [visibleCategories, setVisibleCategories] = useState<Set<PoiCategory>>(
     () => new Set<PoiCategory>(CATEGORY_ORDER)
@@ -77,6 +82,37 @@ export default function HmrApp({
   const [racePlanMapPick, setRacePlanMapPick] = useState(false);
   const [mapPickedKm, setMapPickedKm] = useState<number | null>(null);
   const [showAddSheet, setShowAddSheet] = useState(false);
+  const [addPoiMapPick, setAddPoiMapPick] = useState(false);
+  const [addPoiPickedLatLng, setAddPoiPickedLatLng] = useState<{ lat: number; lng: number } | null>(
+    null
+  );
+  const [raceActive, setRaceActive] = useState(false);
+
+  useEffect(() => {
+    try {
+      setRaceActive(localStorage.getItem("hmr_race_active") === "1");
+    } catch {
+      setRaceActive(false);
+    }
+  }, []);
+
+  const startRace = useCallback(() => {
+    try {
+      localStorage.setItem("hmr_race_active", "1");
+    } catch {
+      /* ignore */
+    }
+    setRaceActive(true);
+  }, []);
+
+  const endRace = useCallback(() => {
+    try {
+      localStorage.removeItem("hmr_race_active");
+    } catch {
+      /* ignore */
+    }
+    setRaceActive(false);
+  }, []);
   const [poiHarvestMode, setPoiHarvestMode] = useState(false);
   const [poiHarvestBusy, setPoiHarvestBusy] = useState(false);
   const [poiHarvestMsg, setPoiHarvestMsg] = useState<string | null>(null);
@@ -390,12 +426,37 @@ export default function HmrApp({
     () =>
       [
         { id: "dashboard" as Tab, label: "Qui e ora" },
+        { id: "race" as Tab, label: "Gara" },
+        { id: "roadbook" as Tab, label: "Roadbook" },
         { id: "list" as Tab, label: `Lista (${pois.length})` },
         { id: "checkpoints" as Tab, label: "Checkpoint" },
         { id: "racePlan" as Tab, label: "Piano gara" },
       ] as const,
     [pois.length]
   );
+
+  const openAddSheet = useCallback(() => {
+    setAddPoiMapPick(false);
+    setShowAddSheet(true);
+  }, []);
+
+  const closeAddSheet = useCallback(() => {
+    setShowAddSheet(false);
+    setAddPoiMapPick(false);
+  }, []);
+
+  const requestAddPoiMapPick = useCallback(() => {
+    setAddPoiMapPick(true);
+    setPoiHarvestMode(false);
+    setRacePlanMapPick(false);
+  }, []);
+
+  const onAddPoiMapClick = useCallback((lat: number, lng: number) => {
+    setAddPoiPickedLatLng({ lat, lng });
+    setAddPoiMapPick(false);
+  }, []);
+
+  const clearAddPoiPick = useCallback(() => setAddPoiPickedLatLng(null), []);
 
   const onPoiAdded = useCallback((poi: PoiRow) => {
     setPois((prev) =>
@@ -520,14 +581,17 @@ export default function HmrApp({
           onSelectPoi={(p) => setSelectedPoi(p)}
           racePlanItems={tab === "racePlan" ? activeRaceItems : []}
           trackClickMode={
-            poiHarvestMode
-              ? "poiHarvest"
-              : tab === "racePlan" && racePlanMapPick
-                ? "racePlan"
-                : "measure"
+            addPoiMapPick
+              ? "addPoi"
+              : poiHarvestMode
+                ? "poiHarvest"
+                : tab === "racePlan" && racePlanMapPick
+                  ? "racePlan"
+                  : "measure"
           }
           onTrackKmPick={onTrackKmPick}
           onPoiHarvestClick={poiHarvestMode ? onPoiHarvestClick : undefined}
+          onAddPoiMapClick={addPoiMapPick ? onAddPoiMapClick : undefined}
           surfaceSegments={surfaceBands}
           streetViewPoints={streetViewPoints}
           mapillaryPoints={mapillaryPoints}
@@ -595,7 +659,7 @@ export default function HmrApp({
           </button>
           <button
             type="button"
-            onClick={() => setShowAddSheet(true)}
+            onClick={openAddSheet}
             className="hmr-chip hmr-chip-off"
             aria-label="Aggiungi POI da link Google Maps"
           >
@@ -812,6 +876,19 @@ export default function HmrApp({
             atKm={atKm}
           />
         )}
+        {tab === "roadbook" && (
+          <RoadbookPanel trackId={initial.id} lengthKm={initial.length_km} />
+        )}
+        {tab === "race" && (
+          <RaceBriefPanel
+            trackId={initial.id}
+            lengthKm={initial.length_km}
+            atKm={atKm}
+            raceStarted={raceActive}
+            onStartRace={startRace}
+            onEndRace={endRace}
+          />
+        )}
         {tab === "racePlan" && (
           <RacePlanPanel
             trackId={initial.id}
@@ -846,8 +923,13 @@ export default function HmrApp({
       {showAddSheet && (
         <AddPoiSheet
           trackId={initial.id}
-          onClose={() => setShowAddSheet(false)}
+          coords={initial.coords}
+          onClose={closeAddSheet}
           onAdded={onPoiAdded}
+          mapPickActive={addPoiMapPick}
+          onRequestMapPick={requestAddPoiMapPick}
+          pickedLngLat={addPoiPickedLatLng}
+          onClearPick={clearAddPoiPick}
         />
       )}
     </main>
