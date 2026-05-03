@@ -13,6 +13,10 @@ services:
       HOSTNAME: 0.0.0.0
       HMR_DB_PATH: /data/hmr.db
       INGEST_TOKEN: ${INGEST_TOKEN:?set INGEST_TOKEN in .env}
+      HMR_APP_URL: ${HMR_APP_URL:?set HMR_APP_URL in .env (es. https://tuo.dominio)}
+      HMR_ALLOWED_EMAILS: ${HMR_ALLOWED_EMAILS:?set HMR_ALLOWED_EMAILS in .env}
+      RESEND_API_KEY: ${RESEND_API_KEY:?set RESEND_API_KEY in .env}
+      HMR_AUTH_FROM_EMAIL: ${HMR_AUTH_FROM_EMAIL:-HMR Companion <onboarding@resend.dev>}
       GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
       MAPILLARY_ACCESS_TOKEN: ${MAPILLARY_ACCESS_TOKEN:-}
     volumes:
