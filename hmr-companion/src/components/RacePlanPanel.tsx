@@ -2,7 +2,11 @@
 
 import { useCallback, useMemo, useState } from "react";
 import type { RacePlanItemRow, RacePlanWithItems } from "@/lib/db";
-import { RACE_PLAN_ITEM_KINDS, type RacePlanItemKind } from "@/lib/race-plan-types";
+import {
+  RACE_PLAN_ITEM_KINDS,
+  labelRacePlanItemKind,
+  type RacePlanItemKind,
+} from "@/lib/race-plan-types";
 import type { StoredCoord } from "@/lib/track-coords";
 import { estimateHoursBetween, loadPace } from "@/lib/pace";
 
@@ -351,7 +355,7 @@ export default function RacePlanPanel({
                 >
                   {RACE_PLAN_ITEM_KINDS.map((k) => (
                     <option key={k} value={k}>
-                      {labelKind(k)}
+                      {labelRacePlanItemKind(k)}
                     </option>
                   ))}
                 </select>
@@ -478,7 +482,7 @@ export default function RacePlanPanel({
                 >
                   <div className="min-w-0">
                     <div className="font-medium">
-                      <span className="text-[color:var(--hmr-muted)]">{labelKind(it.kind)}</span>{" "}
+                      <span className="text-[color:var(--hmr-muted)]">{labelRacePlanItemKind(it.kind)}</span>{" "}
                       {it.title || "(senza titolo)"}
                     </div>
                     <div className="text-xs text-[color:var(--hmr-muted)]">
@@ -512,21 +516,4 @@ export default function RacePlanPanel({
       {error && <p className="text-xs text-[color:var(--hmr-danger)]">{error}</p>}
     </div>
   );
-}
-
-function labelKind(k: RacePlanItemKind): string {
-  switch (k) {
-    case "note":
-      return "Nota";
-    case "sleep":
-      return "Pernottamento";
-    case "stage":
-      return "Tappa";
-    case "time":
-      return "Tempi";
-    case "night_avoid":
-      return "Notte";
-    default:
-      return k;
-  }
 }

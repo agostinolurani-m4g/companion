@@ -3,9 +3,10 @@
 import { useCallback, useEffect, useState } from "react";
 import type { RoadbookChunk } from "@/lib/roadbook-chunk";
 import type { RoadbookAlert } from "@/lib/roadbook-alerts";
-import type { CheckpointRow, PoiRow, ResupplyRow } from "@/lib/db";
+import type { CheckpointRow, PoiRow, RacePlanItemRow, ResupplyRow } from "@/lib/db";
 import { CATEGORY_META } from "@/lib/categories";
 import type { PoiCategory } from "@/lib/db";
+import { labelRacePlanItemKind } from "@/lib/race-plan-types";
 
 const LS_PACE = "hmr_race_pace_kmh";
 
@@ -29,6 +30,10 @@ type Props = {
   raceStarted: boolean;
   onStartRace: () => void;
   onEndRace: () => void;
+  /** Nome del piano selezionato in app; se assente non si mostra il riquadro. */
+  racePlanName?: string | null;
+  /** Voci del piano da mostrare (già filtrate e ordinate dal parent). */
+  racePlanUpcomingItems?: RacePlanItemRow[];
 };
 
 function pctBar(label: string, pct: number, color: string) {
@@ -53,6 +58,8 @@ export default function RaceBriefPanel({
   raceStarted,
   onStartRace,
   onEndRace,
+  racePlanName = null,
+  racePlanUpcomingItems = [],
 }: Props) {
   const [data, setData] = useState<BriefPayload | null>(null);
   const [loading, setLoading] = useState(false);
@@ -143,6 +150,43 @@ export default function RaceBriefPanel({
       )}
 
       {error && <p className="text-xs text-[color:var(--hmr-danger)]">{error}</p>}
+
+      {racePlanName != null && racePlanName !== "" && (
+        <div className="hmr-panel space-y-2 p-3">
+          <div className="text-xs font-semibold uppercase tracking-wide text-[color:var(--hmr-muted)]">
+            Piano gara · {racePlanName}
+          </div>
+          {atKm == null ? (
+            <p className="text-xs text-[color:var(--hmr-muted)]">
+              Imposta posizione (GPS o km nel tab «Qui e ora») per elencare le prossime voci.
+            </p>
+          ) : racePlanUpcomingItems.length === 0 ? (
+            <p className="text-xs text-[color:var(--hmr-faint)]">
+              Nessuna voce del piano da questo punto al traguardo.
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {racePlanUpcomingItems.map((it) => (
+                <li key={it.id} className="rounded-md bg-[color:var(--hmr-elev)] px-2 py-2 text-xs">
+                  <div className="font-medium text-[color:var(--hmr-text)]">
+                    <span className="text-[color:var(--hmr-muted)]">{labelRacePlanItemKind(it.kind)}</span>{" "}
+                    {it.title || "(senza titolo)"}
+                  </div>
+                  <div className="text-[color:var(--hmr-muted)]">
+                    km {it.km_start.toFixed(1)}
+                    {Math.abs(it.km_end - it.km_start) >= 0.05 ? ` → ${it.km_end.toFixed(1)}` : ""}
+                    {it.est_hours != null ? ` · ~${it.est_hours} h` : ""}
+                    {it.avoid_night === 1 ? " · evita notte" : ""}
+                  </div>
+                  {it.body ? (
+                    <p className="mt-1 line-clamp-2 text-[color:var(--hmr-faint)]">{it.body}</p>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       {data && atKm != null && (
         <>

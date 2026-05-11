@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { StoredCoord } from "../track-coords";
+import { elevationGainLoss, elevationGainLossSmoothed } from "../track-geometry";
 import {
   coordAtKm,
   measureBetween,
@@ -67,5 +68,67 @@ describe("track-measure", () => {
     expect(poly.length).toBeGreaterThanOrEqual(3);
     expect(poly[0][1]).toBeCloseTo(46.005, 4);
     expect(poly[poly.length - 1][1]).toBeCloseTo(46.025, 4);
+  });
+
+  it("measureBetween gain/loss match global raw profile when track is short (n < window)", () => {
+    const raw = elevationGainLoss(coords.map((c) => c[2]!));
+    const m = measureBetween(coords, 0, 4);
+    expect(m.gainM).toBeCloseTo(raw.gain, 5);
+    expect(m.lossM).toBeCloseTo(raw.loss, 5);
+  });
+
+  it("measureBetween is additive for any split km (raw short track)", () => {
+    const total = measureBetween(coords, 0, 4);
+    for (const mid of [0.5, 1, 1.5, 2, 2.5, 3, 3.5]) {
+      const ab = measureBetween(coords, 0, mid);
+      const bc = measureBetween(coords, mid, 4);
+      expect(ab.gainM + bc.gainM).toBeCloseTo(total.gainM, 6);
+      expect(ab.lossM + bc.lossM).toBeCloseTo(total.lossM, 6);
+    }
+  });
+
+  /**
+   * Profilo lungo + smoothing: prima della correzione A→C poteva differire da
+   * A→B + B→C (finestra mobile / hysteresis reset su sotto-profilo).
+   */
+  it("measureBetween is additive on smoothed track (n >= window)", () => {
+    const n = 38;
+    const coordsLong: StoredCoord[] = [];
+    for (let i = 0; i < n; i++) {
+      const zig = i >= 14 && i <= 24 ? (i % 3 === 0 ? 4 : i % 3 === 1 ? -2 : 1) : 0;
+      const elev = 1000 + i * 22 + zig;
+      coordsLong.push([11, 46 + i * 0.001, elev, i]);
+    }
+    const endKm = n - 1;
+    const total = measureBetween(coordsLong, 0, endKm);
+    const global = elevationGainLossSmoothed(coordsLong.map((c) => c[2]!), {
+      windowPts: 15,
+      thresholdM: 3,
+    });
+    expect(total.gainM).toBeCloseTo(global.gain, 4);
+    expect(total.lossM).toBeCloseTo(global.loss, 4);
+
+    const mids = [2.25, 6.1, 11.7, 18.4, 23.8, 29.5, 34.2];
+    for (const mid of mids) {
+      const ab = measureBetween(coordsLong, 0, mid);
+      const bc = measureBetween(coordsLong, mid, endKm);
+      expect(ab.gainM + bc.gainM).toBeCloseTo(total.gainM, 5);
+      expect(ab.lossM + bc.lossM).toBeCloseTo(total.lossM, 5);
+    }
+  });
+
+  /** Discesa cumulata nota: rampa lineare 0→1600 m su 16 km (raw, n < 15). */
+  it("known monotonic descent: 1600 m loss over 16 km", () => {
+    const ramp: StoredCoord[] = [];
+    for (let i = 0; i <= 12; i++) {
+      ramp.push([11, 46 + i * 0.001, 1600 - i * (1600 / 12), i]);
+    }
+    const m = measureBetween(ramp, 0, 12);
+    expect(m.lossM).toBeCloseTo(1600, 3);
+    expect(m.gainM).toBe(0);
+    const mid = 6.5;
+    const ab = measureBetween(ramp, 0, mid);
+    const bc = measureBetween(ramp, mid, 12);
+    expect(ab.lossM + bc.lossM).toBeCloseTo(1600, 3);
   });
 });

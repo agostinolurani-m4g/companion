@@ -6,6 +6,7 @@ import type {
   NotableSectionRow,
   PoiCategory,
   PoiRow,
+  RacePlanItemRow,
   RacePlanWithItems,
   ResupplyRow,
   TrackSurfaceSegmentRow,
@@ -80,6 +81,17 @@ export default function HmrApp({
     return plans[0]?.id ?? null;
   });
   const [racePlanMapPick, setRacePlanMapPick] = useState(false);
+  const [showRacePlanOverlay, setShowRacePlanOverlay] = useState(() => {
+    const key = `hmr_race_plan_overlay:${initial.id}`;
+    try {
+      const v = localStorage.getItem(key);
+      if (v === "0") return false;
+      if (v === "1") return true;
+      return true;
+    } catch {
+      return true;
+    }
+  });
   const [mapPickedKm, setMapPickedKm] = useState<number | null>(null);
   const [showAddSheet, setShowAddSheet] = useState(false);
   const [addPoiMapPick, setAddPoiMapPick] = useState(false);
@@ -211,25 +223,56 @@ export default function HmrApp({
   }, [tab]);
 
   useEffect(() => {
+    const key = `hmr_race_plan_overlay:${initial.id}`;
+    try {
+      localStorage.setItem(key, showRacePlanOverlay ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [initial.id, showRacePlanOverlay]);
+
+  useEffect(() => {
     setSurfaceSegmentsState(initial.surfaceSegments ?? []);
   }, [initial.surfaceSegments]);
 
-  const activeRaceItems = useMemo(() => {
-    if (tab !== "racePlan" || !selectedPlanId) return [];
+  const itemsForSelectedPlan = useMemo((): RacePlanItemRow[] => {
+    if (!selectedPlanId) return [];
     return racePlans.find((p) => p.id === selectedPlanId)?.items ?? [];
-  }, [tab, racePlans, selectedPlanId]);
+  }, [racePlans, selectedPlanId]);
+
+  const showPlanOnMap = tab === "racePlan" || showRacePlanOverlay;
+
+  const overlayRacePlanItems = useMemo(
+    () => (showPlanOnMap ? itemsForSelectedPlan : []),
+    [showPlanOnMap, itemsForSelectedPlan]
+  );
 
   const elevationRaceItems = useMemo(
     () =>
-      activeRaceItems.map((it) => ({
+      overlayRacePlanItems.map((it) => ({
         id: it.id,
         km_start: it.km_start,
         km_end: it.km_end,
         kind: it.kind,
         title: it.title,
       })),
-    [activeRaceItems]
+    [overlayRacePlanItems]
   );
+
+  const selectedRacePlanName = useMemo(() => {
+    if (!selectedPlanId) return null;
+    return racePlans.find((p) => p.id === selectedPlanId)?.name ?? null;
+  }, [racePlans, selectedPlanId]);
+
+  const raceBriefPlanUpcoming = useMemo((): RacePlanItemRow[] => {
+    if (!selectedPlanId || atKm == null) return [];
+    const items = racePlans.find((p) => p.id === selectedPlanId)?.items ?? [];
+    const eps = 0.05;
+    return items
+      .filter((it) => it.km_end >= atKm - eps)
+      .sort((a, b) => a.km_start - b.km_start || a.id.localeCompare(b.id))
+      .slice(0, 8);
+  }, [selectedPlanId, atKm, racePlans]);
 
   const surfaceBands = useMemo(
     () =>
@@ -579,7 +622,7 @@ export default function HmrApp({
           onHoverKm={setHoverKm}
           onPin={onPin}
           onSelectPoi={(p) => setSelectedPoi(p)}
-          racePlanItems={tab === "racePlan" ? activeRaceItems : []}
+          racePlanItems={overlayRacePlanItems}
           trackClickMode={
             addPoiMapPick
               ? "addPoi"
@@ -767,8 +810,8 @@ export default function HmrApp({
         snap={snap}
         onSnapChange={setSnap}
         header={
-          <div className="flex w-full items-center gap-2">
-            <nav className="flex flex-1 gap-1">
+          <div className="flex w-full min-w-0 items-center gap-1">
+            <nav className="flex min-w-0 flex-1 flex-wrap gap-1">
               {tabButtons.map((t) => (
                 <button
                   key={t.id}
@@ -787,8 +830,29 @@ export default function HmrApp({
             </nav>
             <button
               type="button"
+              title={
+                selectedPlanId
+                  ? showRacePlanOverlay
+                    ? "Piano visibile su mappa e profilo anche fuori dal tab Piano gara"
+                    : "Mostra il piano selezionato su mappa e profilo negli altri tab"
+                  : "Seleziona un piano nel tab Piano gara"
+              }
+              disabled={!selectedPlanId}
+              onClick={() => setShowRacePlanOverlay((v) => !v)}
+              className={`hmr-chip hmr-tap shrink-0 text-[10px] ${
+                !selectedPlanId
+                  ? "hmr-chip-off opacity-50"
+                  : showRacePlanOverlay
+                    ? "hmr-chip-on"
+                    : "hmr-chip-off"
+              }`}
+            >
+              Mappa piano
+            </button>
+            <button
+              type="button"
               onClick={() => setSnap(snap === "full" ? "half" : "full")}
-              className="hmr-btn hmr-tap text-xs"
+              className="hmr-btn hmr-tap shrink-0 text-xs"
             >
               {snap === "full" ? "↓" : "↑"}
             </button>
@@ -807,7 +871,7 @@ export default function HmrApp({
               pinBKm={pinBKm}
               onHoverKm={setHoverKm}
               onPinKm={onPin}
-              raceItems={tab === "racePlan" ? elevationRaceItems : []}
+              raceItems={elevationRaceItems}
               surfaceBands={surfaceBands}
               hoverTerrainLabel={hoverTerrainLabel}
               elevProfileGainScale={initial.elev_profile_gain_scale}
@@ -887,6 +951,8 @@ export default function HmrApp({
             raceStarted={raceActive}
             onStartRace={startRace}
             onEndRace={endRace}
+            racePlanName={selectedRacePlanName}
+            racePlanUpcomingItems={raceBriefPlanUpcoming}
           />
         )}
         {tab === "racePlan" && (

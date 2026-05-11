@@ -2,43 +2,45 @@ import crypto from "node:crypto";
 import { cookies } from "next/headers";
 import {
   deleteAuthSessionById,
-  getAuthMagicLinkByTokenHash,
   getAuthSessionByTokenHash,
   insertAuthSession,
-  markAuthMagicLinkUsed,
-  pruneAuthMagicLinks,
   pruneAuthSessions,
 } from "@/lib/db";
 
 export const AUTH_COOKIE_NAME = "hmr_auth_session";
-const MAGIC_LINK_TTL_MS = 15 * 60 * 1000;
 const SESSION_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 
-/** Lettura runtime (no `process.env.NAME` letterale → evita inline vuoto al build Docker). */
-function envStr(key: string): string | undefined {
-  return process.env[key]?.trim();
+/**
+ * Account fissi (non configurabili da env). Password confrontate in modo
+ * costante nel tempo rispetto alla lunghezza dell'input (hash SHA-256).
+ */
+const FIXED_LOGIN: Readonly<Record<string, string>> = {
+  ago: "hellenicago26",
+  gala: "hellenicgala26",
+  babbo: "hellenicbabbo26",
+  marti: "helenicmarti2026",
+};
+
+export function normalizeUsername(username: string): string {
+  return username.trim().toLowerCase();
 }
 
-let allowedEmailsCache: Set<string> | null = null;
-function allowedEmails(): Set<string> {
-  if (allowedEmailsCache) return allowedEmailsCache;
-  const raw =
-    envStr("HMR_ALLOWED_EMAILS") || "agostino.lurani@gmail.com";
-  allowedEmailsCache = new Set(
-    raw
-      .split(",")
-      .map((s) => s.trim().toLowerCase())
-      .filter(Boolean)
-  );
-  return allowedEmailsCache;
+export function isKnownHmrUser(identity: string): boolean {
+  const u = normalizeUsername(identity);
+  return u !== "" && u in FIXED_LOGIN;
 }
 
-export function normalizeEmail(email: string): string {
-  return email.trim().toLowerCase();
+function timingSafeEqualUtf8Strings(a: string, b: string): boolean {
+  const ha = crypto.createHash("sha256").update(a, "utf8").digest();
+  const hb = crypto.createHash("sha256").update(b, "utf8").digest();
+  return crypto.timingSafeEqual(ha, hb);
 }
 
-export function isAllowedEmail(email: string): boolean {
-  return allowedEmails().has(normalizeEmail(email));
+export function verifyPasswordLogin(username: string, password: string): boolean {
+  const u = normalizeUsername(username);
+  const expected = FIXED_LOGIN[u];
+  if (!expected) return false;
+  return timingSafeEqualUtf8Strings(password, expected);
 }
 
 export function createOpaqueToken(): string {
@@ -49,26 +51,13 @@ export function hashToken(token: string): string {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
 
-export function createMagicLinkExpiry(now: number): number {
-  return now + MAGIC_LINK_TTL_MS;
-}
-
 export function createSessionExpiry(now: number): number {
   return now + SESSION_TTL_MS;
 }
 
-export function getAuthBaseUrl(): string {
-  const envUrl = envStr("HMR_APP_URL");
-  if (envUrl) return envUrl.replace(/\/+$/, "");
-  return "http://localhost:3002";
-}
-
-export function consumeMagicLink(token: string, now: number): { email: string } | null {
-  pruneAuthMagicLinks(now);
-  const row = getAuthMagicLinkByTokenHash(hashToken(token));
-  if (!row || row.used_at != null || row.expires_at <= now) return null;
-  markAuthMagicLinkUsed(row.id, now);
-  return { email: row.email };
+/** @deprecated session identity is username; kept for cookie email column compatibility */
+export function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
 }
 
 export function createSessionForEmail(email: string, now: number): { token: string; expiresAt: number } {
@@ -93,6 +82,10 @@ export async function getCurrentSessionEmail(): Promise<string | null> {
   const session = getAuthSessionByTokenHash(hashToken(token));
   if (!session || session.expires_at <= now) {
     if (session) deleteAuthSessionById(session.id);
+    return null;
+  }
+  if (!isKnownHmrUser(session.email)) {
+    deleteAuthSessionById(session.id);
     return null;
   }
   return session.email;

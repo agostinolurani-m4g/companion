@@ -1,31 +1,104 @@
-import type { StoredCoord } from "./track-coords";
+import { elevFromStored, type StoredCoord } from "./track-coords";
 import {
   ELEV_GAIN_DEFAULT_THRESHOLD_M,
   ELEV_GAIN_DEFAULT_WINDOW_PTS,
-  elevationGainLoss,
-  elevationGainLossSmoothed,
+  elevationSmoothedStepAllocations,
 } from "./track-geometry";
 
 const KM_EPS = 1e-9;
 
-function gainLossFromElevProfile(profile: Array<number | null | undefined>): {
-  gain: number;
-  loss: number;
-} {
-  const filtered = profile.filter(
-    (e): e is number => e != null && Number.isFinite(e)
-  );
-  if (filtered.length < 2) return { gain: 0, loss: 0 };
-  const n = filtered.length;
-  // Stessa logica ingest solo con abbastanza campioni: con n < finestra MA la
-  // media mobile su tutta la polyline appiattisce il profilo (D+ arteficialmente basso).
-  if (n < ELEV_GAIN_DEFAULT_WINDOW_PTS) {
-    return elevationGainLoss(filtered);
+/** Modello D+/D- globale sul tracciato: delta per passo tra campioni con elev nota. */
+type TrackElevModel = {
+  kmFin: number[];
+  deltaGain: number[];
+  deltaLoss: number[];
+};
+
+const trackElevCache = new WeakMap<StoredCoord[], TrackElevModel | null>();
+
+function buildElevModel(coords: StoredCoord[]): TrackElevModel | null {
+  const elev = elevFromStored(coords);
+  const filtered: number[] = [];
+  const origIndex: number[] = [];
+  for (let i = 0; i < elev.length; i++) {
+    const e = elev[i];
+    if (e != null && Number.isFinite(e)) {
+      filtered.push(e);
+      origIndex.push(i);
+    }
   }
-  return elevationGainLossSmoothed(filtered, {
-    windowPts: ELEV_GAIN_DEFAULT_WINDOW_PTS,
-    thresholdM: ELEV_GAIN_DEFAULT_THRESHOLD_M,
-  });
+  if (filtered.length < 2) return null;
+
+  const nf = filtered.length;
+  let deltaGain: number[];
+  let deltaLoss: number[];
+  let kmOrig: number[];
+
+  if (nf < ELEV_GAIN_DEFAULT_WINDOW_PTS) {
+    /** Stessa regola del vecchio `gainLossFromElevProfile`: D+/D- raw sui campioni. */
+    deltaGain = new Array<number>(nf).fill(0);
+    deltaLoss = new Array<number>(nf).fill(0);
+    for (let i = 1; i < nf; i++) {
+      const d = filtered[i] - filtered[i - 1];
+      if (d > 0) deltaGain[i] = d;
+      else deltaLoss[i] = -d;
+    }
+    kmOrig = origIndex.map((vi) => coords[vi][3]);
+  } else {
+    const alloc = elevationSmoothedStepAllocations(elev, {
+      windowPts: ELEV_GAIN_DEFAULT_WINDOW_PTS,
+      thresholdM: ELEV_GAIN_DEFAULT_THRESHOLD_M,
+    });
+    if (!alloc) return null;
+    deltaGain = alloc.deltaGain;
+    deltaLoss = alloc.deltaLoss;
+    kmOrig = alloc.origIndex.map((vi) => coords[vi][3]);
+  }
+
+  return { kmFin: kmOrig, deltaGain, deltaLoss };
+}
+
+function getElevModel(coords: StoredCoord[]): TrackElevModel | null {
+  if (trackElevCache.has(coords)) {
+    return trackElevCache.get(coords) ?? null;
+  }
+  const m = buildElevModel(coords);
+  trackElevCache.set(coords, m);
+  return m;
+}
+
+/** Cumulato da inizio traccia a `km` (interpolazione lineare del delta sul segmento km). */
+function cumDeltaAtKm(
+  km: number,
+  kmFin: number[],
+  delta: number[]
+): number {
+  const n = kmFin.length;
+  if (n < 2) return 0;
+
+  if (km <= kmFin[0] + KM_EPS) return 0;
+
+  if (km >= kmFin[n - 1] - KM_EPS) {
+    let s = 0;
+    for (let i = 1; i < n; i++) s += delta[i];
+    return s;
+  }
+
+  let lo = 1;
+  let hi = n - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (kmFin[mid] < km) lo = mid + 1;
+    else hi = mid;
+  }
+  const j = lo;
+  let prevCum = 0;
+  for (let i = 1; i < j; i++) prevCum += delta[i];
+  const km0 = kmFin[j - 1];
+  const km1 = kmFin[j];
+  const seg = km1 - km0;
+  const frac = seg < 1e-12 ? 1 : (km - km0) / seg;
+  return prevCum + frac * delta[j];
 }
 
 export type ProjectedPoint = {
@@ -174,20 +247,17 @@ export function measureBetween(
       elevB: ptB?.elev ?? null,
     };
   }
-  const startIdx = findIndexAtKm(coords, lo);
-  const endIdx = findIndexAtKm(coords, hi);
-  const startElev = coordAtKm(coords, lo)?.elev ?? null;
-  const endElev = coordAtKm(coords, hi)?.elev ?? null;
-
-  const profile: Array<number | null> = [startElev];
-  for (let i = startIdx + 1; i <= endIdx; i++) {
-    profile.push(coords[i][2]);
+  const model = getElevModel(coords);
+  let gain = 0;
+  let loss = 0;
+  if (model) {
+    gain =
+      cumDeltaAtKm(hi, model.kmFin, model.deltaGain) -
+      cumDeltaAtKm(lo, model.kmFin, model.deltaGain);
+    loss =
+      cumDeltaAtKm(hi, model.kmFin, model.deltaLoss) -
+      cumDeltaAtKm(lo, model.kmFin, model.deltaLoss);
   }
-  const lastVertexKm = coords[endIdx][3];
-  if (hi > lastVertexKm + KM_EPS) {
-    profile.push(endElev);
-  }
-  const { gain, loss } = gainLossFromElevProfile(profile);
 
   return {
     distKm: hi - lo,

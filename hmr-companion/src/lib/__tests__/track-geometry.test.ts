@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  cumulativeGainLossSmoothed,
   cumulativeKmAlong,
   elevationGainLoss,
   elevationGainLossSmoothed,
@@ -71,5 +72,21 @@ describe("track-geometry", () => {
     expect(gain).toBeGreaterThan(90);
     expect(gain).toBeLessThanOrEqual(98);
     expect(loss).toBe(0);
+  });
+
+  it("cumulativeGainLossSmoothed ends match elevationGainLossSmoothed totals", () => {
+    const profile = Array.from({ length: 32 }, (_, i) => 900 + Math.sin(i * 0.35) * 35 + i * 3.5);
+    const cum = cumulativeGainLossSmoothed(profile, {
+      windowPts: 15,
+      thresholdM: 3,
+    });
+    const tot = elevationGainLossSmoothed(profile, {
+      windowPts: 15,
+      thresholdM: 3,
+    });
+    expect(cum).not.toBeNull();
+    const last = cum!.cumGain.length - 1;
+    expect(cum!.cumGain[last]).toBeCloseTo(tot.gain, 6);
+    expect(cum!.cumLoss[last]).toBeCloseTo(tot.loss, 6);
   });
 });
