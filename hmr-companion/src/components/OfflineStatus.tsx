@@ -163,20 +163,20 @@ export default function OfflineStatus({ trackId, bbox }: Props) {
   }, [installPrompt]);
 
   return (
-    <div className="pointer-events-auto absolute bottom-[calc(var(--safe-bottom)+5.5rem)] left-3 z-30 md:bottom-[calc(var(--safe-bottom)+1rem)]">
+    <div className="pointer-events-auto absolute bottom-[calc(var(--safe-bottom)+var(--hmr-profile-strip)+0.35rem)] left-3 z-30 [@media(min-aspect-ratio:5/4)]:left-auto [@media(min-aspect-ratio:5/4)]:right-3">
       <button
         type="button"
         onClick={() => {
           setOpen((v) => !v);
           void refreshQuota();
         }}
-        className="hmr-panel hmr-tap rounded-full border border-[color:var(--hmr-border)]/90 px-3 py-1.5 text-[11px] font-medium shadow-lg"
+        className="hmr-panel hmr-tap rounded-none border border-[color:var(--hmr-border)]/90 px-3 py-1.5 text-[11px] font-semibold tracking-tight shadow-lg"
         aria-expanded={open}
       >
-        {online ? "📶 Online" : "✈️ Offline"}
+        {online ? "Online" : "Offline"}
       </button>
       {open && (
-        <div className="hmr-panel mt-2 w-[min(20rem,calc(100vw-1.5rem))] space-y-2 rounded-xl border border-[color:var(--hmr-border)]/80 p-3 text-xs shadow-xl">
+        <div className="hmr-panel mt-2 w-[min(20rem,calc(100vw-1.5rem))] space-y-2 rounded-none border border-[color:var(--hmr-border)]/80 p-3 text-xs font-semibold tracking-tight shadow-xl">
           <p className="text-[color:var(--hmr-muted)]">
             Per la gara: con Wi‑Fi, tocca <strong>Prepara offline</strong> (API + tile OSM/Topo ~80–150 MB).
             Poi installa l’app sulla schermata Home.
@@ -213,7 +213,7 @@ export default function OfflineStatus({ trackId, bbox }: Props) {
               onClick={() => void onPrepareOffline()}
               className="hmr-btn hmr-btn-accent hmr-tap text-[11px]"
             >
-              {busy ? "⏳ …" : "Prepara offline"}
+              {busy ? "Attendere…" : "Prepara offline"}
             </button>
             <button
               type="button"

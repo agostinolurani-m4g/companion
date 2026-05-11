@@ -16,6 +16,9 @@
 
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-top: env(safe-area-inset-top, 0px);
+  /** Fascia profilo altimetrico fissa in basso (allineare rail e bottom sheet). */
+  --hmr-profile-strip: 11.25rem;
+  --hmr-ui-font: "Segoe UI", "Franklin Gothic Medium", "Helvetica Neue", Arial, "Noto Sans", sans-serif;
 }
 
 @theme inline {
@@ -42,7 +45,9 @@ body {
 body {
   background: var(--hmr-bg);
   color: var(--hmr-text);
-  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  font-family: var(--hmr-ui-font);
+  font-weight: 500;
+  letter-spacing: -0.01em;
   overscroll-behavior-y: none;
 }
 
@@ -60,10 +65,10 @@ body {
 
 @layer components {
   .hmr-panel {
-    @apply rounded-2xl border border-[color:var(--hmr-border)] bg-[color:var(--hmr-surface)]/95;
+    @apply rounded-none border border-[color:var(--hmr-border)] bg-[color:var(--hmr-surface)]/95 font-semibold tracking-tight;
   }
   .hmr-chip {
-    @apply inline-flex items-center gap-1 rounded-full border border-transparent px-3 py-1 text-xs font-medium transition-colors;
+    @apply inline-flex items-center gap-1 rounded-none border border-transparent px-3 py-1 text-xs font-semibold tracking-tight transition-colors;
     min-height: 32px;
   }
   .hmr-chip-off {
@@ -79,7 +84,7 @@ body {
     min-width: 44px;
   }
   .hmr-btn {
-    @apply inline-flex items-center justify-center rounded-xl border border-[color:var(--hmr-border)] bg-[color:var(--hmr-elev)] px-3 py-2 text-sm font-medium text-[color:var(--hmr-text)] transition-colors hover:border-[color:var(--hmr-muted)] disabled:pointer-events-none disabled:opacity-50;
+    @apply inline-flex items-center justify-center rounded-none border border-[color:var(--hmr-border)] bg-[color:var(--hmr-elev)] px-3 py-2 text-sm font-semibold tracking-tight text-[color:var(--hmr-text)] transition-colors hover:border-[color:var(--hmr-muted)] disabled:pointer-events-none disabled:opacity-50;
     min-height: 44px;
   }
   .hmr-btn-accent {

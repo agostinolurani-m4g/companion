@@ -21,13 +21,15 @@ export type CheckpointsPanelProps = {
 
 export default function CheckpointsPanel({ checkpoints, coords, atKm }: CheckpointsPanelProps) {
   const [pace, setPace] = useState<PaceConfig>(DEFAULT_PACE);
-  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  /** 0 fino al mount: evita mismatch SSR (Date.now diverso server/client). */
+  const [nowMs, setNowMs] = useState(0);
 
   useEffect(() => {
     setPace(loadPace());
   }, []);
 
   useEffect(() => {
+    setNowMs(Date.now());
     const t = setInterval(() => setNowMs(Date.now()), 30_000);
     return () => clearInterval(t);
   }, []);
@@ -133,9 +135,10 @@ function CheckpointRowView({
   nowMs: number;
 }) {
   const passed = atKm != null && atKm > cp.along_km + 0.3;
-  const eta = atKm != null && !passed
-    ? computeEta(coords, atKm, cp.along_km, pace, cp.cutoff_utc, nowMs)
-    : null;
+  const eta =
+    atKm != null && !passed && nowMs > 0
+      ? computeEta(coords, atKm, cp.along_km, pace, cp.cutoff_utc, nowMs)
+      : null;
 
   const badge = (() => {
     if (passed) return { tone: "done", label: "superato" };
@@ -174,7 +177,7 @@ function CheckpointRowView({
           {cp.cutoff_utc ? formatAbsolute(cp.cutoff_utc) : "—"}
         </StatBlock>
         <StatBlock label="ETA">
-          {eta ? formatAbsolute(eta.etaMs) : passed ? "✓" : "—"}
+          {eta ? formatAbsolute(eta.etaMs) : passed ? "OK" : "—"}
         </StatBlock>
         <StatBlock label={passed ? "Distanza" : "Tempo stimato"}>
           {passed

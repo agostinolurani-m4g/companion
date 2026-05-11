@@ -113,10 +113,15 @@ export default function RaceBriefPanel({
     load();
   }, [load]);
 
+  const [clockReady, setClockReady] = useState(false);
+  useEffect(() => {
+    setClockReady(true);
+  }, []);
+
   const pace = Number(paceStr.replace(",", "."));
   const paceOk = Number.isFinite(pace) && pace > 0.5;
   const etaCp =
-    data?.next_checkpoint && paceOk
+    clockReady && data?.next_checkpoint && paceOk
       ? new Date(Date.now() + (data.next_checkpoint.ahead_km / pace) * 3600 * 1000)
       : null;
 
@@ -262,9 +267,7 @@ export default function RaceBriefPanel({
                 const meta = CATEGORY_META[cat];
                 return (
                   <div key={cat} className="rounded-md bg-[color:var(--hmr-elev)] p-2 text-xs">
-                    <span className="text-[color:var(--hmr-muted)]">
-                      {meta.emoji} {meta.label}
-                    </span>
+                    <span className="text-[color:var(--hmr-muted)]">{meta.label}</span>
                     {n ? (
                       <div className="font-medium">+{n.ahead_km.toFixed(1)} km</div>
                     ) : (

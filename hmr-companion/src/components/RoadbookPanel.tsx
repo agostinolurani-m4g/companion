@@ -164,7 +164,7 @@ export default function RoadbookPanel({ trackId, lengthKm }: Props) {
                   <ul className="list-inside list-disc text-[color:var(--hmr-muted)]">
                     {c.poi_highlights.map((p) => (
                       <li key={`${p.along_km}-${p.category}`}>
-                        {CATEGORY_META[p.category as PoiCategory]?.emoji}{" "}
+                        {CATEGORY_META[p.category as PoiCategory]?.label}:{" "}
                         {p.name ?? p.category} · km {p.along_km.toFixed(1)} · +{p.detour_m} m
                       </li>
                     ))}

@@ -195,7 +195,7 @@ export default function DashboardHere({
               {data.nextCheckpoint && (
                 <SummaryRow
                   color="#f87171"
-                  emoji="🏁"
+                  badge="CP"
                   label={data.nextCheckpoint.name}
                   meta={
                     data.nextCheckpoint.notes ?? undefined
@@ -206,7 +206,7 @@ export default function DashboardHere({
               {data.nextResupply && (
                 <SummaryRow
                   color="#fde68a"
-                  emoji="🧭"
+                  badge="RS"
                   label={`Resupply · ${data.nextResupply.name}`}
                   meta={data.nextResupply.notes || undefined}
                   ahead={data.nextResupply.ahead_km}
@@ -223,9 +223,6 @@ export default function DashboardHere({
                     className="hmr-panel flex items-center gap-2 p-3"
                     style={{ borderLeft: `3px solid ${meta.color}` }}
                   >
-                    <span aria-hidden className="text-lg">
-                      {meta.emoji}
-                    </span>
                     <div className="flex min-w-0 flex-col">
                       <span className="text-xs uppercase tracking-wide text-[color:var(--hmr-muted)]">
                         {meta.label}
@@ -259,13 +256,13 @@ export default function DashboardHere({
 
 function SummaryRow({
   color,
-  emoji,
+  badge,
   label,
   meta,
   ahead,
 }: {
   color: string;
-  emoji: string;
+  badge: string;
   label: string;
   meta?: string;
   ahead: number;
@@ -274,10 +271,10 @@ function SummaryRow({
     <div className="flex items-start gap-3 p-3">
       <span
         aria-hidden
-        className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-sm"
+        className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-none text-[10px] font-bold tracking-tight"
         style={{ background: `${color}33`, color }}
       >
-        {emoji}
+        {badge}
       </span>
       <div className="flex min-w-0 flex-1 flex-col">
         <span className="truncate text-sm font-semibold">{label}</span>

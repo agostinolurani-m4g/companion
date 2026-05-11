@@ -78,7 +78,6 @@ export default function PoiList(props: PoiListProps) {
                   on ? { borderColor: `${meta.color}88`, color: meta.color, background: `${meta.color}22` } : undefined
                 }
               >
-                <span aria-hidden>{meta.emoji}</span>
                 {meta.label}
               </button>
             );
@@ -88,7 +87,7 @@ export default function PoiList(props: PoiListProps) {
             onClick={props.onToggleResupply}
             className={`hmr-chip hmr-tap ${props.showResupply ? "hmr-chip-on" : "hmr-chip-off"}`}
           >
-            🧭 Resupply
+            Resupply
           </button>
         </div>
         <div className="grid grid-cols-1 gap-2">
@@ -192,9 +191,9 @@ export default function PoiList(props: PoiListProps) {
                 <div key={r.id} className="flex items-start gap-3 px-3 py-2">
                   <span
                     aria-hidden
-                    className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-500/20 text-amber-300"
+                    className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-none bg-amber-500/20 text-[10px] font-bold text-amber-200"
                   >
-                    🧭
+                    RS
                   </span>
                   <div className="flex min-w-0 flex-1 flex-col">
                     <span className="truncate text-sm font-medium">
@@ -234,10 +233,10 @@ function PoiCard({ poi, onSelect }: { poi: PoiRow; onSelect?: (p: PoiRow) => voi
     <div className="flex items-start gap-3 px-3 py-2">
       <span
         aria-hidden
-        className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-sm"
+        className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-none text-[10px] font-bold tracking-tight"
         style={{ background: `${meta.color}33`, color: meta.color }}
       >
-        {meta.emoji}
+        {meta.label.slice(0, 2).toUpperCase()}
       </span>
       <button
         type="button"
@@ -261,7 +260,7 @@ function PoiCard({ poi, onSelect }: { poi: PoiRow; onSelect?: (p: PoiRow) => voi
             className="mt-0.5 text-xs text-[color:var(--hmr-accent)]"
             onClick={(e) => e.stopPropagation()}
           >
-            📞 {poi.phone}
+            {poi.phone}
           </a>
         )}
       </button>

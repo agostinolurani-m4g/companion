@@ -207,14 +207,14 @@ export default function AddPoiSheet({
                 onClick={useGeolocation}
                 disabled={geoBusy}
               >
-                {geoBusy ? "GPS…" : "📍 Usa posizione"}
+                {geoBusy ? "GPS…" : "Usa posizione"}
               </button>
               <button
                 type="button"
                 className={`hmr-btn hmr-tap text-xs ${mapPickActive ? "hmr-btn-accent" : ""}`}
                 onClick={onRequestMapPick}
               >
-                {mapPickActive ? "Clic sulla mappa…" : "🗺️ Scegli sulla mappa"}
+                {mapPickActive ? "Clic sulla mappa…" : "Scegli sulla mappa"}
               </button>
             </div>
             <div className="grid grid-cols-2 gap-2">
@@ -259,7 +259,7 @@ export default function AddPoiSheet({
           >
             {CATEGORY_ORDER.map((k) => (
               <option key={k} value={k}>
-                {CATEGORY_META[k].emoji} {CATEGORY_META[k].label}
+                {CATEGORY_META[k].label}
               </option>
             ))}
           </select>
@@ -280,7 +280,7 @@ export default function AddPoiSheet({
           />
         </label>
 
-        {error && <p className="text-xs text-[color:var(--hmr-danger)]">⚠ {error}</p>}
+        {error && <p className="text-xs text-[color:var(--hmr-danger)]">{error}</p>}
 
         <button type="submit" disabled={pending} className="hmr-btn hmr-btn-accent hmr-tap w-full">
           {pending ? "Salvataggio…" : "Salva POI"}

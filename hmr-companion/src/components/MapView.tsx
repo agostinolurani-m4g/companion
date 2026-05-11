@@ -44,7 +44,7 @@ export type MapViewProps = {
   onPoiHarvestClick?: (lat: number, lng: number) => void;
   /** Aggiungi POI: clic sulla mappa → coordinate WGS84. */
   onAddPoiMapClick?: (lat: number, lng: number) => void;
-  /** Segmenti km con superficie (da `npm run snapshot:surface`). */
+  /** Segmenti km con superficie (solo profilo altimetrico; la mappa usa la traccia unica). */
   surfaceSegments?: Array<{ km_start: number; km_end: number; surface: TrackSurfaceKind }>;
   /** Street View lungo traccia (API server). */
   streetViewPoints?: StreetViewAlongItem[];
@@ -206,21 +206,6 @@ export default function MapView(props: MapViewProps) {
     return { lineFeatures, ptFeatures };
   }, [props.racePlanItems, props.coords]);
 
-  const surfaceLineFeatures = useMemo(() => {
-    const segs = props.surfaceSegments ?? [];
-    const out: GeoJSON.Feature<GeoJSON.LineString>[] = [];
-    for (const s of segs) {
-      const poly = polylineBetween(props.coords, s.km_start, s.km_end);
-      if (poly.length < 2) continue;
-      out.push({
-        type: "Feature",
-        properties: { surface: s.surface },
-        geometry: { type: "LineString", coordinates: poly },
-      });
-    }
-    return out;
-  }, [props.surfaceSegments, props.coords]);
-
   const sectionFeatures = useMemo(() => {
     const out: GeoJSON.Feature<GeoJSON.LineString>[] = [];
     for (const s of props.sections) {
@@ -321,34 +306,7 @@ export default function MapView(props: MapViewProps) {
           "line-opacity": 0.35,
           "line-width": 6,
         },
-        layout: { "line-cap": "round", "line-join": "round" },
-      });
-      map.addSource("trackSurface", {
-        type: "geojson",
-        data: { type: "FeatureCollection", features: [] },
-      });
-      map.addLayer({
-        id: "track-surface-line",
-        type: "line",
-        source: "trackSurface",
-        paint: {
-          "line-width": 9,
-          "line-opacity": 0.42,
-          "line-color": [
-            "match",
-            ["get", "surface"],
-            "asphalt",
-            "#94a3b8",
-            "gravel",
-            "#d97706",
-            "single",
-            "#10b981",
-            "unknown",
-            "#475569",
-            "#64748b",
-          ],
-        },
-        layout: { "line-cap": "round", "line-join": "round" },
+        layout: { "line-cap": "butt", "line-join": "miter" },
       });
       map.addLayer({
         id: "track-main",
@@ -356,9 +314,9 @@ export default function MapView(props: MapViewProps) {
         source: "track",
         paint: {
           "line-color": "#38bdf8",
-          "line-width": 3.4,
+          "line-width": 3,
         },
-        layout: { "line-cap": "round", "line-join": "round" },
+        layout: { "line-cap": "butt", "line-join": "miter" },
       });
       map.addSource("sections", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
       map.addLayer({
@@ -1005,13 +963,6 @@ export default function MapView(props: MapViewProps) {
     const ptSrc = map.getSource("racePlanPts") as maplibregl.GeoJSONSource | undefined;
     ptSrc?.setData({ type: "FeatureCollection", features: racePlanGeo.ptFeatures });
   }, [racePlanGeo]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !readyRef.current) return;
-    const src = map.getSource("trackSurface") as maplibregl.GeoJSONSource | undefined;
-    src?.setData({ type: "FeatureCollection", features: surfaceLineFeatures });
-  }, [surfaceLineFeatures]);
 
   useEffect(() => {
     const map = mapRef.current;
