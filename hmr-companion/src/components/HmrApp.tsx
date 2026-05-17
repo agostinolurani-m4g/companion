@@ -28,7 +28,7 @@ import ElevationChart from "./ElevationChart";
 import MapView from "./MapView";
 import AddPoiSheet from "./AddPoiSheet";
 import RacePlanPanel from "./RacePlanPanel";
-import AlongMediaControls from "./AlongMediaControls";
+import StreetViewMapChrome from "./StreetViewMapChrome";
 import OfflineStatus from "./OfflineStatus";
 import RoadbookPanel from "./RoadbookPanel";
 import RaceBriefPanel from "./RaceBriefPanel";
@@ -95,6 +95,12 @@ function MapChromeControls({
   onTogglePoiHarvest,
   visibleCategories,
   onToggleCategory,
+  streetViewTrackId,
+  streetViewAroundKm,
+  streetViewPoints,
+  onStreetViewLoaded,
+  showStreetViewLayer,
+  onShowStreetViewChange,
 }: {
   variant: "overlay" | "rail";
   trackName: string;
@@ -113,6 +119,12 @@ function MapChromeControls({
   onTogglePoiHarvest: () => void;
   visibleCategories: Set<PoiCategory>;
   onToggleCategory: (c: PoiCategory) => void;
+  streetViewTrackId: string;
+  streetViewAroundKm: number | null;
+  streetViewPoints: StreetViewAlongItem[];
+  onStreetViewLoaded: (items: StreetViewAlongItem[]) => void;
+  showStreetViewLayer: boolean;
+  onShowStreetViewChange: (v: boolean) => void;
 }) {
   const popX = variant === "rail" ? "left-0" : "right-0";
   const infoBlockAlign = variant === "rail" ? "text-left" : "text-right";
@@ -121,23 +133,25 @@ function MapChromeControls({
   return (
     <>
       <div
-        className={`pointer-events-auto hmr-panel flex items-center shadow-lg ${
-          variant === "rail" ? "gap-2 px-2 py-1.5" : "gap-3 px-3 py-2"
+        className={`pointer-events-auto hmr-panel flex items-center shadow-lg max-sm:py-1 max-sm:pl-2 max-sm:pr-2 max-sm:gap-1.5 ${
+          variant === "rail" ? "gap-2 px-2 py-1.5" : "gap-2 px-2 py-1.5 sm:gap-3 sm:px-3 sm:py-2"
         }`}
       >
             <div className="flex min-w-0 flex-col">
-              <span className="text-[10px] uppercase tracking-[0.2em] text-[color:var(--hmr-muted)]">
+              <span className="text-[8px] uppercase tracking-[0.18em] text-[color:var(--hmr-muted)] max-sm:leading-none sm:text-[10px]">
                 HMR 2026
               </span>
-              <span className="truncate text-xs font-bold tracking-tight sm:text-sm">{trackName}</span>
+              <span className="truncate text-[10px] font-bold leading-tight tracking-tight sm:text-xs md:text-sm">
+                {trackName}
+              </span>
             </div>
-            <div className={`ml-auto flex min-w-0 flex-col gap-1 ${trailColAlign}`}>
+            <div className={`ml-auto flex min-w-0 flex-col gap-0.5 sm:gap-1 ${trailColAlign}`}>
               <div
-                className={`flex flex-wrap items-center gap-2 text-[9px] text-[color:var(--hmr-faint)] ${
+                className={`flex flex-wrap items-center gap-1 text-[8px] text-[color:var(--hmr-faint)] sm:gap-2 sm:text-[9px] ${
                   variant === "rail" ? "justify-start" : "justify-end"
                 }`}
               >
-                <span className="max-w-[11rem] truncate">{sessionEmail}</span>
+                <span className="max-w-[7rem] truncate sm:max-w-[11rem]">{sessionEmail}</span>
                 <button
                   type="button"
                   onClick={() => {
@@ -145,13 +159,13 @@ function MapChromeControls({
                       window.location.reload();
                     });
                   }}
-                  className="hmr-btn hmr-tap rounded-none px-2 py-0.5 text-[10px]"
+                  className="hmr-btn hmr-tap max-sm:!min-h-0 max-sm:!min-w-0 max-sm:px-1.5 max-sm:py-0 max-sm:text-[8px] rounded-none px-2 py-0.5 text-[9px] sm:text-[10px]"
                 >
                   Esci
                 </button>
               </div>
               <details className={`relative ${infoBlockAlign}`}>
-                <summary className="cursor-pointer list-none text-[10px] text-[color:var(--hmr-muted)] underline decoration-dotted underline-offset-2 select-none [&::-webkit-details-marker]:hidden">
+                <summary className="cursor-pointer list-none text-[8px] text-[color:var(--hmr-muted)] underline decoration-dotted underline-offset-2 select-none sm:text-[10px] [&::-webkit-details-marker]:hidden">
                   Info traccia
                 </summary>
                 <div
@@ -174,25 +188,27 @@ function MapChromeControls({
               </details>
             </div>
           </div>
-      <div className={`pointer-events-auto flex flex-wrap items-start ${variant === "rail" ? "gap-1" : "gap-2"}`}>
+      <div
+        className={`pointer-events-auto flex max-w-[100vw] flex-wrap items-start ${variant === "rail" ? "gap-1" : "gap-1 sm:gap-1.5"}`}
+      >
             <button
               type="button"
               onClick={onToggleSections}
-              className={`hmr-chip ${showSections ? "hmr-chip-on" : "hmr-chip-off"}`}
+              className={`hmr-chip max-sm:!min-h-[26px] max-sm:!px-1.5 max-sm:!py-0 max-sm:!text-[8px] sm:min-h-0 sm:px-2 sm:py-0.5 sm:text-[9px] ${showSections ? "hmr-chip-on" : "hmr-chip-off"}`}
             >
               Toughest
             </button>
             <button
               type="button"
               onClick={onToggleResupply}
-              className={`hmr-chip ${showResupply ? "hmr-chip-on" : "hmr-chip-off"}`}
+              className={`hmr-chip max-sm:!min-h-[26px] max-sm:!px-1.5 max-sm:!py-0 max-sm:!text-[8px] sm:min-h-0 sm:px-2 sm:py-0.5 sm:text-[9px] ${showResupply ? "hmr-chip-on" : "hmr-chip-off"}`}
             >
               Resupply
             </button>
             <button
               type="button"
               onClick={onOpenAddSheet}
-              className="hmr-chip hmr-chip-off"
+              className="hmr-chip hmr-chip-off max-sm:!min-h-[26px] max-sm:!px-1.5 max-sm:!py-0 max-sm:!text-[8px] sm:min-h-0 sm:px-2 sm:py-0.5 sm:text-[9px]"
               aria-label="Aggiungi POI da link Google Maps"
             >
               Aggiungi
@@ -201,14 +217,22 @@ function MapChromeControls({
               type="button"
               onClick={onTogglePoiHarvest}
               disabled={poiHarvestBusy}
-              className={`hmr-chip ${poiHarvestMode ? "hmr-chip-on" : "hmr-chip-off"}`}
+              className={`hmr-chip max-sm:!min-h-[26px] max-sm:!px-1.5 max-sm:!py-0 max-sm:!text-[8px] sm:min-h-0 sm:px-2 sm:py-0.5 sm:text-[9px] ${poiHarvestMode ? "hmr-chip-on" : "hmr-chip-off"}`}
               aria-pressed={poiHarvestMode}
               title="Clic sulla mappa: cerca su OpenStreetMap nel raggio (~450 m) le categorie selezionate nel pannello verde"
             >
               {poiHarvestBusy ? "OSM…" : "OSM qui"}
             </button>
+            <StreetViewMapChrome
+              trackId={streetViewTrackId}
+              aroundKm={streetViewAroundKm}
+              streetViewPoints={streetViewPoints}
+              onStreetViewLoaded={onStreetViewLoaded}
+              showStreetViewLayer={showStreetViewLayer}
+              onShowStreetViewChange={onShowStreetViewChange}
+            />
             <details className="relative">
-              <summary className="hmr-chip hmr-chip-off cursor-pointer list-none select-none">
+              <summary className="hmr-chip hmr-chip-off max-sm:!min-h-[26px] max-sm:!px-1.5 max-sm:!py-0 max-sm:!text-[8px] cursor-pointer list-none select-none sm:min-h-0 sm:px-2 sm:py-0.5 sm:text-[9px]">
                 Filtri POI
               </summary>
               <div
@@ -347,17 +371,6 @@ export default function HmrApp({
     if (pinAKm != null) return pinAKm;
     if (pinBKm != null) return pinBKm;
     return atKm;
-  }, [pinAKm, pinBKm, atKm]);
-
-  const mediaAroundDescription = useMemo(() => {
-    if (pinAKm != null && pinBKm != null) {
-      const c = (pinAKm + pinBKm) / 2;
-      return `centro tra pin A e B (≈ km ${c.toFixed(1)})`;
-    }
-    if (pinAKm != null) return `pin A sulla traccia (km ${pinAKm.toFixed(1)})`;
-    if (pinBKm != null) return `pin B sulla traccia (km ${pinBKm.toFixed(1)})`;
-    if (atKm != null) return `posizione sul percorso (km ${atKm.toFixed(1)})`;
-    return "metà gara — tocca la traccia per il pin A (misura) o usa GPS/km per centrare";
   }, [pinAKm, pinBKm, atKm]);
 
   const onPin = useCallback((km: number) => {
@@ -767,6 +780,12 @@ export default function HmrApp({
     onTogglePoiHarvest: togglePoiHarvestMode,
     visibleCategories,
     onToggleCategory,
+    streetViewTrackId: initial.id,
+    streetViewAroundKm: mediaAroundKm,
+    streetViewPoints,
+    onStreetViewLoaded: setStreetViewPoints,
+    showStreetViewLayer,
+    onShowStreetViewChange: setShowStreetViewLayer,
   };
 
   return (
@@ -1014,16 +1033,6 @@ export default function HmrApp({
       >
         {tab === "dashboard" && (
           <>
-            <AlongMediaControls
-              trackId={initial.id}
-              aroundKm={mediaAroundKm}
-              aroundDescription={mediaAroundDescription}
-              lengthKm={initial.length_km}
-              streetViewPoints={streetViewPoints}
-              onStreetViewLoaded={setStreetViewPoints}
-              showStreetViewLayer={showStreetViewLayer}
-              onShowStreetViewChange={setShowStreetViewLayer}
-            />
             <DashboardHere
               trackId={initial.id}
               lengthKm={initial.length_km}
@@ -1165,7 +1174,9 @@ function MeasurementOverlay({
   hasSurfaceData: boolean;
   dockRight: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  type Fold = "micro" | "pill" | "expanded";
+  const [fold, setFold] = useState<Fold>("pill");
+
   const deltaElev =
     measurement.elevA != null && measurement.elevB != null
       ? measurement.elevB - measurement.elevA
@@ -1176,35 +1187,223 @@ function MeasurementOverlay({
       ? `cursore · km ${measurement.bKm.toFixed(1)}`
       : `km ${measurement.bKm.toFixed(1)}`;
 
-  const pillSummary =
+  const pillSummaryShort =
     measurement.bKm != null
-      ? `A→B · ${measurement.distKm.toFixed(2)} km · D+ ${Math.round(measurement.gainM)} m`
-      : `Misura · A km ${measurement.aKm.toFixed(1)}`;
+      ? `${measurement.distKm.toFixed(1)} km · D+${Math.round(measurement.gainM)}`
+      : `A ${measurement.aKm.toFixed(1)} km`;
 
   const topPos = "top-[calc(var(--safe-top)+0.5rem)]";
-  const hPos = dockRight ? "right-3 left-auto items-end" : "left-3 items-stretch";
+  const bottomPos = "bottom-[calc(var(--hmr-profile-strip)+var(--safe-bottom)+4px)]";
 
-  if (!expanded) {
-    return (
-      <div
-        className={`pointer-events-none absolute ${topPos} z-30 flex max-w-[min(96vw,20rem)] flex-col ${hPos}`}
-      >
-        <div
-          className={`pointer-events-auto flex items-center gap-1.5 rounded-full border border-[color:var(--hmr-border)]/90 bg-[color:var(--hmr-panel-bg)]/95 px-2.5 py-1.5 text-[10px] font-medium shadow-lg backdrop-blur-sm ${dockRight ? "flex-row-reverse" : ""}`}
-        >
-          <span className="min-w-0 flex-1 truncate tabular-nums text-[color:var(--hmr-text)]">{pillSummary}</span>
+  const detailPanel = (
+    <div
+      className={`pointer-events-auto max-h-[min(40vh,22rem)] overflow-y-auto hmr-panel px-2.5 py-1.5 text-[10px] shadow-lg sm:px-3 sm:py-2 sm:text-xs ${dockRight ? "text-right" : ""}`}
+    >
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <span className="text-[9px] uppercase tracking-[0.14em] text-[color:var(--hmr-muted)] sm:text-[10px]">
+          Misura
+        </span>
+        <div className="flex gap-0.5">
           <button
             type="button"
-            title="Espandi dettagli"
-            className="hmr-btn hmr-tap shrink-0 rounded-full px-2 py-0.5 text-[11px] leading-none"
-            onClick={() => setExpanded(true)}
+            title="Comprimi"
+            className="hmr-btn hmr-tap !min-h-0 !min-w-0 px-1.5 py-0.5 text-[9px]"
+            onClick={() => setFold("pill")}
+          >
+            ↓
+          </button>
+          <button
+            type="button"
+            title="Solo icona"
+            className="hmr-btn hmr-tap !min-h-0 !min-w-0 px-1.5 py-0.5 text-[9px]"
+            onClick={() => setFold("micro")}
+          >
+            −
+          </button>
+          <button type="button" onClick={onReset} className="hmr-btn hmr-tap !min-h-0 !min-w-0 px-1.5 py-0.5 text-[9px]">
+            ×
+          </button>
+        </div>
+      </div>
+      <p className="mb-1.5 text-[8px] leading-snug text-[color:var(--hmr-faint)] sm:text-[9px]">
+        Profilo: trascina per A–B; tap per pin.
+      </p>
+      {measurement.bKm == null && (
+        <p className="mb-1.5 text-[9px] text-[color:var(--hmr-muted)]">Cursore + tap per B.</p>
+      )}
+      <div className="border-t border-[color:var(--hmr-border)]/60 pt-1.5">
+        <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[9px] sm:text-[10px]">
+          <span className="text-[color:var(--hmr-muted)]">A</span>
+          <span>
+            km {measurement.aKm.toFixed(1)}
+            {measurement.elevA != null && (
+              <span className="text-[color:var(--hmr-muted)]"> · {Math.round(measurement.elevA)} m</span>
+            )}
+          </span>
+          <span className="text-[color:var(--hmr-muted)]">B</span>
+          <span>
+            {bLabel}
+            {measurement.elevB != null && (
+              <span className="text-[color:var(--hmr-muted)]"> · {Math.round(measurement.elevB)} m</span>
+            )}
+          </span>
+        </div>
+      </div>
+      {measurement.bKm != null && (
+        <>
+          <div className="mt-1.5 grid grid-cols-2 gap-1.5 text-center sm:grid-cols-4">
+            <MetricCell label="Δkm" value={`${measurement.distKm.toFixed(2)}`} />
+            <MetricCell label="D+" value={`${Math.round(measurement.gainM)} m`} />
+            <MetricCell label="D-" value={`${Math.round(measurement.lossM)} m`} />
+            <MetricCell
+              label="Δ quota"
+              value={deltaElev != null ? `${deltaElev > 0 ? "+" : ""}${Math.round(deltaElev)} m` : "—"}
+            />
+          </div>
+          <div className="mt-1.5 border-t border-[color:var(--hmr-border)]/60 pt-1.5">
+            <div className="text-[8px] uppercase tracking-[0.12em] text-[color:var(--hmr-muted)]">D+</div>
+            <div className="text-base font-semibold tabular-nums leading-none text-[color:var(--hmr-text)] sm:text-lg">
+              +{Math.round(measurement.gainM)} m
+            </div>
+          </div>
+        </>
+      )}
+      {hoverKm != null && (
+        <p className="mt-1.5 border-t border-[color:var(--hmr-border)]/60 pt-1.5 text-[9px] text-[color:var(--hmr-muted)]">
+          Cursore km {hoverKm.toFixed(1)}
+          {hoverElev != null ? ` · ${Math.round(hoverElev)} m` : ""}
+          {hoverTerrainLabel && (
+            <span className="block text-[color:var(--hmr-accent)]">OSM: {hoverTerrainLabel}</span>
+          )}
+          {!hoverTerrainLabel && hasSurfaceData && (
+            <span className="block text-[color:var(--hmr-faint)]">Fuori dati OSM</span>
+          )}
+        </p>
+      )}
+      <div className="mt-1.5 border-t border-[color:var(--hmr-border)]/60 pt-1.5 md:hidden">
+        <p className="mb-1 text-[8px] text-[color:var(--hmr-muted)]">Parziale rapido</p>
+        <div className="flex flex-wrap gap-1">
+          {(
+            [
+              { label: "+5", deltaKm: 5 },
+              { label: "+10", deltaKm: 10 },
+              { label: "+20", deltaKm: 20 },
+            ] as const
+          ).map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              onClick={() => onNudgeTarget(item.deltaKm)}
+              className="hmr-btn hmr-tap !min-h-0 rounded-none px-1.5 py-0.5 text-[8px]"
+              disabled={measurement.aKm >= trackLengthKm - 0.05}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+
+  if (dockRight) {
+    if (fold === "micro") {
+      return (
+        <div className={`pointer-events-none absolute ${topPos} right-3 z-30`}>
+          <button
+            type="button"
+            title="Misura — espandi"
+            onClick={() => setFold("pill")}
+            className="pointer-events-auto flex h-12 w-6 flex-col items-center justify-center rounded-l-md border border-[color:var(--hmr-border)]/90 bg-[color:var(--hmr-panel-bg)]/95 text-[8px] font-bold tabular-nums text-[color:var(--hmr-accent)] shadow-lg"
+          >
+            {measurement.bKm != null ? Math.round(measurement.gainM) : "⌃"}
+          </button>
+        </div>
+      );
+    }
+    if (fold === "pill") {
+      return (
+        <div className={`pointer-events-none absolute ${topPos} right-3 z-30 flex max-w-[min(92vw,18rem)] flex-col items-end`}>
+          <div className="pointer-events-auto flex items-center gap-1 rounded-full border border-[color:var(--hmr-border)]/90 bg-[color:var(--hmr-panel-bg)]/95 px-1.5 py-1 text-[8px] font-medium shadow-md backdrop-blur-sm">
+            <span className="max-w-[11rem] truncate tabular-nums text-[color:var(--hmr-text)]">{pillSummaryShort}</span>
+            <button
+              type="button"
+              title="Dettagli"
+              className="hmr-btn hmr-tap !min-h-0 !min-w-0 shrink-0 rounded-full px-1 py-0.5 text-[9px]"
+              onClick={() => setFold("expanded")}
+            >
+              ↑
+            </button>
+            <button
+              type="button"
+              title="Icona"
+              className="hmr-btn hmr-tap !min-h-0 !min-w-0 shrink-0 rounded-full px-1 py-0.5 text-[9px]"
+              onClick={() => setFold("micro")}
+            >
+              −
+            </button>
+            <button
+              type="button"
+              title="Reset"
+              className="hmr-btn hmr-tap !min-h-0 !min-w-0 shrink-0 rounded-full px-1 py-0.5 text-[10px]"
+              onClick={onReset}
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div className={`pointer-events-none absolute ${topPos} right-3 z-30 flex max-w-[min(92vw,22rem)] flex-col items-end gap-2`}>
+        {detailPanel}
+      </div>
+    );
+  }
+
+  /* Mobile / overlay: in basso a destra sopra il profilo */
+  if (fold === "micro") {
+    return (
+      <div className={`pointer-events-none absolute ${bottomPos} right-0 z-30`}>
+        <button
+          type="button"
+          title="Misura — espandi"
+          onClick={() => setFold("pill")}
+          className="pointer-events-auto rounded-l-md border border-y border-l border-[color:var(--hmr-border)]/90 bg-[color:var(--hmr-panel-bg)]/96 px-1.5 py-2 text-[9px] font-semibold tabular-nums leading-tight text-[color:var(--hmr-text)] shadow-[2px_0_12px_rgba(0,0,0,0.35)] backdrop-blur-sm"
+        >
+          <span className="block max-w-[2.4rem] truncate text-[color:var(--hmr-muted)]">Δ</span>
+          <span className="block text-[color:var(--hmr-accent)]">
+            {measurement.bKm != null ? `+${Math.round(measurement.gainM)}` : "A"}
+          </span>
+        </button>
+      </div>
+    );
+  }
+
+  if (fold === "pill") {
+    return (
+      <div className={`pointer-events-none absolute ${bottomPos} right-2 z-30 flex max-w-[min(calc(100vw-5rem),16rem)] flex-col items-end`}>
+        <div className="pointer-events-auto flex max-w-full items-center gap-1 rounded-l-md rounded-tr-md border border-[color:var(--hmr-border)]/90 bg-[color:var(--hmr-panel-bg)]/96 px-1.5 py-0.5 text-[8px] font-medium shadow-md backdrop-blur-sm">
+          <span className="min-w-0 flex-1 truncate tabular-nums text-[color:var(--hmr-text)]">{pillSummaryShort}</span>
+          <button
+            type="button"
+            title="Dettagli"
+            className="hmr-btn hmr-tap !min-h-0 !min-w-0 shrink-0 rounded px-1 py-0 text-[9px] leading-none"
+            onClick={() => setFold("expanded")}
           >
             ↑
           </button>
           <button
             type="button"
-            title="Chiudi misura (reset pin)"
-            className="hmr-btn hmr-tap shrink-0 rounded-full px-2 py-0.5 text-[12px] leading-none"
+            title="Solo icona"
+            className="hmr-btn hmr-tap !min-h-0 !min-w-0 shrink-0 rounded px-1 py-0 text-[9px] leading-none"
+            onClick={() => setFold("micro")}
+          >
+            −
+          </button>
+          <button
+            type="button"
+            title="Reset pin"
+            className="hmr-btn hmr-tap !min-h-0 !min-w-0 shrink-0 rounded px-1 py-0 text-[10px] leading-none"
             onClick={onReset}
           >
             ×
@@ -1216,118 +1415,9 @@ function MeasurementOverlay({
 
   return (
     <div
-      className={`pointer-events-none absolute ${topPos} z-30 flex max-w-[min(92vw,22rem)] flex-col gap-2 ${dockRight ? "right-3 left-auto items-end" : "left-3 items-stretch"}`}
+      className={`pointer-events-none absolute ${bottomPos} left-2 right-2 z-30 flex justify-end sm:left-auto sm:right-2 sm:max-w-[22rem]`}
     >
-      <div
-        className={`pointer-events-auto hmr-panel px-3 py-2 text-xs shadow-lg ${dockRight ? "text-right" : ""}`}
-      >
-        <div className="mb-1 flex items-center justify-between gap-2">
-          <span className="text-[10px] uppercase tracking-[0.2em] text-[color:var(--hmr-muted)]">
-            Misura traccia
-          </span>
-          <div className="flex gap-1">
-            <button
-              type="button"
-              title="Comprimi"
-              className="hmr-btn hmr-tap text-[10px]"
-              onClick={() => setExpanded(false)}
-            >
-              ↓
-            </button>
-            <button type="button" onClick={onReset} className="hmr-btn hmr-tap text-[10px]">
-              Reset pin
-            </button>
-          </div>
-        </div>
-        <p className="mb-2 text-[9px] leading-snug text-[color:var(--hmr-faint)]">
-          Profilo in basso: trascina sull&apos;altimetria per impostare l&apos;arco A–B; tocca per pin
-          singoli.
-        </p>
-        {measurement.bKm == null && (
-          <p className="mb-2 text-[10px] text-[color:var(--hmr-muted)]">
-            Passa il cursore sulla traccia o sul grafico, poi clicca per piazzare B (oppure trascina sul
-            profilo).
-          </p>
-        )}
-        <div className="border-t border-[color:var(--hmr-border)]/60 pt-2">
-          <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[10px]">
-            <span className="text-[color:var(--hmr-muted)]">A</span>
-            <span>
-              km {measurement.aKm.toFixed(1)}
-              {measurement.elevA != null && (
-                <span className="text-[color:var(--hmr-muted)]"> · {Math.round(measurement.elevA)} m</span>
-              )}
-            </span>
-            <span className="text-[color:var(--hmr-muted)]">B</span>
-            <span>
-              {bLabel}
-              {measurement.elevB != null && (
-                <span className="text-[color:var(--hmr-muted)]"> · {Math.round(measurement.elevB)} m</span>
-              )}
-            </span>
-          </div>
-        </div>
-        {measurement.bKm != null && (
-          <>
-            <div className="mt-2 grid grid-cols-2 gap-2 text-center sm:grid-cols-4">
-              <MetricCell label="Δkm" value={`${measurement.distKm.toFixed(2)}`} />
-              <MetricCell label="D+" value={`${Math.round(measurement.gainM)} m`} />
-              <MetricCell label="D-" value={`${Math.round(measurement.lossM)} m`} />
-              <MetricCell
-                label="Δ quota"
-                value={
-                  deltaElev != null ? `${deltaElev > 0 ? "+" : ""}${Math.round(deltaElev)} m` : "—"
-                }
-              />
-            </div>
-            <div className="mt-2 border-t border-[color:var(--hmr-border)]/60 pt-2">
-              <div className="text-[10px] uppercase tracking-[0.14em] text-[color:var(--hmr-muted)]">
-                Dislivello (D+)
-              </div>
-              <div
-                className="font-semibold tabular-nums leading-none text-[color:var(--hmr-text)]"
-                style={{ fontSize: "clamp(1.2rem, 5.5vw, 1.65rem)" }}
-              >
-                +{Math.round(measurement.gainM)} m
-              </div>
-            </div>
-          </>
-        )}
-        {hoverKm != null && (
-          <p className="mt-2 border-t border-[color:var(--hmr-border)]/60 pt-2 text-[10px] text-[color:var(--hmr-muted)]">
-            Cursore: km {hoverKm.toFixed(1)}
-            {hoverElev != null ? ` · ${Math.round(hoverElev)} m` : ""}
-            {hoverTerrainLabel && (
-              <span className="block text-[color:var(--hmr-accent)]">Terreno (OSM): {hoverTerrainLabel}</span>
-            )}
-            {!hoverTerrainLabel && hasSurfaceData && (
-              <span className="block text-[color:var(--hmr-faint)]">Terreno: fuori dati OSM</span>
-            )}
-          </p>
-        )}
-        <div className="mt-2 border-t border-[color:var(--hmr-border)]/60 pt-2 md:hidden">
-          <p className="mb-1 text-[10px] text-[color:var(--hmr-muted)]">Parziale rapido (mobile)</p>
-          <div className="flex flex-wrap gap-1.5">
-            {(
-              [
-                { label: "+5 km", deltaKm: 5 },
-                { label: "+10 km", deltaKm: 10 },
-                { label: "+20 km", deltaKm: 20 },
-              ] as const
-            ).map((item) => (
-              <button
-                key={item.label}
-                type="button"
-                onClick={() => onNudgeTarget(item.deltaKm)}
-                className="hmr-btn hmr-tap rounded-none px-2 py-1 text-[10px]"
-                disabled={measurement.aKm >= trackLengthKm - 0.05}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
+      {detailPanel}
     </div>
   );
 }
