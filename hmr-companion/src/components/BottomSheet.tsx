@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  type CSSProperties,
+  type ReactNode,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { getHmrWideRailSnapshot, subscribeHmrWideRail } from "@/lib/hmr-wide-rail";
 
 export type SheetSnap = "peek" | "half" | "full";
@@ -8,19 +15,26 @@ export type SheetSnap = "peek" | "half" | "full";
 export type BottomSheetProps = {
   snap: SheetSnap;
   onSnapChange: (s: SheetSnap) => void;
-  children: React.ReactNode;
+  children: ReactNode;
   /** Header visibile in peek; non scrolla. */
-  header: React.ReactNode;
+  header: ReactNode;
   /** In layout rail sinistro: blocco sopra i tab (es. chrome mappa unificato). */
-  railTop?: React.ReactNode;
+  railTop?: ReactNode;
   /** Layout inferiore: rialza il foglio per lasciare spazio al profilo fisso sotto. */
   reserveProfileStrip?: boolean;
 };
 
-function snapToVh(s: SheetSnap): number {
-  if (s === "peek") return 14;
-  if (s === "half") return 42;
-  return 88;
+/** Altezza foglio (mobile bottom): peek = linguetta compatta, half = contenuto senza mangiare metà mappa. */
+function sheetHeightStyle(snap: SheetSnap): CSSProperties {
+  if (snap === "peek") {
+    return {
+      height: "max(6.25rem, calc(10vh + var(--safe-bottom)))",
+    };
+  }
+  if (snap === "half") {
+    return { height: "calc(30vh + var(--safe-bottom))" };
+  }
+  return { height: "calc(86vh + var(--safe-bottom))" };
 }
 
 /** Larghezza pannello sinistro (viewport largo / basso). */
@@ -50,7 +64,7 @@ export default function BottomSheet({
     if (snap === "peek") el.scrollTop = 0;
   }, [snap]);
 
-  const heightVh = snapToVh(snap);
+  const bottomHeightStyle = sheetHeightStyle(snap);
   const leftWidth = snapToLeftWidth(snap);
 
   const onGrabPointerDown = (e: React.PointerEvent) => {
@@ -132,16 +146,16 @@ export default function BottomSheet({
   return (
     <div
       ref={rootRef}
-      className={`pointer-events-auto fixed inset-x-0 z-20 flex flex-col rounded-none border-t border-[color:var(--hmr-border)] bg-[color:var(--hmr-surface)] shadow-[0_-20px_60px_rgba(0,0,0,0.5)] transition-[height] duration-200 ease-out ${
+      className={`pointer-events-auto fixed inset-x-0 z-20 flex flex-col rounded-t-xl border-t border-[color:var(--hmr-border)] bg-[color:var(--hmr-surface)] shadow-[0_-20px_60px_rgba(0,0,0,0.5)] transition-[height] duration-200 ease-out ${
         reserveProfileStrip ? "bottom-[calc(var(--hmr-profile-strip)+var(--safe-bottom))]" : "bottom-0"
       }`}
       style={{
-        height: `calc(${heightVh}vh + var(--safe-bottom))`,
+        ...bottomHeightStyle,
         transform: dragDelta ? `translateY(${Math.max(0, dragDelta)}px)` : undefined,
       }}
     >
       <div
-        className="hmr-grab flex flex-col items-center gap-2 px-4 pt-2 pb-1 select-none"
+        className="hmr-grab flex flex-col items-center gap-1.5 px-3 pt-1.5 pb-0.5 select-none"
         onPointerDown={onGrabPointerDown}
         onPointerMove={onGrabPointerMove}
         onPointerUp={onGrabPointerUp}

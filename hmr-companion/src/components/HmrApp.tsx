@@ -270,7 +270,7 @@ export default function HmrApp({
   initialTab?: Tab;
 }) {
   const [tab, setTab] = useState<Tab>(initialTab);
-  const [snap, setSnap] = useState<SheetSnap>("half");
+  const [snap, setSnap] = useState<SheetSnap>("peek");
   const [visibleCategories, setVisibleCategories] = useState<Set<PoiCategory>>(
     () => new Set<PoiCategory>(CATEGORY_ORDER)
   );

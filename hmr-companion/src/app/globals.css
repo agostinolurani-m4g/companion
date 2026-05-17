@@ -21,6 +21,13 @@
   --hmr-ui-font: "Segoe UI", "Franklin Gothic Medium", "Helvetica Neue", Arial, "Noto Sans", sans-serif;
 }
 
+/* Telefono in verticale: profilo più basso (meno altezza) così la mappa guadagna spazio. */
+@media (max-aspect-ratio: 4/5) {
+  :root {
+    --hmr-profile-strip: 7.85rem;
+  }
+}
+
 @theme inline {
   --color-hmr-bg: var(--hmr-bg);
   --color-hmr-surface: var(--hmr-surface);
