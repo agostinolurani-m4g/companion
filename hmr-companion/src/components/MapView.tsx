@@ -15,7 +15,7 @@ import type {
 import type { StoredCoord } from "@/lib/track-coords";
 import { CATEGORY_META } from "@/lib/categories";
 import type { TrackSurfaceKind } from "@/lib/surface-osm";
-import type { MapillaryAlongItem, StreetViewAlongItem } from "@/lib/along-media-types";
+import type { StreetViewAlongItem } from "@/lib/along-media-types";
 import { coordAtKm, polylineBetween, projectLngLatToTrack } from "@/lib/track-measure";
 
 export type MapViewProps = {
@@ -48,9 +48,9 @@ export type MapViewProps = {
   surfaceSegments?: Array<{ km_start: number; km_end: number; surface: TrackSurfaceKind }>;
   /** Street View lungo traccia (API server). */
   streetViewPoints?: StreetViewAlongItem[];
-  mapillaryPoints?: MapillaryAlongItem[];
   showStreetViewLayer?: boolean;
-  showMapillaryLayer?: boolean;
+  /** Zoom mappa su un tratto km (es. tappa piano gara); il parent può azzerare dopo ~1s. */
+  flyToKmRange?: { lo: number; hi: number } | null;
 };
 
 const HOVER_SNAP_PX = 20;
@@ -62,7 +62,6 @@ const INTERACTIVE_LAYERS = [
   "sections-line",
   "resupply-circle",
   "streetview-circle",
-  "mapillary-circle",
 ];
 
 const OSM_STYLE: StyleSpecification = {
@@ -706,21 +705,23 @@ export default function MapView(props: MapViewProps) {
         },
         "pois-circle"
       );
-      map.addSource("mapillary", {
-        type: "geojson",
-        data: { type: "FeatureCollection", features: [] },
-      });
       map.addLayer(
         {
-          id: "mapillary-circle",
-          type: "circle",
-          source: "mapillary",
+          id: "streetview-label",
+          type: "symbol",
+          source: "streetview",
+          layout: {
+            "text-field": ["get", "label_km"],
+            "text-size": 10,
+            "text-offset": [0, 1.15],
+            "text-anchor": "top",
+            "text-font": ["Noto Sans Regular"],
+            "text-allow-overlap": false,
+          },
           paint: {
-            "circle-radius": 8,
-            "circle-color": "#f472b6",
-            "circle-stroke-color": "#0b1221",
-            "circle-stroke-width": 1.5,
-            "circle-opacity": 0.95,
+            "text-color": "#e9d5ff",
+            "text-halo-color": "#0b1221",
+            "text-halo-width": 1.2,
           },
         },
         "pois-circle"
@@ -757,32 +758,8 @@ export default function MapView(props: MapViewProps) {
           )
           .addTo(map);
       });
-      map.on("click", "mapillary-circle", (e) => {
-        const f = e.features?.[0] as MapGeoJSONFeature | undefined;
-        if (!f) return;
-        const id = (f.properties as { id?: string }).id ?? "";
-        const along = (f.properties as { along_km?: string }).along_km ?? "";
-        const thumb = (f.properties as { thumb_url?: string }).thumb_url ?? "";
-        const appUrl = `https://www.mapillary.com/app/?pKey=${encodeURIComponent(id)}`;
-        const img =
-          thumb && thumb.length > 0
-            ? `<img src="${escapeHtml(thumb)}" alt="" style="max-width:100%;border-radius:6px;margin-bottom:6px" />`
-            : "";
-        new maplibregl.Popup({ closeButton: true, offset: 10 })
-          .setLngLat(e.lngLat)
-          .setHTML(
-            `<div style="font: 12px/1.35 ui-sans-serif, system-ui; color:#0b1221; max-width: 240px">
-              <div style="font-weight:600; margin-bottom:6px">Mapillary · km ${escapeHtml(String(along))}</div>
-              ${img}
-              <a href="${escapeHtml(appUrl)}" target="_blank" rel="noopener noreferrer" style="color:#db2777">Apri su Mapillary</a>
-            </div>`
-          )
-          .addTo(map);
-      });
       map.on("mouseenter", "streetview-circle", () => (map.getCanvas().style.cursor = "pointer"));
       map.on("mouseleave", "streetview-circle", () => (map.getCanvas().style.cursor = ""));
-      map.on("mouseenter", "mapillary-circle", () => (map.getCanvas().style.cursor = "pointer"));
-      map.on("mouseleave", "mapillary-circle", () => (map.getCanvas().style.cursor = ""));
 
       const emitHover = (km: number | null) => {
         if (km == null) {
@@ -1139,6 +1116,7 @@ export default function MapView(props: MapViewProps) {
           lng: String(p.lng),
           along_km: String(p.along_km),
           maps_url: p.maps_url ?? "",
+          label_km: `SV km ${p.along_km.toFixed(1)}`,
         },
         geometry: { type: "Point" as const, coordinates: [p.lng, p.lat] },
       })),
@@ -1148,23 +1126,16 @@ export default function MapView(props: MapViewProps) {
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !readyRef.current) return;
-    const src = map.getSource("mapillary") as maplibregl.GeoJSONSource | undefined;
-    if (!src) return;
-    const on = props.showMapillaryLayer !== false;
-    const pts = on ? (props.mapillaryPoints ?? []) : [];
-    src.setData({
-      type: "FeatureCollection",
-      features: pts.map((p) => ({
-        type: "Feature" as const,
-        properties: {
-          id: p.id,
-          along_km: String(p.along_km),
-          thumb_url: p.thumb_url ?? "",
-        },
-        geometry: { type: "Point" as const, coordinates: [p.lng, p.lat] },
-      })),
-    });
-  }, [props.mapillaryPoints, props.showMapillaryLayer]);
+    const range = props.flyToKmRange;
+    if (!range) return;
+    const bounds = bboxLngLatForKmRange(props.coords, range.lo, range.hi);
+    if (!bounds) return;
+    try {
+      map.fitBounds(bounds, { padding: 40, duration: 800, maxZoom: 15 });
+    } catch {
+      /* ignore */
+    }
+  }, [props.flyToKmRange, props.coords]);
 
   return (
     <div
@@ -1186,4 +1157,32 @@ function escapeHtml(s: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+/** Bounds [[west,south],[east,north]] per fitBounds MapLibre. */
+function bboxLngLatForKmRange(
+  coords: StoredCoord[],
+  loKm: number,
+  hiKm: number
+): [[number, number], [number, number]] | null {
+  const loK = Math.min(loKm, hiKm);
+  const hiK = Math.max(loKm, hiKm);
+  let minLng = Infinity;
+  let minLat = Infinity;
+  let maxLng = -Infinity;
+  let maxLat = -Infinity;
+  for (const c of coords) {
+    const k = c[3];
+    if (k < loK || k > hiK) continue;
+    minLng = Math.min(minLng, c[0]);
+    maxLng = Math.max(maxLng, c[0]);
+    minLat = Math.min(minLat, c[1]);
+    maxLat = Math.max(maxLat, c[1]);
+  }
+  if (!Number.isFinite(minLng)) return null;
+  const pad = 0.003;
+  return [
+    [minLng - pad, minLat - pad],
+    [maxLng + pad, maxLat + pad],
+  ];
 }

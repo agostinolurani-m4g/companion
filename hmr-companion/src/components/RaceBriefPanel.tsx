@@ -30,10 +30,10 @@ type Props = {
   raceStarted: boolean;
   onStartRace: () => void;
   onEndRace: () => void;
-  /** Nome del piano selezionato in app; se assente non si mostra il riquadro. */
   racePlanName?: string | null;
-  /** Voci del piano da mostrare (già filtrate e ordinate dal parent). */
   racePlanUpcomingItems?: RacePlanItemRow[];
+  /** Tab mappa + zoom sul km (es. voce piano). */
+  onJumpToKm?: (km: number) => void;
 };
 
 function pctBar(label: string, pct: number, color: string) {
@@ -60,6 +60,7 @@ export default function RaceBriefPanel({
   onEndRace,
   racePlanName = null,
   racePlanUpcomingItems = [],
+  onJumpToKm,
 }: Props) {
   const [data, setData] = useState<BriefPayload | null>(null);
   const [loading, setLoading] = useState(false);
@@ -126,30 +127,39 @@ export default function RaceBriefPanel({
       : null;
 
   const chunk0 = data?.chunks[0];
+  const pctDone = atKm != null && lengthKm > 0 ? Math.min(100, Math.max(0, (atKm / lengthKm) * 100)) : 0;
 
   return (
-    <div className="flex flex-col gap-3 p-3 text-sm">
-      <div className="flex flex-wrap items-center gap-2">
+    <div className="flex flex-col gap-2 p-2 text-sm">
+      <div className="flex flex-wrap items-stretch gap-1.5">
         {!raceStarted ? (
-          <button type="button" className="hmr-btn hmr-btn-accent hmr-tap px-4 py-2 text-base font-semibold" onClick={onStartRace}>
+          <button
+            type="button"
+            className="hmr-btn hmr-btn-accent hmr-tap flex-1 px-2 py-2 text-xs font-semibold sm:flex-none sm:px-4 sm:text-sm"
+            onClick={onStartRace}
+          >
             Inizia gara
           </button>
         ) : (
-          <button type="button" className="hmr-btn hmr-tap text-xs" onClick={onEndRace}>
+          <button type="button" className="hmr-btn hmr-tap flex-1 px-2 py-2 text-xs sm:flex-none" onClick={onEndRace}>
             Termina gara
           </button>
         )}
-        <button type="button" className="hmr-btn hmr-tap text-xs" onClick={load} disabled={atKm == null}>
+        <button type="button" className="hmr-btn hmr-tap flex-1 px-2 py-2 text-xs sm:flex-none" onClick={load} disabled={atKm == null}>
           {loading ? "Aggiorno…" : "Aggiorna"}
         </button>
-        <label className="flex items-center gap-1 text-[10px] text-[color:var(--hmr-muted)]">
+      </div>
+
+      <details className="rounded-md border border-[color:var(--hmr-border)]/50 bg-black/10 px-2 py-1 text-[10px] text-[color:var(--hmr-muted)]">
+        <summary className="cursor-pointer select-none font-medium text-[color:var(--hmr-text)]">Opzioni</summary>
+        <label className="mt-2 flex cursor-pointer items-center gap-2">
           <input type="checkbox" checked={withLlm} onChange={(e) => setWithLlm(e.target.checked)} />
           Overview AI (richiede chiave Anthropic)
         </label>
-      </div>
+      </details>
 
       {atKm == null && (
-        <p className="rounded-lg bg-[color:var(--hmr-elev)] p-3 text-xs text-[color:var(--hmr-warn)]">
+        <p className="rounded-lg bg-[color:var(--hmr-elev)] p-2 text-xs text-[color:var(--hmr-warn)]">
           Attiva GPS o imposta il km nel tab «Qui e ora» per vedere il brief.
         </p>
       )}
@@ -157,60 +167,55 @@ export default function RaceBriefPanel({
       {error && <p className="text-xs text-[color:var(--hmr-danger)]">{error}</p>}
 
       {racePlanName != null && racePlanName !== "" && (
-        <div className="hmr-panel space-y-2 p-3">
-          <div className="text-xs font-semibold uppercase tracking-wide text-[color:var(--hmr-muted)]">
-            Piano gara · {racePlanName}
+        <div className="hmr-panel space-y-1.5 p-2">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-[color:var(--hmr-muted)]">
+            Piano · {racePlanName}
           </div>
           {atKm == null ? (
-            <p className="text-xs text-[color:var(--hmr-muted)]">
-              Imposta posizione (GPS o km nel tab «Qui e ora») per elencare le prossime voci.
-            </p>
+            <p className="text-xs text-[color:var(--hmr-muted)]">Imposta posizione per le prossime voci.</p>
           ) : racePlanUpcomingItems.length === 0 ? (
-            <p className="text-xs text-[color:var(--hmr-faint)]">
-              Nessuna voce del piano da questo punto al traguardo.
-            </p>
+            <p className="text-xs text-[color:var(--hmr-faint)]">Nessuna voce fino al traguardo.</p>
           ) : (
-            <ul className="space-y-2">
+            <div className="-mx-1 flex gap-1.5 overflow-x-auto pb-1 pt-0.5" style={{ WebkitOverflowScrolling: "touch" }}>
               {racePlanUpcomingItems.map((it) => (
-                <li key={it.id} className="rounded-md bg-[color:var(--hmr-elev)] px-2 py-2 text-xs">
-                  <div className="font-medium text-[color:var(--hmr-text)]">
-                    <span className="text-[color:var(--hmr-muted)]">{labelRacePlanItemKind(it.kind)}</span>{" "}
-                    {it.title || "(senza titolo)"}
-                  </div>
-                  <div className="text-[color:var(--hmr-muted)]">
-                    km {it.km_start.toFixed(1)}
-                    {Math.abs(it.km_end - it.km_start) >= 0.05 ? ` → ${it.km_end.toFixed(1)}` : ""}
-                    {it.est_hours != null ? ` · ~${it.est_hours} h` : ""}
-                    {it.avoid_night === 1 ? " · evita notte" : ""}
-                  </div>
-                  {it.body ? (
-                    <p className="mt-1 line-clamp-2 text-[color:var(--hmr-faint)]">{it.body}</p>
-                  ) : null}
-                </li>
+                <button
+                  key={it.id}
+                  type="button"
+                  onClick={() => onJumpToKm?.(it.km_start)}
+                  className="hmr-tap shrink-0 rounded-md border border-[color:var(--hmr-border)]/70 bg-[color:var(--hmr-elev)] px-2 py-1.5 text-left text-[11px] shadow-sm"
+                >
+                  <div className="font-semibold tabular-nums text-[color:var(--hmr-accent)]">km {it.km_start.toFixed(1)}</div>
+                  <div className="max-w-[9rem] truncate text-[color:var(--hmr-muted)]">{labelRacePlanItemKind(it.kind)}</div>
+                  <div className="max-w-[9rem] truncate font-medium text-[color:var(--hmr-text)]">{it.title || "—"}</div>
+                </button>
               ))}
-            </ul>
+            </div>
           )}
         </div>
       )}
 
       {data && atKm != null && (
         <>
-          <div className="hmr-panel grid gap-1 p-4">
+          <div className="hmr-panel space-y-1.5 p-3">
             <div className="text-[10px] uppercase tracking-wide text-[color:var(--hmr-muted)]">Progresso</div>
-            <div className="text-2xl font-bold">
-              {data.remaining_km.toFixed(1)} km mancanti
-              <span className="ml-2 text-sm font-normal text-[color:var(--hmr-muted)]">
-                ({((atKm / lengthKm) * 100).toFixed(1)}% fatto)
-              </span>
+            <div className="text-xl font-bold tabular-nums sm:text-2xl">
+              {data.remaining_km.toFixed(1)} km
+              <span className="ml-1.5 text-xs font-normal text-[color:var(--hmr-muted)] sm:text-sm">mancanti</span>
+            </div>
+            <div className="flex items-center gap-2 text-[10px] text-[color:var(--hmr-muted)]">
+              <div className="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-[color:var(--hmr-elev)]">
+                <div className="h-full rounded-full bg-[color:var(--hmr-accent)]" style={{ width: `${pctDone}%` }} />
+              </div>
+              <span className="shrink-0 tabular-nums">{pctDone.toFixed(1)}%</span>
             </div>
           </div>
 
           {data.alerts.length > 0 && (
-            <div className="flex flex-col gap-2">
+            <div className="flex max-h-24 flex-col gap-1 overflow-y-auto">
               {data.alerts.slice(0, 4).map((a) => (
                 <div
                   key={a.code}
-                  className={`rounded-lg border px-3 py-2 text-xs ${
+                  className={`rounded-md border px-2 py-1.5 text-[11px] leading-snug ${
                     a.level === "warn"
                       ? "border-amber-500/50 bg-amber-500/10"
                       : "border-sky-500/40 bg-sky-500/10"
@@ -222,54 +227,55 @@ export default function RaceBriefPanel({
             </div>
           )}
 
-          <div className="hmr-panel space-y-2 p-3">
-            <div className="text-xs font-semibold uppercase tracking-wide text-[color:var(--hmr-muted)]">
-              Prossimo checkpoint / resupply
-            </div>
+          <div className="hmr-panel space-y-2 p-2">
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-[color:var(--hmr-muted)]">Prossimi obiettivi</div>
             {data.next_checkpoint && (
-              <div className="text-base font-medium">
-                {data.next_checkpoint.name}: +{data.next_checkpoint.ahead_km.toFixed(1)} km
+              <div className="text-sm font-medium leading-tight">
+                CP {data.next_checkpoint.name}
+                <span className="ml-1 tabular-nums text-[color:var(--hmr-accent)]">+{data.next_checkpoint.ahead_km.toFixed(1)} km</span>
               </div>
             )}
             {data.next_resupply && (
-              <div className="text-sm text-[color:var(--hmr-muted)]">
-                Resupply {data.next_resupply.name}: +{data.next_resupply.ahead_km.toFixed(1)} km
+              <div className="text-xs leading-tight text-[color:var(--hmr-muted)]">
+                Resupply {data.next_resupply.name}
+                <span className="ml-1 tabular-nums text-[color:var(--hmr-text)]">+{data.next_resupply.ahead_km.toFixed(1)} km</span>
               </div>
             )}
             <div className="flex flex-wrap items-end gap-2 border-t border-[color:var(--hmr-border)]/40 pt-2">
               <label className="flex flex-col text-[10px] text-[color:var(--hmr-muted)]">
-                Ritmo medio (km/h) — stima ETA
+                Ritmo km/h
                 <input
                   value={paceStr}
                   onChange={(e) => setPaceStr(e.target.value)}
                   onBlur={savePace}
                   placeholder="es. 12"
-                  className="mt-0.5 w-24 rounded border border-[color:var(--hmr-border)] bg-[color:var(--hmr-elev)] px-2 py-1 text-sm"
+                  className="mt-0.5 w-20 rounded border border-[color:var(--hmr-border)] bg-[color:var(--hmr-elev)] px-1.5 py-1 text-xs"
                 />
               </label>
               {etaCp && (
-                <span className="text-xs text-[color:var(--hmr-muted)]">
-                  Stima arrivo CP: {etaCp.toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" })}
+                <span className="text-[10px] text-[color:var(--hmr-muted)]">
+                  ETA CP ~{etaCp.toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" })}
                 </span>
               )}
             </div>
           </div>
 
-          <div className="hmr-panel space-y-2 p-3">
-            <div className="text-xs font-semibold uppercase tracking-wide text-[color:var(--hmr-muted)]">
-              Servizi · prossimi 60 km
+          <div className="hmr-panel p-2">
+            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-[color:var(--hmr-muted)]">
+              Servizi · 60 km
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              {(
-                ["water", "restaurant", "lodging", "shop", "hut", "pharmacy"] as PoiCategory[]
-              ).map((cat) => {
+            <div className="-mx-1 flex gap-1.5 overflow-x-auto pb-1" style={{ WebkitOverflowScrolling: "touch" }}>
+              {(["water", "restaurant", "lodging", "shop", "hut", "pharmacy"] as PoiCategory[]).map((cat) => {
                 const n = data.next_by_category[cat] as (PoiRow & { ahead_km: number }) | undefined;
                 const meta = CATEGORY_META[cat];
                 return (
-                  <div key={cat} className="rounded-md bg-[color:var(--hmr-elev)] p-2 text-xs">
-                    <span className="text-[color:var(--hmr-muted)]">{meta.label}</span>
+                  <div
+                    key={cat}
+                    className="hmr-tap shrink-0 rounded-md bg-[color:var(--hmr-elev)] px-2.5 py-1.5 text-center text-[11px]"
+                  >
+                    <div className="text-[color:var(--hmr-muted)]">{meta.label}</div>
                     {n ? (
-                      <div className="font-medium">+{n.ahead_km.toFixed(1)} km</div>
+                      <div className="font-semibold tabular-nums">+{n.ahead_km.toFixed(1)}</div>
                     ) : (
                       <div className="text-[color:var(--hmr-faint)]">—</div>
                     )}
@@ -280,50 +286,46 @@ export default function RaceBriefPanel({
           </div>
 
           {chunk0 && (
-            <div className="hmr-panel space-y-3 p-4">
-              <div className="text-xs font-semibold uppercase tracking-wide text-[color:var(--hmr-muted)]">
-                Blocco corrente · km {chunk0.km_start.toFixed(0)}–{chunk0.km_end.toFixed(0)}
-              </div>
-              <div className="grid gap-2">
+            <details className="hmr-panel group p-2">
+              <summary className="cursor-pointer list-none text-[10px] font-semibold uppercase tracking-wide text-[color:var(--hmr-muted)] [&::-webkit-details-marker]:hidden">
+                Blocco km {chunk0.km_start.toFixed(0)}–{chunk0.km_end.toFixed(0)} · superficie
+              </summary>
+              <div className="mt-2 grid gap-2">
                 {pctBar("Asfalto", chunk0.surface_pct.asphalt, "#94a3b8")}
                 {pctBar("Sterrato", chunk0.surface_pct.gravel, "#ca8a04")}
                 {pctBar("Single", chunk0.surface_pct.single, "#16a34a")}
               </div>
               {chunk0.steep_unpaved && (
-                <p className="text-xs text-[color:var(--hmr-warn)]">
+                <p className="mt-2 text-xs text-[color:var(--hmr-warn)]">
                   Pendenza stimata su sterrato/sentiero (≥15%).
-                  {chunk0.steep_unpaved_max_grade_pct != null
-                    ? ` Max ~${chunk0.steep_unpaved_max_grade_pct}%.`
-                    : ""}
+                  {chunk0.steep_unpaved_max_grade_pct != null ? ` Max ~${chunk0.steep_unpaved_max_grade_pct}%.` : ""}
                 </p>
               )}
               {chunk0.hike_a_bike_hint && (
-                <p className="text-xs text-[color:var(--hmr-warn)]">Possibile hike-a-bike.</p>
+                <p className="mt-1 text-xs text-[color:var(--hmr-warn)]">Possibile hike-a-bike.</p>
               )}
-            </div>
+            </details>
           )}
 
-          <div className="hmr-panel space-y-2 p-3">
+          <div className="hmr-panel space-y-2 p-2">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-xs font-semibold uppercase tracking-wide text-[color:var(--hmr-muted)]">
-                Dopo · overview
-              </span>
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-[color:var(--hmr-muted)]">Overview</span>
               <span className="text-[10px] text-[color:var(--hmr-faint)]">
-                {data.overview_source === "llm" ? "Sintesi AI" : "Testo automatico"}
+                {data.overview_source === "llm" ? "AI" : "Auto"}
               </span>
             </div>
-            <p className="text-sm leading-relaxed text-[color:var(--hmr-text)]">{data.overview_text}</p>
+            <p className="text-xs leading-relaxed text-[color:var(--hmr-text)]">{data.overview_text}</p>
             <button
               type="button"
-              className="hmr-btn hmr-tap text-xs"
+              className="hmr-btn hmr-tap text-[10px]"
               onClick={() => {
                 void navigator.clipboard?.writeText(data.overview_text).catch(() => {});
               }}
             >
-              Copia overview
+              Copia
             </button>
             {data.overview_bullets_it.length > 1 && (
-              <ul className="list-inside list-disc text-xs text-[color:var(--hmr-muted)]">
+              <ul className="list-inside list-disc text-[11px] text-[color:var(--hmr-muted)]">
                 {data.overview_bullets_it.slice(1).map((b, i) => (
                   <li key={i}>{b}</li>
                 ))}

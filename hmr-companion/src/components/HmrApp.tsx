@@ -12,7 +12,7 @@ import type {
   TrackSurfaceSegmentRow,
 } from "@/lib/db";
 import type { StoredCoord } from "@/lib/track-coords";
-import type { MapillaryAlongItem, StreetViewAlongItem } from "@/lib/along-media-types";
+import type { StreetViewAlongItem } from "@/lib/along-media-types";
 import { CATEGORY_META, CATEGORY_ORDER } from "@/lib/categories";
 import {
   formatTerrainIt,
@@ -306,6 +306,7 @@ export default function HmrApp({
     setRaceActive(false);
   }, []);
   const [poiHarvestMode, setPoiHarvestMode] = useState(false);
+  const [poiHarvestBannerExpanded, setPoiHarvestBannerExpanded] = useState(true);
   const [poiHarvestBusy, setPoiHarvestBusy] = useState(false);
   const [poiHarvestMsg, setPoiHarvestMsg] = useState<string | null>(null);
   const [poiHarvestCategories, setPoiHarvestCategories] = useState<Set<PoiCategory>>(
@@ -313,9 +314,8 @@ export default function HmrApp({
   );
 
   const [streetViewPoints, setStreetViewPoints] = useState<StreetViewAlongItem[]>([]);
-  const [mapillaryPoints, setMapillaryPoints] = useState<MapillaryAlongItem[]>([]);
   const [showStreetViewLayer, setShowStreetViewLayer] = useState(true);
-  const [showMapillaryLayer, setShowMapillaryLayer] = useState(true);
+  const [flyToKmRange, setFlyToKmRange] = useState<{ lo: number; hi: number } | null>(null);
 
   const [surfaceSegmentsState, setSurfaceSegmentsState] = useState<TrackSurfaceSegmentRow[]>(
     () => initial.surfaceSegments ?? []
@@ -341,7 +341,7 @@ export default function HmrApp({
   const atKm = myAlongKm ?? manualKm;
   const atKmIsManual = myAlongKm == null && manualKm != null;
 
-  /** Centro ricerca Street View / Mapillary: segmento pin A–B, altrimenti pin, poi posizione. */
+  /** Centro ricerca Street View: segmento pin A–B, altrimenti pin, poi posizione. */
   const mediaAroundKm = useMemo(() => {
     if (pinAKm != null && pinBKm != null) return (pinAKm + pinBKm) / 2;
     if (pinAKm != null) return pinAKm;
@@ -704,6 +704,7 @@ export default function HmrApp({
       if (next) {
         setRacePlanMapPick(false);
         setPoiHarvestMsg(null);
+        setPoiHarvestBannerExpanded(true);
       } else {
         setPoiHarvestMsg(null);
       }
@@ -718,6 +719,36 @@ export default function HmrApp({
   }, [pinAKm, pinBKm]);
 
   const wideRail = useSyncExternalStore(subscribeHmrWideRail, getHmrWideRailSnapshot, () => false);
+
+  const scheduleClearFlyTo = useCallback(() => {
+    window.setTimeout(() => setFlyToKmRange(null), 950);
+  }, []);
+
+  const onSelectSegmentFromPlan = useCallback(
+    (kmStart: number, kmEnd: number) => {
+      const lo = Math.min(kmStart, kmEnd);
+      const hi = Math.max(kmStart, kmEnd);
+      setPins({ a: lo, b: hi });
+      setFlyToKmRange({ lo, hi });
+      scheduleClearFlyTo();
+      setSnap("peek");
+      setTab("dashboard");
+    },
+    [scheduleClearFlyTo]
+  );
+
+  const onJumpToKmFromRace = useCallback(
+    (km: number) => {
+      const pad = 4;
+      const lo = Math.max(0, km - pad);
+      const hi = Math.min(initial.length_km, km + pad);
+      setFlyToKmRange({ lo, hi });
+      scheduleClearFlyTo();
+      setSnap("peek");
+      setTab("dashboard");
+    },
+    [initial.length_km, scheduleClearFlyTo]
+  );
 
   const mapChromeProps = {
     trackName: initial.name,
@@ -777,9 +808,8 @@ export default function HmrApp({
           onAddPoiMapClick={addPoiMapPick ? onAddPoiMapClick : undefined}
           surfaceSegments={surfaceBands}
           streetViewPoints={streetViewPoints}
-          mapillaryPoints={mapillaryPoints}
           showStreetViewLayer={showStreetViewLayer}
-          showMapillaryLayer={showMapillaryLayer}
+          flyToKmRange={flyToKmRange}
         />
       </div>
 
@@ -788,17 +818,36 @@ export default function HmrApp({
           <MapChromeControls variant="overlay" {...mapChromeProps} />
         </header>
       )}
-      {poiHarvestMode && (
+      {poiHarvestMode &&
+        (poiHarvestBannerExpanded ? (
         <div
           className={`pointer-events-none absolute left-3 right-3 z-30 flex justify-center ${
             wideRail
               ? "top-[calc(var(--safe-top)+0.65rem)]"
-              : "top-[7.5rem]"
+              : "top-[calc(var(--safe-top)+5.25rem)] max-sm:top-[calc(var(--safe-top)+4.75rem)]"
           }`}
         >
-          <div className="pointer-events-auto max-w-lg rounded-none border border-emerald-500/40 bg-[color:var(--hmr-panel-bg)] px-3 py-2 text-center text-[11px] font-semibold leading-snug tracking-tight text-[color:var(--hmr-muted)] shadow-lg">
-            <span className="font-medium text-emerald-200/95">Cerca POI OSM</span>
-            {" — "}
+          <div className="pointer-events-auto flex max-h-[min(40vh,18rem)] max-w-lg flex-col overflow-hidden rounded-none border border-emerald-500/40 bg-[color:var(--hmr-panel-bg)] shadow-lg">
+            <div className="flex shrink-0 items-center justify-between gap-2 border-b border-emerald-500/25 px-2 py-1">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-emerald-200/95">OSM qui</span>
+              <div className="flex gap-1">
+                <button
+                  type="button"
+                  className="hmr-btn hmr-tap rounded-none px-2 py-0.5 text-[10px]"
+                  onClick={() => setPoiHarvestBannerExpanded(false)}
+                >
+                  Riduci
+                </button>
+                <button
+                  type="button"
+                  className="hmr-btn hmr-tap rounded-none px-2 py-0.5 text-[10px]"
+                  onClick={togglePoiHarvestMode}
+                >
+                  Esci
+                </button>
+              </div>
+            </div>
+            <div className="overflow-y-auto px-3 py-2 text-center text-[11px] font-semibold leading-snug tracking-tight text-[color:var(--hmr-muted)]">
             Scegli le categorie, poi clicca sulla mappa (cerchio fino ~2,5 km verso OSM; in DB fino ~15 km dal GPX). In lista alza «detour» se non vedi i nuovi POI.
             <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-[10px]">
               <button
@@ -820,7 +869,7 @@ export default function HmrApp({
                 Tutte
               </button>
             </div>
-            <div className="mt-2 flex flex-wrap justify-center gap-x-3 gap-y-1 text-left text-[10px]">
+            <div className="mt-2 flex max-h-24 flex-wrap justify-center gap-x-3 gap-y-1 overflow-y-auto text-left text-[10px]">
               {CATEGORY_ORDER.map((cat) => (
                 <label key={`harvest-${cat}`} className="flex cursor-pointer items-center gap-1">
                   <input
@@ -835,9 +884,34 @@ export default function HmrApp({
             {poiHarvestMsg && (
               <span className="mt-1 block text-[color:var(--hmr-faint)]">{poiHarvestMsg}</span>
             )}
+            </div>
           </div>
         </div>
-      )}
+        ) : (
+        <div
+          className={`pointer-events-none absolute left-3 z-30 flex max-w-[min(calc(100vw-1.5rem),20rem)] ${
+            wideRail ? "top-[calc(var(--safe-top)+0.65rem)]" : "top-[calc(var(--safe-top)+5.25rem)]"
+          }`}
+        >
+          <div className="pointer-events-auto flex w-full items-center gap-2 rounded-none border border-emerald-500/40 bg-[color:var(--hmr-panel-bg)] px-2 py-1.5 text-[10px] shadow-lg">
+            <span className="min-w-0 flex-1 truncate font-medium text-emerald-200/95">OSM · tap sulla mappa</span>
+            <button
+              type="button"
+              className="hmr-btn hmr-tap shrink-0 rounded-none px-2 py-0.5 text-[10px]"
+              onClick={() => setPoiHarvestBannerExpanded(true)}
+            >
+              Dettagli
+            </button>
+            <button
+              type="button"
+              className="hmr-btn hmr-tap shrink-0 rounded-none px-2 py-0.5 text-[10px]"
+              onClick={togglePoiHarvestMode}
+            >
+              Esci
+            </button>
+          </div>
+        </div>
+        ))}
 
       <OfflineStatus trackId={initial.id} bbox={initial.bbox} />
 
@@ -946,13 +1020,9 @@ export default function HmrApp({
               aroundDescription={mediaAroundDescription}
               lengthKm={initial.length_km}
               streetViewPoints={streetViewPoints}
-              mapillaryPoints={mapillaryPoints}
               onStreetViewLoaded={setStreetViewPoints}
-              onMapillaryLoaded={setMapillaryPoints}
               showStreetViewLayer={showStreetViewLayer}
-              showMapillaryLayer={showMapillaryLayer}
               onShowStreetViewChange={setShowStreetViewLayer}
-              onShowMapillaryChange={setShowMapillaryLayer}
             />
             <DashboardHere
               trackId={initial.id}
@@ -1012,6 +1082,7 @@ export default function HmrApp({
             onEndRace={endRace}
             racePlanName={selectedRacePlanName}
             racePlanUpcomingItems={raceBriefPlanUpcoming}
+            onJumpToKm={onJumpToKmFromRace}
           />
         )}
         {tab === "racePlan" && (
@@ -1029,6 +1100,7 @@ export default function HmrApp({
             onMapPickActiveChange={setRacePlanMapPick}
             pinAKm={pinAKm}
             pinBKm={pinBKm}
+            onSelectSegment={onSelectSegmentFromPlan}
           />
         )}
       </BottomSheet>
@@ -1093,6 +1165,7 @@ function MeasurementOverlay({
   hasSurfaceData: boolean;
   dockRight: boolean;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const deltaElev =
     measurement.elevA != null && measurement.elevB != null
       ? measurement.elevB - measurement.elevA
@@ -1102,12 +1175,48 @@ function MeasurementOverlay({
     : measurement.bIsCursor
       ? `cursore · km ${measurement.bKm.toFixed(1)}`
       : `km ${measurement.bKm.toFixed(1)}`;
-  const measurePadTop = dockRight
-    ? "pt-[calc(var(--safe-top)+0.5rem)]"
-    : "pt-[6.5rem] sm:pt-[5.5rem]";
+
+  const pillSummary =
+    measurement.bKm != null
+      ? `A→B · ${measurement.distKm.toFixed(2)} km · D+ ${Math.round(measurement.gainM)} m`
+      : `Misura · A km ${measurement.aKm.toFixed(1)}`;
+
+  const topPos = "top-[calc(var(--safe-top)+0.5rem)]";
+  const hPos = dockRight ? "right-3 left-auto items-end" : "left-3 items-stretch";
+
+  if (!expanded) {
+    return (
+      <div
+        className={`pointer-events-none absolute ${topPos} z-30 flex max-w-[min(96vw,20rem)] flex-col ${hPos}`}
+      >
+        <div
+          className={`pointer-events-auto flex items-center gap-1.5 rounded-full border border-[color:var(--hmr-border)]/90 bg-[color:var(--hmr-panel-bg)]/95 px-2.5 py-1.5 text-[10px] font-medium shadow-lg backdrop-blur-sm ${dockRight ? "flex-row-reverse" : ""}`}
+        >
+          <span className="min-w-0 flex-1 truncate tabular-nums text-[color:var(--hmr-text)]">{pillSummary}</span>
+          <button
+            type="button"
+            title="Espandi dettagli"
+            className="hmr-btn hmr-tap shrink-0 rounded-full px-2 py-0.5 text-[11px] leading-none"
+            onClick={() => setExpanded(true)}
+          >
+            ↑
+          </button>
+          <button
+            type="button"
+            title="Chiudi misura (reset pin)"
+            className="hmr-btn hmr-tap shrink-0 rounded-full px-2 py-0.5 text-[12px] leading-none"
+            onClick={onReset}
+          >
+            ×
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
-      className={`pointer-events-none absolute top-[calc(var(--safe-top)+0.5rem)] z-30 flex max-w-[min(92vw,22rem)] flex-col gap-2 ${dockRight ? "right-3 left-auto items-end" : "left-3 items-stretch"} ${measurePadTop}`}
+      className={`pointer-events-none absolute ${topPos} z-30 flex max-w-[min(92vw,22rem)] flex-col gap-2 ${dockRight ? "right-3 left-auto items-end" : "left-3 items-stretch"}`}
     >
       <div
         className={`pointer-events-auto hmr-panel px-3 py-2 text-xs shadow-lg ${dockRight ? "text-right" : ""}`}
@@ -1116,13 +1225,19 @@ function MeasurementOverlay({
           <span className="text-[10px] uppercase tracking-[0.2em] text-[color:var(--hmr-muted)]">
             Misura traccia
           </span>
-          <button
-            type="button"
-            onClick={onReset}
-            className="hmr-btn hmr-tap text-[10px]"
-          >
-            Reset pin
-          </button>
+          <div className="flex gap-1">
+            <button
+              type="button"
+              title="Comprimi"
+              className="hmr-btn hmr-tap text-[10px]"
+              onClick={() => setExpanded(false)}
+            >
+              ↓
+            </button>
+            <button type="button" onClick={onReset} className="hmr-btn hmr-tap text-[10px]">
+              Reset pin
+            </button>
+          </div>
         </div>
         <p className="mb-2 text-[9px] leading-snug text-[color:var(--hmr-faint)]">
           Profilo in basso: trascina sull&apos;altimetria per impostare l&apos;arco A–B; tocca per pin

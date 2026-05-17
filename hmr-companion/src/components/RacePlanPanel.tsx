@@ -24,6 +24,8 @@ type RacePlanPanelProps = {
   onMapPickActiveChange: (v: boolean) => void;
   pinAKm: number | null;
   pinBKm: number | null;
+  /** Zoom mappa su segmento e pin A–B (tappa / voce piano). */
+  onSelectSegment?: (kmStart: number, kmEnd: number) => void;
 };
 
 const emptyForm = () => ({
@@ -50,11 +52,13 @@ export default function RacePlanPanel({
   onMapPickActiveChange,
   pinAKm,
   pinBKm,
+  onSelectSegment,
 }: RacePlanPanelProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | "new" | null>("new");
   const [form, setForm] = useState(emptyForm);
+  const [focusedItemId, setFocusedItemId] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     const res = await fetch(`/api/track/${trackId}/race-plans`);
@@ -103,6 +107,11 @@ export default function RacePlanPanel({
     const h = estimateHoursBetween(coords, lo, hi, loadPace());
     setForm((f) => ({ ...f, est_hours: h > 0 ? h.toFixed(2) : "" }));
   }, [coords, form.km_start, form.km_end]);
+
+  const focusItemOnMap = (it: RacePlanItemRow) => {
+    setFocusedItemId(it.id);
+    onSelectSegment?.(it.km_start, it.km_end);
+  };
 
   const startEdit = (it: RacePlanItemRow) => {
     setEditingId(it.id);
@@ -254,6 +263,7 @@ export default function RacePlanPanel({
       if (!res.ok) throw new Error(data.error ?? "Errore");
       await reload();
       if (editingId === itemId) resetNewForm();
+      setFocusedItemId((cur) => (cur === itemId ? null : cur));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -274,6 +284,7 @@ export default function RacePlanPanel({
             const v = e.target.value;
             onSelectPlanId(v ? v : null);
             resetNewForm();
+            setFocusedItemId(null);
           }}
         >
           <option value="">—</option>
@@ -456,16 +467,27 @@ export default function RacePlanPanel({
                 </h3>
                 <ul className="space-y-1.5">
                   {stageItems.map((it, idx) => (
-                    <li
-                      key={`stage-${it.id}`}
-                      className="hmr-panel flex items-center justify-between px-3 py-1.5 text-xs"
-                    >
-                      <span className="truncate">
-                        Tappa {idx + 1}: {it.title || "Senza titolo"}
-                      </span>
-                      <span className="shrink-0 text-[color:var(--hmr-muted)]">
-                        {it.km_start.toFixed(1)}→{it.km_end.toFixed(1)}
-                      </span>
+                    <li key={`stage-${it.id}`}>
+                      <button
+                        type="button"
+                        onClick={() => focusItemOnMap(it)}
+                        className={`hmr-panel flex w-full cursor-pointer items-center justify-between px-3 py-1.5 text-left text-xs touch-manipulation ${
+                          focusedItemId === it.id ? "ring-1 ring-[color:var(--hmr-accent)]" : ""
+                        }`}
+                      >
+                        <span className="truncate">
+                          Tappa {idx + 1}: {it.title || "Senza titolo"}
+                        </span>
+                        <span className="shrink-0 text-[color:var(--hmr-muted)]">
+                          {it.km_start.toFixed(1)}→{it.km_end.toFixed(1)}
+                        </span>
+                      </button>
+                      {focusedItemId === it.id && (it.body || it.est_hours != null) && (
+                        <div className="mt-1 border border-[color:var(--hmr-border)]/60 bg-black/20 px-2 py-2 text-[11px] leading-snug text-[color:var(--hmr-muted)]">
+                          {it.est_hours != null && <p>Stima: ~{it.est_hours} h</p>}
+                          {it.body ? <p className="mt-1 whitespace-pre-wrap text-[color:var(--hmr-text)]">{it.body}</p> : null}
+                        </div>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -476,36 +498,51 @@ export default function RacePlanPanel({
             </h3>
             <ul className="space-y-2">
               {(activePlan?.items ?? []).map((it) => (
-                <li
-                  key={it.id}
-                  className="hmr-panel flex flex-col gap-1 px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between"
-                >
-                  <div className="min-w-0">
-                    <div className="font-medium">
-                      <span className="text-[color:var(--hmr-muted)]">{labelRacePlanItemKind(it.kind)}</span>{" "}
-                      {it.title || "(senza titolo)"}
-                    </div>
-                    <div className="text-xs text-[color:var(--hmr-muted)]">
-                      km {it.km_start.toFixed(1)}
-                      {Math.abs(it.km_end - it.km_start) >= 0.05 ? ` → ${it.km_end.toFixed(1)}` : ""}
-                      {it.est_hours != null ? ` · ~${it.est_hours} h` : ""}
-                      {it.avoid_night === 1 ? " · notte" : ""}
-                    </div>
-                    {it.body ? <p className="mt-1 line-clamp-2 text-xs text-[color:var(--hmr-faint)]">{it.body}</p> : null}
-                  </div>
-                  <div className="flex shrink-0 gap-2">
-                    <button type="button" className="hmr-btn hmr-tap text-xs" onClick={() => startEdit(it)}>
-                      Modifica
-                    </button>
+                <li key={it.id} className="space-y-1">
+                  <div
+                    className={`hmr-panel flex flex-col gap-1 px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between ${
+                      focusedItemId === it.id ? "ring-1 ring-[color:var(--hmr-accent)]" : ""
+                    }`}
+                  >
                     <button
                       type="button"
-                      className="hmr-btn hmr-tap text-xs"
-                      style={{ color: "var(--hmr-danger)" }}
-                      onClick={() => deleteItem(it.id)}
+                      className="min-w-0 flex-1 cursor-pointer touch-manipulation text-left"
+                      onClick={() => focusItemOnMap(it)}
                     >
-                      Elimina
+                      <div className="font-medium">
+                        <span className="text-[color:var(--hmr-muted)]">{labelRacePlanItemKind(it.kind)}</span>{" "}
+                        {it.title || "(senza titolo)"}
+                      </div>
+                      <div className="text-xs text-[color:var(--hmr-muted)]">
+                        km {it.km_start.toFixed(1)}
+                        {Math.abs(it.km_end - it.km_start) >= 0.05 ? ` → ${it.km_end.toFixed(1)}` : ""}
+                        {it.est_hours != null ? ` · ~${it.est_hours} h` : ""}
+                        {it.avoid_night === 1 ? " · notte" : ""}
+                      </div>
+                      {focusedItemId !== it.id && it.body ? (
+                        <p className="mt-1 line-clamp-2 text-xs text-[color:var(--hmr-faint)]">{it.body}</p>
+                      ) : null}
                     </button>
+                    <div className="flex shrink-0 gap-2">
+                      <button type="button" className="hmr-btn hmr-tap text-xs" onClick={() => startEdit(it)}>
+                        Modifica
+                      </button>
+                      <button
+                        type="button"
+                        className="hmr-btn hmr-tap text-xs"
+                        style={{ color: "var(--hmr-danger)" }}
+                        onClick={() => deleteItem(it.id)}
+                      >
+                        Elimina
+                      </button>
+                    </div>
                   </div>
+                  {focusedItemId === it.id && (
+                    <div className="border border-[color:var(--hmr-border)]/60 bg-black/20 px-3 py-2 text-xs leading-snug text-[color:var(--hmr-text)]">
+                      <p className="text-[10px] uppercase tracking-wide text-[color:var(--hmr-muted)]">Dettaglio · mappa</p>
+                      {it.body ? <p className="mt-1 whitespace-pre-wrap">{it.body}</p> : <p className="text-[color:var(--hmr-faint)]">Nessuna nota.</p>}
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>

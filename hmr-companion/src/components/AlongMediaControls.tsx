@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { MapillaryAlongItem, StreetViewAlongItem } from "@/lib/along-media-types";
+import type { StreetViewAlongItem } from "@/lib/along-media-types";
 
 type Props = {
   trackId: string;
@@ -11,13 +11,9 @@ type Props = {
   aroundDescription: string;
   lengthKm: number;
   streetViewPoints: StreetViewAlongItem[];
-  mapillaryPoints: MapillaryAlongItem[];
   onStreetViewLoaded: (items: StreetViewAlongItem[]) => void;
-  onMapillaryLoaded: (items: MapillaryAlongItem[]) => void;
   showStreetViewLayer: boolean;
-  showMapillaryLayer: boolean;
   onShowStreetViewChange: (v: boolean) => void;
-  onShowMapillaryChange: (v: boolean) => void;
 };
 
 export default function AlongMediaControls({
@@ -26,18 +22,12 @@ export default function AlongMediaControls({
   aroundDescription,
   lengthKm,
   streetViewPoints,
-  mapillaryPoints,
   onStreetViewLoaded,
-  onMapillaryLoaded,
   showStreetViewLayer,
-  showMapillaryLayer,
   onShowStreetViewChange,
-  onShowMapillaryChange,
 }: Props) {
   const [svLoading, setSvLoading] = useState(false);
-  const [mlyLoading, setMlyLoading] = useState(false);
   const [svMsg, setSvMsg] = useState<string | null>(null);
-  const [mlyMsg, setMlyMsg] = useState<string | null>(null);
 
   const mediaQuery = useCallback(() => {
     const half = 5;
@@ -128,45 +118,12 @@ export default function AlongMediaControls({
     };
   }, [trackId, streetViewQueryBase, onStreetViewLoaded]);
 
-  const loadMapillary = useCallback(async () => {
-    setMlyLoading(true);
-    setMlyMsg(null);
-    try {
-      const q = [mediaQuery(), "max_detour_m=150", "max_items=28"].filter(Boolean).join("&");
-      const r = await fetch(
-        `/api/track/${encodeURIComponent(trackId)}/mapillary?${q}`
-      );
-      const j = (await r.json()) as {
-        items?: MapillaryAlongItem[];
-        message?: string;
-        error?: string;
-        configured?: boolean;
-      };
-      if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
-      const items = Array.isArray(j.items) ? j.items : [];
-      onMapillaryLoaded(items);
-      if (j.configured === false && j.message) setMlyMsg(j.message);
-      else if (items.length === 0)
-        setMlyMsg(
-          j.configured === false
-            ? j.message ?? "Nessuna immagine."
-            : "Nessuna immagine Mapillary vicino al percorso."
-        );
-      else setMlyMsg(null);
-    } catch (e) {
-      setMlyMsg(e instanceof Error ? e.message : "Errore");
-      onMapillaryLoaded([]);
-    } finally {
-      setMlyLoading(false);
-    }
-  }, [trackId, onMapillaryLoaded, mediaQuery]);
-
   return (
     <div className="hmr-panel flex flex-col gap-3 p-3 text-sm">
       <div className="text-[color:var(--hmr-muted)] text-xs uppercase tracking-wide">
-        Foto e Street View lungo il percorso
+        Street View lungo il percorso
       </div>
-      <div className="flex flex-col gap-2 border-b border-[color:var(--hmr-border)] pb-3">
+      <div className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
@@ -222,40 +179,9 @@ export default function AlongMediaControls({
           {aroundKm == null && (
             <span> (riferimento ~km {(lengthKm / 2).toFixed(0)} sul server)</span>
           )}
-          . Meno chiamate a Google.
-        </p>
-      </div>
-      <div className="flex flex-col gap-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            className="hmr-btn hmr-tap text-xs"
-            disabled={mlyLoading}
-            onClick={loadMapillary}
-          >
-            {mlyLoading ? "Carico…" : "Cerca Mapillary"}
-          </button>
-          <label className="flex cursor-pointer items-center gap-1.5 text-xs text-[color:var(--hmr-muted)]">
-            <input
-              type="checkbox"
-              checked={showMapillaryLayer}
-              onChange={(e) => onShowMapillaryChange(e.target.checked)}
-              disabled={mapillaryPoints.length === 0}
-            />
-            Mostra in mappa
-          </label>
-          {mapillaryPoints.length > 0 && (
-            <span className="text-xs text-[color:var(--hmr-muted)]">
-              {mapillaryPoints.length} immagini
-            </span>
-          )}
-        </div>
-        {mlyMsg && <p className="text-xs text-[color:var(--hmr-warn)]">{mlyMsg}</p>}
-        <p className="text-[10px] leading-snug text-[color:var(--hmr-faint)]">
-          Street View richiede <code className="rounded bg-black/10 px-1">GOOGLE_MAPS_API_KEY</code>; i punti
-          si salvano in <code className="rounded bg-black/10 px-1">track_street_view_points</code>. Mapillary:{" "}
-          <code className="rounded bg-black/10 px-1">MAPILLARY_ACCESS_TOKEN</code> opzionale. Stesso tratto km;
-          centro da pin/GPS. Clic sui marker per aprire il viewer.
+          . Meno chiamate a Google. Serve <code className="rounded bg-black/10 px-1">GOOGLE_MAPS_API_KEY</code>; i
+          punti si salvano in <code className="rounded bg-black/10 px-1">track_street_view_points</code>. Clic sui
+          marker in mappa per aprire il viewer.
         </p>
       </div>
     </div>

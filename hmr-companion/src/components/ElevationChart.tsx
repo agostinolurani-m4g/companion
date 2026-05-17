@@ -168,7 +168,7 @@ function surfaceForKm(
 }
 
 const SURFACE_STROKE: Record<TrackSurfaceKind, string> = {
-  asphalt: "#0a0a0a",
+  asphalt: "#94a3b8",
   gravel: "#eab308",
   single: "#22c55e",
   unknown: "#64748b",

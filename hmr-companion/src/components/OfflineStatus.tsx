@@ -137,7 +137,7 @@ export default function OfflineStatus({ trackId, bbox }: Props) {
     reg.active.postMessage({
       type: "PREFETCH_TILES",
       bbox,
-      zooms: [12, 13, 14],
+      zooms: [11, 12, 13],
       maxTiles: 400,
     });
   }, [bbox]);
@@ -178,7 +178,7 @@ export default function OfflineStatus({ trackId, bbox }: Props) {
       {open && (
         <div className="hmr-panel mt-2 w-[min(20rem,calc(100vw-1.5rem))] space-y-2 rounded-none border border-[color:var(--hmr-border)]/80 p-3 text-xs font-semibold tracking-tight shadow-xl">
           <p className="text-[color:var(--hmr-muted)]">
-            Per la gara: con Wi‑Fi, tocca <strong>Prepara offline</strong> (API + tile OSM/Topo ~80–150 MB).
+            Per la gara: con Wi‑Fi, tocca <strong>Prepara offline</strong> (API + tile OSM/Topo ~60–100 MB).
             Poi installa l’app sulla schermata Home.
           </p>
           {!isStandalone && installPrompt && (
