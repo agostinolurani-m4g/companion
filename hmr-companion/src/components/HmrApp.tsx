@@ -1264,13 +1264,6 @@ export default function HmrApp({
             </button>
               </>
             )}
-            <button
-              type="button"
-              onClick={() => setSnap(snap === "full" ? "half" : "full")}
-              className="hmr-btn !min-h-0 !min-w-0 shrink-0 touch-manipulation px-2 py-0.5 text-[9px] leading-none"
-            >
-              {snap === "full" ? "↓" : "↑"}
-            </button>
           </div>
         }
       >

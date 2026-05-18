@@ -26,17 +26,33 @@ export type BottomSheetProps = {
   railNavVertical?: boolean;
 };
 
-/** Altezza foglio (mobile bottom): peek = linguetta compatta, half = contenuto senza mangiare metà mappa. */
-function sheetHeightStyle(snap: SheetSnap): CSSProperties {
+/** Spazio verticale libero sopra la fascia profilo (mobile). */
+function mobileSheetMaxHeight(reserveProfileStrip: boolean): string {
+  if (reserveProfileStrip) {
+    return "calc(100dvh - var(--safe-top) - var(--hmr-profile-strip) - var(--safe-bottom) - 0.35rem)";
+  }
+  return "calc(100dvh - var(--safe-top) - var(--safe-bottom) - 0.35rem)";
+}
+
+/** Altezza foglio (mobile): mai oltre il viewport; in espanso il contenuto scrolla. */
+function sheetHeightStyle(snap: SheetSnap, reserveProfileStrip: boolean): CSSProperties {
+  const maxH = mobileSheetMaxHeight(reserveProfileStrip);
   if (snap === "peek") {
     return {
       height: "max(6.25rem, calc(10vh + var(--safe-bottom)))",
+      maxHeight: maxH,
     };
   }
   if (snap === "half") {
-    return { height: "calc(30vh + var(--safe-bottom))" };
+    return {
+      height: `min(calc(36vh + var(--safe-bottom)), ${maxH})`,
+      maxHeight: maxH,
+    };
   }
-  return { height: "calc(86vh + var(--safe-bottom))" };
+  return {
+    height: maxH,
+    maxHeight: maxH,
+  };
 }
 
 /** Larghezza pannello sinistro (viewport largo / basso). */
@@ -67,8 +83,18 @@ export default function BottomSheet({
     if (snap === "peek") el.scrollTop = 0;
   }, [snap]);
 
-  const bottomHeightStyle = sheetHeightStyle(snap);
+  const bottomHeightStyle = sheetHeightStyle(snap, reserveProfileStrip);
   const leftWidth = snapToLeftWidth(snap);
+
+  const collapseSheet = () => {
+    if (snap === "full") onSnapChange("half");
+    else onSnapChange("peek");
+  };
+
+  const expandSheet = () => {
+    if (snap === "peek") onSnapChange("half");
+    else if (snap === "half") onSnapChange("full");
+  };
 
   const onGrabPointerDown = (e: React.PointerEvent) => {
     dragStart.current = railLeft ? e.clientX : e.clientY;
@@ -153,7 +179,7 @@ export default function BottomSheet({
   return (
     <div
       ref={rootRef}
-      className={`pointer-events-auto fixed inset-x-0 z-20 flex flex-col rounded-t-xl border-t border-[color:var(--hmr-border)] bg-[color:var(--hmr-surface)] shadow-[0_-20px_60px_rgba(0,0,0,0.5)] transition-[height] duration-200 ease-out ${
+      className={`pointer-events-auto fixed inset-x-0 z-20 flex min-h-0 flex-col overflow-hidden rounded-t-xl border-t border-[color:var(--hmr-border)] bg-[color:var(--hmr-surface)] shadow-[0_-20px_60px_rgba(0,0,0,0.5)] transition-[height] duration-200 ease-out ${
         reserveProfileStrip ? "bottom-[calc(var(--hmr-profile-strip)+var(--safe-bottom))]" : "bottom-0"
       }`}
       style={{
@@ -161,17 +187,48 @@ export default function BottomSheet({
         transform: dragDelta ? `translateY(${Math.max(0, dragDelta)}px)` : undefined,
       }}
     >
-      <div
-        className="hmr-grab flex flex-col items-center gap-1.5 px-3 pt-1.5 pb-0.5 select-none"
-        onPointerDown={onGrabPointerDown}
-        onPointerMove={onGrabPointerMove}
-        onPointerUp={onGrabPointerUp}
-        onPointerCancel={onGrabPointerUp}
-      >
-        <span className="h-1.5 w-12 rounded-full bg-[color:var(--hmr-border)]" />
-        <div className="flex w-full items-center justify-between gap-2">{header}</div>
+      <div className="flex min-h-0 shrink-0 flex-col border-b border-[color:var(--hmr-border)]/60 bg-[color:var(--hmr-surface)]">
+        <div
+          className="hmr-grab flex touch-none flex-col items-center gap-1 px-3 pt-1.5 pb-0.5 select-none"
+          onPointerDown={onGrabPointerDown}
+          onPointerMove={onGrabPointerMove}
+          onPointerUp={onGrabPointerUp}
+          onPointerCancel={onGrabPointerUp}
+        >
+          <span className="h-1.5 w-12 rounded-full bg-[color:var(--hmr-border)]" />
+        </div>
+        <div className="flex min-h-0 items-start gap-1 px-2 pb-1.5">
+          <div className="min-h-0 min-w-0 flex-1">{header}</div>
+          <div className="flex shrink-0 flex-col gap-0.5">
+            {snap !== "full" && (
+              <button
+                type="button"
+                title="Espandi pannello"
+                aria-label="Espandi pannello"
+                onClick={expandSheet}
+                className="hmr-btn hmr-tap !min-h-[2rem] !min-w-[2rem] touch-manipulation px-2 py-1 text-sm leading-none"
+              >
+                ↑
+              </button>
+            )}
+            {snap !== "peek" && (
+              <button
+                type="button"
+                title="Riduci pannello"
+                aria-label="Riduci pannello"
+                onClick={collapseSheet}
+                className="hmr-btn hmr-tap !min-h-[2rem] !min-w-[2rem] touch-manipulation px-2 py-1 text-sm leading-none"
+              >
+                ↓
+              </button>
+            )}
+          </div>
+        </div>
       </div>
-      <div ref={scrollRef} className="flex-1 overflow-y-auto overscroll-contain">
+      <div
+        ref={scrollRef}
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain [-webkit-overflow-scrolling:touch]"
+      >
         {children}
       </div>
     </div>
