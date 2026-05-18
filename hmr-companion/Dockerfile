@@ -12,6 +12,9 @@ RUN npm ci
 FROM node:20-bookworm-slim AS builder
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
+# NEXT_PUBLIC_* viene iniettato nel client al build (Windy Map Forecast).
+ARG NEXT_PUBLIC_WINDY_API_KEY
+ENV NEXT_PUBLIC_WINDY_API_KEY=$NEXT_PUBLIC_WINDY_API_KEY
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build

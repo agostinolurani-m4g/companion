@@ -141,11 +141,23 @@ export default function WindyMeteoMap({ trackId, lat, lng, zoom, mode }: Props) 
     return (
       <div className="flex h-[100dvh] flex-col items-center justify-center gap-3 bg-[color:var(--hmr-bg)] px-4 text-center text-sm text-[color:var(--hmr-muted)]">
         <p>
-          Manca <code className="text-[color:var(--hmr-text)]">NEXT_PUBLIC_WINDY_API_KEY</code> in{" "}
-          <code className="text-[color:var(--hmr-text)]">.env.local</code>.
+          Manca <code className="text-[color:var(--hmr-text)]">NEXT_PUBLIC_WINDY_API_KEY</code> nell&apos;ambiente
+          Next.
+        </p>
+        <p className="max-w-md text-xs leading-relaxed text-[color:var(--hmr-faint)]">
+          In <strong>locale</strong> (<code className="text-[color:var(--hmr-text)]">npm run dev</code>): aggiungi la
+          riga nella root dell&apos;app <code className="text-[color:var(--hmr-text)]">hmr-companion/.env</code> o{" "}
+          <code className="text-[color:var(--hmr-text)]">.env.local</code> — non in{" "}
+          <code className="text-[color:var(--hmr-text)]">deploy/.env</code> (quello lo usa solo Docker Compose).
+          Poi riavvia il dev server.
         </p>
         <p className="text-xs text-[color:var(--hmr-faint)]">
-          Crea una key gratuita su{" "}
+          In <strong>Docker</strong>: metti la key in <code className="text-[color:var(--hmr-text)]">deploy/.env</code>{" "}
+          e rifai <code className="text-[color:var(--hmr-text)]">docker compose build</code> (è una{" "}
+          <code className="text-[color:var(--hmr-text)]">NEXT_PUBLIC_*</code>).
+        </p>
+        <p className="text-xs text-[color:var(--hmr-faint)]">
+          Key gratuita:{" "}
           <a className="underline" href="https://api.windy.com/keys" target="_blank" rel="noreferrer">
             api.windy.com/keys
           </a>{" "}
