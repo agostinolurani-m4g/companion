@@ -29,6 +29,7 @@ import MapView from "./MapView";
 import AddPoiSheet from "./AddPoiSheet";
 import RacePlanPanel from "./RacePlanPanel";
 import StreetViewMapChrome from "./StreetViewMapChrome";
+import WindyOverlay, { type WindyMode } from "./WindyOverlay";
 import OfflineStatus from "./OfflineStatus";
 import RoadbookPanel from "./RoadbookPanel";
 import RaceBriefPanel from "./RaceBriefPanel";
@@ -101,6 +102,8 @@ function MapChromeControls({
   onStreetViewLoaded,
   showStreetViewLayer,
   onShowStreetViewChange,
+  windyActive,
+  onWindyToggle,
 }: {
   variant: "overlay" | "rail";
   trackName: string;
@@ -125,6 +128,8 @@ function MapChromeControls({
   onStreetViewLoaded: (items: StreetViewAlongItem[]) => void;
   showStreetViewLayer: boolean;
   onShowStreetViewChange: (v: boolean) => void;
+  windyActive: boolean;
+  onWindyToggle: () => void;
 }) {
   const popX = variant === "rail" ? "left-0" : "right-0";
   const infoBlockAlign = variant === "rail" ? "text-left" : "text-right";
@@ -222,6 +227,15 @@ function MapChromeControls({
               title="Clic sulla mappa: cerca su OpenStreetMap nel raggio (~450 m) le categorie selezionate nel pannello verde"
             >
               {poiHarvestBusy ? "OSM…" : "OSM qui"}
+            </button>
+            <button
+              type="button"
+              onClick={onWindyToggle}
+              className={`hmr-chip max-sm:!min-h-[26px] max-sm:!px-1.5 max-sm:!py-0 max-sm:!text-[8px] sm:min-h-0 sm:px-2 sm:py-0.5 sm:text-[9px] ${windyActive ? "hmr-chip-on" : "hmr-chip-off"}`}
+              aria-pressed={windyActive}
+              title="Mappa meteo Windy (radar / pioggia)"
+            >
+              Meteo
             </button>
             <StreetViewMapChrome
               trackId={streetViewTrackId}
@@ -339,6 +353,13 @@ export default function HmrApp({
 
   const [streetViewPoints, setStreetViewPoints] = useState<StreetViewAlongItem[]>([]);
   const [showStreetViewLayer, setShowStreetViewLayer] = useState(true);
+  const [windyActive, setWindyActive] = useState(false);
+  const [windyMode, setWindyMode] = useState<WindyMode>("radar");
+  const [mapViewport, setMapViewport] = useState<{
+    lat: number;
+    lng: number;
+    zoom: number;
+  } | null>(null);
   const [flyToKmRange, setFlyToKmRange] = useState<{ lo: number; hi: number } | null>(null);
 
   const [surfaceSegmentsState, setSurfaceSegmentsState] = useState<TrackSurfaceSegmentRow[]>(
@@ -763,6 +784,18 @@ export default function HmrApp({
     [initial.length_km, scheduleClearFlyTo]
   );
 
+  const onMapViewportChange = useCallback((v: { lat: number; lng: number; zoom: number }) => {
+    setMapViewport(v);
+  }, []);
+
+  const trackCenter = useMemo(
+    () => ({
+      lat: (initial.bbox.minLat + initial.bbox.maxLat) / 2,
+      lon: (initial.bbox.minLng + initial.bbox.maxLng) / 2,
+    }),
+    [initial.bbox]
+  );
+
   const mapChromeProps = {
     trackName: initial.name,
     lengthKm: initial.length_km,
@@ -786,6 +819,8 @@ export default function HmrApp({
     onStreetViewLoaded: setStreetViewPoints,
     showStreetViewLayer,
     onShowStreetViewChange: setShowStreetViewLayer,
+    windyActive,
+    onWindyToggle: () => setWindyActive((v) => !v),
   };
 
   return (
@@ -829,8 +864,21 @@ export default function HmrApp({
           streetViewPoints={streetViewPoints}
           showStreetViewLayer={showStreetViewLayer}
           flyToKmRange={flyToKmRange}
+          onViewportChange={onMapViewportChange}
         />
       </div>
+
+      {windyActive && (
+        <WindyOverlay
+          trackId={initial.id}
+          lat={mapViewport?.lat ?? trackCenter.lat}
+          lng={mapViewport?.lng ?? trackCenter.lon}
+          zoom={mapViewport?.zoom ?? 7}
+          mode={windyMode}
+          onModeChange={setWindyMode}
+          onClose={() => setWindyActive(false)}
+        />
+      )}
 
       {!wideRail && (
         <header className="pointer-events-none absolute inset-x-0 top-0 z-30 flex flex-col gap-2 px-3 pt-[calc(var(--safe-top)+0.5rem)]">

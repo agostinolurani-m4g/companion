@@ -51,6 +51,8 @@ export type MapViewProps = {
   showStreetViewLayer?: boolean;
   /** Zoom mappa su un tratto km (es. tappa piano gara); il parent può azzerare dopo ~1s. */
   flyToKmRange?: { lo: number; hi: number } | null;
+  /** Centro e zoom attuali (es. per aprire Windy sulla stessa vista). */
+  onViewportChange?: (v: { lat: number; lng: number; zoom: number }) => void;
 };
 
 const HOVER_SNAP_PX = 20;
@@ -116,6 +118,7 @@ export default function MapView(props: MapViewProps) {
   const onTrackKmPickRef = useRef(props.onTrackKmPick);
   const onPoiHarvestClickRef = useRef(props.onPoiHarvestClick);
   const onAddPoiMapClickRef = useRef(props.onAddPoiMapClick);
+  const onViewportChangeRef = useRef(props.onViewportChange);
   const lastHoverEmitRef = useRef<number | null>(null);
   const hoverRafRef = useRef<number | null>(null);
 
@@ -140,6 +143,9 @@ export default function MapView(props: MapViewProps) {
   useEffect(() => {
     onAddPoiMapClickRef.current = props.onAddPoiMapClick;
   }, [props.onAddPoiMapClick]);
+  useEffect(() => {
+    onViewportChangeRef.current = props.onViewportChange;
+  }, [props.onViewportChange]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -236,6 +242,19 @@ export default function MapView(props: MapViewProps) {
       attributionControl: false,
     });
     mapRef.current = map;
+
+    const emitViewport = () => {
+      const cb = onViewportChangeRef.current;
+      if (!cb) return;
+      try {
+        const c = map.getCenter();
+        cb({ lat: c.lat, lng: c.lng, zoom: map.getZoom() });
+      } catch {
+        /* mappa non pronta */
+      }
+    };
+    map.on("moveend", emitViewport);
+
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
     map.addControl(
@@ -870,6 +889,7 @@ export default function MapView(props: MapViewProps) {
     });
 
     return () => {
+      map.off("moveend", emitViewport);
       window.clearInterval(pollId);
       resizeObserver?.disconnect();
       if (hoverRafRef.current != null) {
