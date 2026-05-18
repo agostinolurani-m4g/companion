@@ -47,7 +47,8 @@ export default async function RacePage() {
   return (
     <HmrApp
       sessionEmail={sessionEmail}
-      initialTab="race"
+      initialTab="nextPoi"
+      initialRaceActive
       initial={{
         id: track.id,
         name: track.name,

@@ -101,10 +101,21 @@ function initSchema(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_sections_track ON notable_sections(track_id, km_start);
 
+    CREATE TABLE IF NOT EXISTS course_bridges (
+      id TEXT PRIMARY KEY,
+      track_id TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      lat REAL NOT NULL,
+      lng REAL NOT NULL,
+      along_km REAL NOT NULL,
+      description_en TEXT NOT NULL DEFAULT ''
+    );
+    CREATE INDEX IF NOT EXISTS idx_bridges_track ON course_bridges(track_id, along_km);
+
     CREATE TABLE IF NOT EXISTS pois (
       id TEXT PRIMARY KEY,
       track_id TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
-      category TEXT NOT NULL,           -- water|hut|lodging|shop|restaurant|pharmacy|atm|bus
+      category TEXT NOT NULL,           -- water|hut|lodging|campsite|shop|restaurant|pharmacy|atm|bus
       sub_kind TEXT,
       name TEXT,
       lat REAL NOT NULL,
@@ -119,7 +130,8 @@ function initSchema(db: Database.Database): void {
       image_url TEXT,
       osm_type TEXT,
       osm_id INTEGER,
-      created_at INTEGER NOT NULL
+      created_at INTEGER NOT NULL,
+      race_visible INTEGER NOT NULL DEFAULT 1
     );
     CREATE INDEX IF NOT EXISTS idx_pois_track_category ON pois(track_id, category);
     CREATE INDEX IF NOT EXISTS idx_pois_track_along ON pois(track_id, along_km);
@@ -211,6 +223,24 @@ function initSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_auth_sessions_email ON auth_sessions(email, created_at DESC);
   `);
   migrateTracksElevProfileScales(db);
+  migrateNotableSectionsDescriptionEn(db);
+  migratePoisRaceVisible(db);
+  migratePoisCampsiteCategory(db);
+}
+
+function migratePoisRaceVisible(db: Database.Database): void {
+  const cols = db.prepare(`PRAGMA table_info(pois)`).all() as { name: string }[];
+  const names = new Set(cols.map((c) => c.name));
+  if (!names.has("race_visible")) {
+    db.exec(`ALTER TABLE pois ADD COLUMN race_visible INTEGER NOT NULL DEFAULT 1`);
+  }
+}
+
+/** OSM camp_site era in lodging; ora categoria dedicata. */
+function migratePoisCampsiteCategory(db: Database.Database): void {
+  db.prepare(
+    `UPDATE pois SET category = 'campsite' WHERE category = 'lodging' AND sub_kind = 'camp_site'`
+  ).run();
 }
 
 /** Allinea D+/D- misurati sui vertici salvati a quelli ITRA sui trkpt grezzi (ingest). */
@@ -225,6 +255,16 @@ function migrateTracksElevProfileScales(db: Database.Database): void {
   if (!names.has("elev_profile_loss_scale")) {
     db.exec(
       `ALTER TABLE tracks ADD COLUMN elev_profile_loss_scale REAL NOT NULL DEFAULT 1`
+    );
+  }
+}
+
+function migrateNotableSectionsDescriptionEn(db: Database.Database): void {
+  const cols = db.prepare(`PRAGMA table_info(notable_sections)`).all() as { name: string }[];
+  const names = new Set(cols.map((c) => c.name));
+  if (!names.has("description_en")) {
+    db.exec(
+      `ALTER TABLE notable_sections ADD COLUMN description_en TEXT NOT NULL DEFAULT ''`
     );
   }
 }
@@ -291,6 +331,7 @@ export type PoiCategory =
   | "water"
   | "hut"
   | "lodging"
+  | "campsite"
   | "shop"
   | "restaurant"
   | "pharmacy"
@@ -346,6 +387,17 @@ export type NotableSectionRow = {
   km_end: number;
   severity: "info" | "warn" | "hard";
   description: string;
+  description_en: string;
+};
+
+export type CourseBridgeRow = {
+  id: string;
+  track_id: string;
+  name: string;
+  lat: number;
+  lng: number;
+  along_km: number;
+  description_en: string;
 };
 
 export type PoiRow = {
@@ -367,6 +419,8 @@ export type PoiRow = {
   osm_type: string | null;
   osm_id: number | null;
   created_at: number;
+  /** 1 = mostrato in Race mode se filtri lo includono; 0 = solo Planner. */
+  race_visible: number;
 };
 
 export type { RacePlanItemKind } from "./race-plan-types";
@@ -610,6 +664,12 @@ export function listNotableSections(trackId: string): NotableSectionRow[] {
   return getDb()
     .prepare(`SELECT * FROM notable_sections WHERE track_id = ? ORDER BY km_start ASC`)
     .all(trackId) as NotableSectionRow[];
+}
+
+export function listCourseBridges(trackId: string): CourseBridgeRow[] {
+  return getDb()
+    .prepare(`SELECT * FROM course_bridges WHERE track_id = ? ORDER BY along_km ASC`)
+    .all(trackId) as CourseBridgeRow[];
 }
 
 export function listPois(

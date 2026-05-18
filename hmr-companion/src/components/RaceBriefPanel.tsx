@@ -265,7 +265,17 @@ export default function RaceBriefPanel({
               Servizi · 60 km
             </div>
             <div className="-mx-1 flex gap-1.5 overflow-x-auto pb-1" style={{ WebkitOverflowScrolling: "touch" }}>
-              {(["water", "restaurant", "lodging", "shop", "hut", "pharmacy"] as PoiCategory[]).map((cat) => {
+              {(
+                [
+                  "water",
+                  "restaurant",
+                  "lodging",
+                  "campsite",
+                  "shop",
+                  "hut",
+                  "pharmacy",
+                ] as PoiCategory[]
+              ).map((cat) => {
                 const n = data.next_by_category[cat] as (PoiRow & { ahead_km: number }) | undefined;
                 const meta = CATEGORY_META[cat];
                 return (

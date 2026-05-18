@@ -12,6 +12,7 @@ const VALID_CATEGORIES: ReadonlyArray<PoiCategory> = [
   "water",
   "hut",
   "lodging",
+  "campsite",
   "shop",
   "restaurant",
   "pharmacy",
@@ -28,6 +29,14 @@ type CreateBody = {
   notes?: string;
   lat?: number;
   lng?: number;
+  race_visible?: number;
+};
+
+type PatchBody = {
+  name?: string;
+  category?: string;
+  description?: string | null;
+  race_visible?: number;
 };
 
 export async function POST(req: Request, ctx: Ctx) {
@@ -38,7 +47,15 @@ export async function POST(req: Request, ctx: Ctx) {
   }
 
   const body = (await req.json().catch(() => ({}))) as CreateBody;
-  const { mapsUrl, category, name: overrideName, notes, lat: manualLat, lng: manualLng } = body;
+  const {
+    mapsUrl,
+    category,
+    name: overrideName,
+    notes,
+    lat: manualLat,
+    lng: manualLng,
+    race_visible: rawRv,
+  } = body;
 
   if (!category || !(VALID_CATEGORIES as readonly string[]).includes(category)) {
     return NextResponse.json(
@@ -46,6 +63,9 @@ export async function POST(req: Request, ctx: Ctx) {
       { status: 400 }
     );
   }
+
+  const raceVisible =
+    rawRv === 0 ? 0 : 1;
 
   let lat: number;
   let lng: number;
@@ -106,8 +126,8 @@ export async function POST(req: Request, ctx: Ctx) {
   const now = Date.now();
   const db = getDb();
   db.prepare(
-    `INSERT INTO pois (id, track_id, category, sub_kind, name, lat, lng, along_km, detour_m, elev_delta_m, phone, website, opening_hours, description, image_url, osm_type, osm_id, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO pois (id, track_id, category, sub_kind, name, lat, lng, along_km, detour_m, elev_delta_m, phone, website, opening_hours, description, image_url, osm_type, osm_id, created_at, race_visible)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     poiId,
     trackId,
@@ -126,8 +146,54 @@ export async function POST(req: Request, ctx: Ctx) {
     null,
     "user",
     null,
-    now
+    now,
+    raceVisible
   );
+
+  const row = db.prepare("SELECT * FROM pois WHERE id = ?").get(poiId) as PoiRow;
+  return NextResponse.json({ poi: row });
+}
+
+export async function PATCH(req: Request, ctx: Ctx) {
+  const { id: trackId } = await ctx.params;
+  const url = new URL(req.url);
+  const poiId = url.searchParams.get("poiId");
+  if (!poiId) {
+    return NextResponse.json({ error: "poiId mancante" }, { status: 400 });
+  }
+
+  const body = (await req.json().catch(() => ({}))) as PatchBody;
+  const db = getDb();
+  const existing = db
+    .prepare(`SELECT * FROM pois WHERE id = ? AND track_id = ?`)
+    .get(poiId, trackId) as PoiRow | undefined;
+  if (!existing) {
+    return NextResponse.json({ error: "POI non trovato" }, { status: 404 });
+  }
+
+  const name =
+    typeof body.name === "string" ? (body.name.trim() || null) : existing.name;
+  const description =
+    body.description === undefined
+      ? existing.description
+      : body.description === null
+        ? null
+        : String(body.description).trim() || null;
+
+  let category: PoiCategory = existing.category;
+  if (body.category != null) {
+    if (!(VALID_CATEGORIES as readonly string[]).includes(body.category)) {
+      return NextResponse.json({ error: "categoria non valida" }, { status: 400 });
+    }
+    category = body.category as PoiCategory;
+  }
+
+  const raceVisible =
+    body.race_visible === 0 ? 0 : body.race_visible === 1 ? 1 : existing.race_visible ?? 1;
+
+  db.prepare(
+    `UPDATE pois SET name = ?, category = ?, description = ?, race_visible = ? WHERE id = ? AND track_id = ?`
+  ).run(name, category, description, raceVisible, poiId, trackId);
 
   const row = db.prepare("SELECT * FROM pois WHERE id = ?").get(poiId) as PoiRow;
   return NextResponse.json({ poi: row });

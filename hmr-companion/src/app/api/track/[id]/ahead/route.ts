@@ -9,7 +9,17 @@ import {
 
 export const runtime = "nodejs";
 
-const CATS: PoiCategory[] = ["water", "hut", "lodging", "shop", "restaurant", "pharmacy", "atm", "bus"];
+const CATS: PoiCategory[] = [
+  "water",
+  "hut",
+  "lodging",
+  "campsite",
+  "shop",
+  "restaurant",
+  "pharmacy",
+  "atm",
+  "bus",
+];
 
 type Ctx = { params: Promise<{ id: string }> };
 

@@ -21,6 +21,7 @@ const MAX_DETOUR_M: Record<PoiCategory, number> = {
   water: 800,
   hut: 1500,
   lodging: 3000,
+  campsite: 3000,
   shop: 2000,
   restaurant: 2000,
   pharmacy: 3000,
@@ -63,8 +64,8 @@ export function insertOsmNodesForTrack(
   const insert = db.prepare(
     `INSERT OR IGNORE INTO pois
       (id, track_id, category, sub_kind, name, lat, lng, along_km, detour_m, elev_delta_m,
-       phone, website, opening_hours, description, image_url, osm_type, osm_id, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       phone, website, opening_hours, description, image_url, osm_type, osm_id, created_at, race_visible)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
   );
 
   let inserted = 0;

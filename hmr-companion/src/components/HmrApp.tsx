@@ -1,8 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import type { ReactNode } from "react";
 import type {
   CheckpointRow,
+  CourseBridgeRow,
   NotableSectionRow,
   PoiCategory,
   PoiRow,
@@ -33,8 +35,11 @@ import WindyOverlay, { type WindyMode } from "./WindyOverlay";
 import OfflineStatus from "./OfflineStatus";
 import RoadbookPanel from "./RoadbookPanel";
 import RaceBriefPanel from "./RaceBriefPanel";
+import NextPoiList from "./NextPoiList";
+import PoiEditSheet from "./PoiEditSheet";
+import { categoriesForRacePreset, type RacePoiFilterPreset } from "@/lib/poi-race-filter";
 
-export type HmrTab = "dashboard" | "race" | "roadbook" | "list" | "checkpoints" | "racePlan";
+export type HmrTab = "dashboard" | "nextPoi" | "race" | "roadbook" | "list" | "checkpoints" | "racePlan";
 type Tab = HmrTab;
 
 export type TrackPayload = {
@@ -51,6 +56,7 @@ export type TrackPayload = {
   checkpoints: CheckpointRow[];
   resupply: ResupplyRow[];
   sections: NotableSectionRow[];
+  bridges: CourseBridgeRow[];
   pois: PoiRow[];
   /** Piani gara (annotazioni); default [] se assente. */
   racePlans?: RacePlanWithItems[];
@@ -104,6 +110,9 @@ function MapChromeControls({
   onShowStreetViewChange,
   windyActive,
   onWindyToggle,
+  layout = "full",
+  onExitRaceLayout,
+  raceFilterRow,
 }: {
   variant: "overlay" | "rail";
   trackName: string;
@@ -130,6 +139,9 @@ function MapChromeControls({
   onShowStreetViewChange: (v: boolean) => void;
   windyActive: boolean;
   onWindyToggle: () => void;
+  layout?: "full" | "race";
+  onExitRaceLayout?: () => void;
+  raceFilterRow?: ReactNode;
 }) {
   const popX = variant === "rail" ? "left-0" : "right-0";
   const infoBlockAlign = variant === "rail" ? "text-left" : "text-right";
@@ -196,6 +208,28 @@ function MapChromeControls({
       <div
         className={`pointer-events-auto flex max-w-[100vw] flex-wrap items-start ${variant === "rail" ? "gap-1" : "gap-1 sm:gap-1.5"}`}
       >
+            {layout === "race" ? (
+              <>
+                <button
+                  type="button"
+                  onClick={onWindyToggle}
+                  className={`hmr-chip max-sm:!min-h-[26px] max-sm:!px-1.5 max-sm:!py-0 max-sm:!text-[8px] sm:min-h-0 sm:px-2 sm:py-0.5 sm:text-[9px] ${windyActive ? "hmr-chip-on" : "hmr-chip-off"}`}
+                  aria-pressed={windyActive}
+                  title="Mappa meteo Windy (satellite / pioggia GFS)"
+                >
+                  Meteo
+                </button>
+                <button
+                  type="button"
+                  onClick={onExitRaceLayout}
+                  className="hmr-chip hmr-chip-off max-sm:!min-h-[26px] max-sm:!px-1.5 max-sm:!py-0 max-sm:!text-[8px] sm:min-h-0 sm:px-2 sm:py-0.5 sm:text-[9px]"
+                >
+                  Modalità Planner
+                </button>
+                {raceFilterRow}
+              </>
+            ) : (
+              <>
             <button
               type="button"
               onClick={onToggleSections}
@@ -269,28 +303,44 @@ function MapChromeControls({
                 </div>
               </div>
             </details>
+              </>
+            )}
           </div>
     </>
   );
+}
+
+function normalizePoiRow(p: PoiRow): PoiRow {
+  return {
+    ...p,
+    race_visible: p.race_visible === 0 ? 0 : 1,
+  };
 }
 
 export default function HmrApp({
   initial,
   sessionEmail,
   initialTab = "dashboard",
+  initialRaceActive = false,
 }: {
   initial: TrackPayload;
   sessionEmail: string;
   initialTab?: Tab;
+  /** Es. `/race`: attiva subito modalità Race su mobile stretto. */
+  initialRaceActive?: boolean;
 }) {
   const [tab, setTab] = useState<Tab>(initialTab);
   const [snap, setSnap] = useState<SheetSnap>("peek");
   const [visibleCategories, setVisibleCategories] = useState<Set<PoiCategory>>(
     () => new Set<PoiCategory>(CATEGORY_ORDER)
   );
+  const [racePoiFilter, setRacePoiFilter] = useState<RacePoiFilterPreset>("all");
+  const [racePreviewOpen, setRacePreviewOpen] = useState(false);
+  const [poiEditTarget, setPoiEditTarget] = useState<PoiRow | null>(null);
+  const [isNarrow, setIsNarrow] = useState(false);
   const [showResupply, setShowResupply] = useState(true);
   const [showSections, setShowSections] = useState(true);
-  const [pois, setPois] = useState<PoiRow[]>(initial.pois);
+  const [pois, setPois] = useState<PoiRow[]>(() => initial.pois.map(normalizePoiRow));
   const [racePlans, setRacePlans] = useState<RacePlanWithItems[]>(() => initial.racePlans ?? []);
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(() => {
     const plans = initial.racePlans ?? [];
@@ -313,6 +363,24 @@ export default function HmrApp({
     } catch {
       setRaceActive(false);
     }
+  }, []);
+
+  useEffect(() => {
+    if (!initialRaceActive) return;
+    try {
+      localStorage.setItem("hmr_race_active", "1");
+    } catch {
+      /* ignore */
+    }
+    setRaceActive(true);
+  }, [initialRaceActive]);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px)");
+    const fn = () => setIsNarrow(mq.matches);
+    fn();
+    mq.addEventListener("change", fn);
+    return () => mq.removeEventListener("change", fn);
   }, []);
 
   useEffect(() => {
@@ -386,6 +454,25 @@ export default function HmrApp({
   const atKm = myAlongKm ?? manualKm;
   const atKmIsManual = myAlongKm == null && manualKm != null;
 
+  const isRaceLayout = raceActive && isNarrow;
+
+  const categoriesForMap = useMemo(
+    () => (isRaceLayout ? categoriesForRacePreset(racePoiFilter) : visibleCategories),
+    [isRaceLayout, racePoiFilter, visibleCategories]
+  );
+
+  const mapPois = useMemo(() => {
+    if (!isRaceLayout) return pois;
+    return pois.filter((p) => p.race_visible !== 0);
+  }, [isRaceLayout, pois]);
+
+  useEffect(() => {
+    if (!isRaceLayout) return;
+    if (tab !== "dashboard" && tab !== "nextPoi") {
+      setTab("dashboard");
+    }
+  }, [isRaceLayout, tab]);
+
   /** Centro ricerca Street View: segmento pin A–B, altrimenti pin, poi posizione. */
   const mediaAroundKm = useMemo(() => {
     if (pinAKm != null && pinBKm != null) return (pinAKm + pinBKm) / 2;
@@ -404,6 +491,17 @@ export default function HmrApp({
       return { a: km, b: null };
     });
   }, []);
+
+  const handleMapPin = useCallback(
+    (km: number) => {
+      if (isRaceLayout && atKm != null) {
+        setPins({ a: atKm, b: km });
+        return;
+      }
+      onPin(km);
+    },
+    [isRaceLayout, atKm, onPin]
+  );
 
   const onPinRangeFromChart = useCallback(
     (loKm: number, hiKm: number) => {
@@ -466,7 +564,7 @@ export default function HmrApp({
     return racePlans.find((p) => p.id === selectedPlanId)?.items ?? [];
   }, [racePlans, selectedPlanId]);
 
-  const showPlanOnMap = tab === "racePlan" || showRacePlanOverlay;
+  const showPlanOnMap = !isRaceLayout && (tab === "racePlan" || showRacePlanOverlay);
 
   const overlayRacePlanItems = useMemo(
     () => (showPlanOnMap ? itemsForSelectedPlan : []),
@@ -570,6 +668,24 @@ export default function HmrApp({
 
   const [selectedPoi, setSelectedPoi] = useState<PoiRow | null>(null);
 
+  const handleSelectPoiFromMap = useCallback(
+    (p: PoiRow) => {
+      if (isRaceLayout) {
+        if (atKm != null) setPins({ a: atKm, b: p.along_km });
+        else setPins({ a: p.along_km, b: null });
+        return;
+      }
+      setSelectedPoi(p);
+    },
+    [isRaceLayout, atKm]
+  );
+
+  const onPoiPatched = useCallback((row: PoiRow) => {
+    setPois((prev) => prev.map((x) => (x.id === row.id ? normalizePoiRow(row) : x)));
+    setPoiEditTarget(null);
+    setSelectedPoi((cur) => (cur?.id === row.id ? normalizePoiRow(row) : cur));
+  }, []);
+
   const elevProfileScaleOpts = useMemo(
     () => ({
       profileGainScale: initial.elev_profile_gain_scale,
@@ -607,22 +723,74 @@ export default function HmrApp({
     };
   }, [pinAKm, pinBKm, hoverKm, initial.coords, elevProfileScaleOpts]);
 
+  const segmentRaceExtras = useMemo(() => {
+    if (!isRaceLayout || pinAKm == null || pinBKm == null) return null;
+    const lo = Math.min(pinAKm, pinBKm);
+    const hi = Math.max(pinAKm, pinBKm);
+    const span = hi - lo;
+    if (span <= 0.02) return null;
+    let unpaved = 0;
+    for (const s of surfaceBands) {
+      const a = Math.max(lo, s.km_start);
+      const b = Math.min(hi, s.km_end);
+      if (b > a && (s.surface === "gravel" || s.surface === "single")) unpaved += b - a;
+    }
+    const intermediatePois = mapPois
+      .filter((p) => p.along_km > lo + 1e-6 && p.along_km < hi - 1e-6)
+      .sort((a, b) => a.along_km - b.along_km)
+      .slice(0, 14);
+    return { unpavedPct: (unpaved / span) * 100, intermediatePois };
+  }, [isRaceLayout, pinAKm, pinBKm, surfaceBands, mapPois]);
+
   const hoverElev = useMemo(() => {
     if (hoverKm == null) return null;
     return coordAtKm(initial.coords, hoverKm)?.elev ?? null;
   }, [hoverKm, initial.coords]);
 
-  const tabButtons = useMemo(
-    () =>
-      [
-        { id: "dashboard" as Tab, label: "Qui e ora" },
-        { id: "race" as Tab, label: "Gara" },
-        { id: "roadbook" as Tab, label: "Roadbook" },
-        { id: "list" as Tab, label: `Lista (${pois.length})` },
-        { id: "checkpoints" as Tab, label: "Checkpoint" },
-        { id: "racePlan" as Tab, label: "Piano gara" },
-      ] as const,
-    [pois.length]
+  const tabButtons = useMemo(() => {
+    if (isRaceLayout) {
+      return [
+        { id: "dashboard" as Tab, label: "Qui" },
+        { id: "nextPoi" as Tab, label: "Prossimi POI" },
+      ] as const;
+    }
+    return [
+      { id: "dashboard" as Tab, label: "Qui e ora" },
+      { id: "race" as Tab, label: "Gara" },
+      { id: "roadbook" as Tab, label: "Roadbook" },
+      { id: "list" as Tab, label: `Lista (${pois.length})` },
+      { id: "checkpoints" as Tab, label: "Checkpoint" },
+      { id: "racePlan" as Tab, label: "Piano gara" },
+    ] as const;
+  }, [isRaceLayout, pois.length]);
+
+  const raceFilterChips = useMemo(
+    () => (
+      <>
+        {(
+          [
+            ["water", "Acqua"],
+            ["food", "Cibo"],
+            ["sleep", "Dormire"],
+            ["campsite", "Camp"],
+            ["services", "Servizi"],
+            ["all", "Tutto"],
+          ] as const
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setRacePoiFilter(key)}
+            className={`hmr-chip max-sm:!min-h-[26px] max-sm:!px-1.5 max-sm:!py-0 max-sm:!text-[8px] sm:min-h-0 sm:px-2 sm:py-0.5 sm:text-[9px] ${
+              racePoiFilter === key ? "hmr-chip-on" : "hmr-chip-off"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </>
+    ),
+    [racePoiFilter]
   );
 
   const openAddSheet = useCallback(() => {
@@ -650,7 +818,7 @@ export default function HmrApp({
 
   const onPoiAdded = useCallback((poi: PoiRow) => {
     setPois((prev) =>
-      [...prev, poi].sort((a, b) => a.along_km - b.along_km)
+      [...prev, normalizePoiRow(poi)].sort((a, b) => a.along_km - b.along_km)
     );
     setVisibleCategories((prev) => {
       if (prev.has(poi.category)) return prev;
@@ -821,6 +989,13 @@ export default function HmrApp({
     onShowStreetViewChange: setShowStreetViewLayer,
     windyActive,
     onWindyToggle: () => setWindyActive((v) => !v),
+    ...(isRaceLayout
+      ? {
+          layout: "race" as const,
+          onExitRaceLayout: endRace,
+          raceFilterRow: raceFilterChips,
+        }
+      : { layout: "full" as const }),
   };
 
   return (
@@ -835,18 +1010,19 @@ export default function HmrApp({
           checkpoints={initial.checkpoints}
           resupply={initial.resupply}
           sections={initial.sections}
-          pois={pois}
-          visibleCategories={visibleCategories}
-          showResupply={showResupply}
-          showSections={showSections}
+          bridges={initial.bridges ?? []}
+          pois={mapPois}
+          visibleCategories={categoriesForMap}
+          showResupply={!isRaceLayout && showResupply}
+          showSections={!isRaceLayout && showSections}
           myAlongKm={atKm}
           myPosition={myPosition}
           hoverKm={hoverKm}
           pinAKm={pinAKm}
           pinBKm={pinBKm}
           onHoverKm={setHoverKm}
-          onPin={onPin}
-          onSelectPoi={(p) => setSelectedPoi(p)}
+          onPin={handleMapPin}
+          onSelectPoi={handleSelectPoiFromMap}
           racePlanItems={overlayRacePlanItems}
           trackClickMode={
             addPoiMapPick
@@ -858,11 +1034,11 @@ export default function HmrApp({
                   : "measure"
           }
           onTrackKmPick={onTrackKmPick}
-          onPoiHarvestClick={poiHarvestMode ? onPoiHarvestClick : undefined}
+          onPoiHarvestClick={poiHarvestMode && !isRaceLayout ? onPoiHarvestClick : undefined}
           onAddPoiMapClick={addPoiMapPick ? onAddPoiMapClick : undefined}
           surfaceSegments={surfaceBands}
           streetViewPoints={streetViewPoints}
-          showStreetViewLayer={showStreetViewLayer}
+          showStreetViewLayer={!isRaceLayout && showStreetViewLayer}
           flyToKmRange={flyToKmRange}
           onViewportChange={onMapViewportChange}
         />
@@ -885,7 +1061,7 @@ export default function HmrApp({
           <MapChromeControls variant="overlay" {...mapChromeProps} />
         </header>
       )}
-      {poiHarvestMode &&
+      {poiHarvestMode && !isRaceLayout &&
         (poiHarvestBannerExpanded ? (
         <div
           className={`pointer-events-none absolute left-3 right-3 z-30 flex justify-center ${
@@ -984,6 +1160,7 @@ export default function HmrApp({
 
       {measurement && (
         <MeasurementOverlay
+          key={isRaceLayout ? `race-${pinAKm}-${pinBKm}` : "planner-measure"}
           measurement={measurement}
           trackLengthKm={initial.length_km}
           hoverKm={hoverKm}
@@ -993,6 +1170,8 @@ export default function HmrApp({
           hoverTerrainLabel={hoverTerrainLabel}
           hasSurfaceData={surfaceBands.length > 0}
           dockRight={wideRail}
+          measureVariant={isRaceLayout ? "race" : "default"}
+          segmentRaceExtras={segmentRaceExtras}
         />
       )}
 
@@ -1010,7 +1189,7 @@ export default function HmrApp({
             pinAKm={pinAKm}
             pinBKm={pinBKm}
             onHoverKm={setHoverKm}
-            onPinKm={onPin}
+            onPinKm={handleMapPin}
             onPinRange={onPinRangeFromChart}
             raceItems={elevationRaceItems}
             surfaceBands={surfaceBands}
@@ -1029,9 +1208,14 @@ export default function HmrApp({
         onSnapChange={setSnap}
         railTop={wideRail ? <MapChromeControls variant="rail" {...mapChromeProps} /> : undefined}
         reserveProfileStrip={!wideRail}
+        railNavVertical={wideRail && !isRaceLayout}
         header={
-          <div className="flex w-full min-w-0 items-center gap-0.5">
-            <nav className="flex min-w-0 flex-1 flex-wrap gap-0.5">
+          <div
+            className={`flex w-full min-w-0 items-center gap-0.5 ${wideRail && !isRaceLayout ? "flex-col items-stretch" : ""}`}
+          >
+            <nav
+              className={`flex min-w-0 flex-1 gap-0.5 ${wideRail && !isRaceLayout ? "flex-col" : "flex-wrap"}`}
+            >
               {tabButtons.map((t) => (
                 <button
                   key={t.id}
@@ -1048,6 +1232,8 @@ export default function HmrApp({
                 </button>
               ))}
             </nav>
+            {!isRaceLayout && (
+              <>
             <button
               type="button"
               title={
@@ -1071,6 +1257,15 @@ export default function HmrApp({
             </button>
             <button
               type="button"
+              className="hmr-chip hmr-chip-off shrink-0 px-2 py-0.5 text-[9px] font-medium leading-tight"
+              onClick={() => setRacePreviewOpen(true)}
+            >
+              Anteprima Race
+            </button>
+              </>
+            )}
+            <button
+              type="button"
               onClick={() => setSnap(snap === "full" ? "half" : "full")}
               className="hmr-btn !min-h-0 !min-w-0 shrink-0 touch-manipulation px-2 py-0.5 text-[9px] leading-none"
             >
@@ -1081,6 +1276,17 @@ export default function HmrApp({
       >
         {tab === "dashboard" && (
           <>
+            {isNarrow && !raceActive && (
+              <div className="flex flex-wrap gap-2 border-b border-[color:var(--hmr-border)]/50 px-3 py-2">
+                <button
+                  type="button"
+                  className="hmr-btn hmr-btn-accent hmr-tap text-xs font-semibold"
+                  onClick={startRace}
+                >
+                  Inizia gara (Race mobile)
+                </button>
+              </div>
+            )}
             <DashboardHere
               trackId={initial.id}
               lengthKm={initial.length_km}
@@ -1108,6 +1314,7 @@ export default function HmrApp({
         )}
         {tab === "list" && (
           <PoiList
+            trackId={initial.id}
             pois={pois}
             resupply={initial.resupply}
             atKm={atKm}
@@ -1117,6 +1324,7 @@ export default function HmrApp({
             showResupply={showResupply}
             onToggleResupply={() => setShowResupply((v) => !v)}
             onSelectPoi={(p) => setSelectedPoi(p)}
+            onPoiUpdated={onPoiPatched}
           />
         )}
         {tab === "checkpoints" && (
@@ -1129,7 +1337,18 @@ export default function HmrApp({
         {tab === "roadbook" && (
           <RoadbookPanel trackId={initial.id} lengthKm={initial.length_km} />
         )}
-        {tab === "race" && (
+        {tab === "nextPoi" && (
+          <NextPoiList
+            pois={mapPois}
+            coords={initial.coords}
+            atKm={atKm}
+            lengthKm={initial.length_km}
+            elevProfileGainScale={initial.elev_profile_gain_scale}
+            elevProfileLossScale={initial.elev_profile_loss_scale}
+            onSelectPoi={handleSelectPoiFromMap}
+          />
+        )}
+        {tab === "race" && !isRaceLayout && (
           <RaceBriefPanel
             trackId={initial.id}
             lengthKm={initial.length_km}
@@ -1167,11 +1386,50 @@ export default function HmrApp({
           poi={selectedPoi}
           trackId={initial.id}
           onClose={() => setSelectedPoi(null)}
+          onEdit={() => setPoiEditTarget(selectedPoi)}
           onDeleted={(id) => {
             onPoiDeleted(id);
             setSelectedPoi(null);
           }}
         />
+      )}
+
+      {poiEditTarget && (
+        <PoiEditSheet
+          trackId={initial.id}
+          poi={poiEditTarget}
+          onClose={() => setPoiEditTarget(null)}
+          onSaved={onPoiPatched}
+        />
+      )}
+
+      {racePreviewOpen && (
+        <div
+          className="pointer-events-auto absolute inset-0 z-[38] flex flex-col bg-black/55 pt-[calc(var(--safe-top)+3.5rem)]"
+          onClick={() => setRacePreviewOpen(false)}
+        >
+          <div
+            className="mx-3 mb-[calc(var(--hmr-profile-strip)+var(--safe-bottom)+0.5rem)] flex max-h-[min(70vh,32rem)] min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-[color:var(--hmr-border)] bg-[color:var(--hmr-surface)] shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex shrink-0 items-center justify-between border-b border-[color:var(--hmr-border)]/60 px-3 py-2 text-xs font-semibold">
+              <span>Anteprima Race</span>
+              <button type="button" className="hmr-btn hmr-tap text-xs" onClick={() => setRacePreviewOpen(false)}>
+                Chiudi
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <NextPoiList
+                pois={pois.filter((p) => p.race_visible !== 0 && categoriesForMap.has(p.category))}
+                coords={initial.coords}
+                atKm={atKm}
+                lengthKm={initial.length_km}
+                elevProfileGainScale={initial.elev_profile_gain_scale}
+                elevProfileLossScale={initial.elev_profile_loss_scale}
+              />
+            </div>
+          </div>
+        </div>
       )}
 
       {showAddSheet && (
@@ -1211,6 +1469,8 @@ function MeasurementOverlay({
   hoverTerrainLabel,
   hasSurfaceData,
   dockRight,
+  measureVariant = "default",
+  segmentRaceExtras = null,
 }: {
   measurement: MeasurementInfo;
   trackLengthKm: number;
@@ -1221,9 +1481,11 @@ function MeasurementOverlay({
   hoverTerrainLabel: string | null;
   hasSurfaceData: boolean;
   dockRight: boolean;
+  measureVariant?: "default" | "race";
+  segmentRaceExtras?: { unpavedPct: number; intermediatePois: PoiRow[] } | null;
 }) {
   type Fold = "micro" | "pill" | "expanded";
-  const [fold, setFold] = useState<Fold>("pill");
+  const [fold, setFold] = useState<Fold>(measureVariant === "race" ? "micro" : "pill");
 
   const deltaElev =
     measurement.elevA != null && measurement.elevB != null
@@ -1274,7 +1536,9 @@ function MeasurementOverlay({
         </div>
       </div>
       <p className="mb-1.5 text-[8px] leading-snug text-[color:var(--hmr-faint)] sm:text-[9px]">
-        Profilo: trascina per A–B; tap per pin.
+        {measureVariant === "race"
+          ? "Tap su traccia o POI: tratto da qui al punto."
+          : "Profilo: trascina per A–B; tap per pin."}
       </p>
       {measurement.bKm == null && (
         <p className="mb-1.5 text-[9px] text-[color:var(--hmr-muted)]">Cursore + tap per B.</p>
@@ -1314,9 +1578,34 @@ function MeasurementOverlay({
               +{Math.round(measurement.gainM)} m
             </div>
           </div>
+          {segmentRaceExtras && (
+            <div className="mt-1.5 border-t border-[color:var(--hmr-border)]/60 pt-1.5 text-[9px] leading-snug text-[color:var(--hmr-muted)]">
+              <div>
+                Sterrato/sentiero ~{" "}
+                <span className="font-semibold text-[color:var(--hmr-text)]">
+                  {segmentRaceExtras.unpavedPct.toFixed(0)}%
+                </span>
+              </div>
+              {segmentRaceExtras.intermediatePois.length > 0 && (
+                <div className="mt-1">
+                  <div className="text-[8px] uppercase tracking-wide text-[color:var(--hmr-faint)]">
+                    POI sul tratto
+                  </div>
+                  <ul className="mt-0.5 list-inside list-disc">
+                    {segmentRaceExtras.intermediatePois.map((p) => (
+                      <li key={p.id} className="truncate">
+                        {CATEGORY_META[p.category].short} ·{" "}
+                        {p.name ?? CATEGORY_META[p.category].label}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
         </>
       )}
-      {hoverKm != null && (
+      {hoverKm != null && measureVariant !== "race" && (
         <p className="mt-1.5 border-t border-[color:var(--hmr-border)]/60 pt-1.5 text-[9px] text-[color:var(--hmr-muted)]">
           Cursore km {hoverKm.toFixed(1)}
           {hoverElev != null ? ` · ${Math.round(hoverElev)} m` : ""}
@@ -1328,6 +1617,7 @@ function MeasurementOverlay({
           )}
         </p>
       )}
+      {measureVariant !== "race" && (
       <div className="mt-1.5 border-t border-[color:var(--hmr-border)]/60 pt-1.5 md:hidden">
         <p className="mb-1 text-[8px] text-[color:var(--hmr-muted)]">Parziale rapido</p>
         <div className="flex flex-wrap gap-1">
@@ -1350,6 +1640,7 @@ function MeasurementOverlay({
           ))}
         </div>
       </div>
+      )}
     </div>
   );
 
@@ -1484,11 +1775,13 @@ function PoiModal({
   trackId,
   onClose,
   onDeleted,
+  onEdit,
 }: {
   poi: PoiRow;
   trackId: string;
   onClose: () => void;
   onDeleted?: (id: string) => void;
+  onEdit?: () => void;
 }) {
   const isUser = poi.osm_type === "user";
   const [deleting, setDeleting] = useState(false);
@@ -1544,6 +1837,8 @@ function PoiModal({
             </h4>
             <p className="text-xs text-[color:var(--hmr-muted)]">
               {poi.category} · km {poi.along_km.toFixed(1)} · +{poi.detour_m} m dalla traccia
+              {" · "}
+              Race: {(poi.race_visible ?? 1) === 1 ? "visibile" : "nascosto"}
             </p>
           </div>
           <button type="button" onClick={onClose} className="hmr-btn hmr-tap text-xs">
@@ -1557,6 +1852,11 @@ function PoiModal({
           </p>
         )}
         <div className="flex flex-wrap gap-2">
+          {onEdit && (
+            <button type="button" onClick={onEdit} className="hmr-btn hmr-tap text-xs">
+              Modifica
+            </button>
+          )}
           <a
             href={gmapsHref}
             target="_blank"

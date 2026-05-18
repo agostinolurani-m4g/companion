@@ -6,6 +6,7 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type {
   CheckpointRow,
+  CourseBridgeRow,
   NotableSectionRow,
   PoiCategory,
   PoiRow,
@@ -24,6 +25,7 @@ export type MapViewProps = {
   checkpoints: CheckpointRow[];
   resupply: ResupplyRow[];
   sections: NotableSectionRow[];
+  bridges: CourseBridgeRow[];
   pois: PoiRow[];
   visibleCategories: Set<PoiCategory>;
   showResupply: boolean;
@@ -62,6 +64,8 @@ const INTERACTIVE_LAYERS = [
   "checkpoints-core",
   "checkpoints-halo",
   "sections-line",
+  "sections-danger-circle",
+  "bridges-circle",
   "resupply-circle",
   "streetview-circle",
 ];
@@ -229,6 +233,27 @@ export default function MapView(props: MapViewProps) {
     return out;
   }, [props.sections, props.coords]);
 
+  const sectionPointFeatures = useMemo(() => {
+    const out: GeoJSON.Feature<GeoJSON.Point>[] = [];
+    for (const s of props.sections) {
+      const midKm = (s.km_start + s.km_end) / 2;
+      const c = coordAtKm(props.coords, midKm);
+      if (c) {
+        out.push({
+          type: "Feature",
+          properties: {
+            id: s.id,
+            label: s.label,
+            severity: s.severity,
+            description_en: (s as NotableSectionRow).description_en ?? s.description,
+          },
+          geometry: { type: "Point", coordinates: [c.lng, c.lat] },
+        });
+      }
+    }
+    return out;
+  }, [props.sections, props.coords]);
+
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
     const map = new maplibregl.Map({
@@ -356,6 +381,56 @@ export default function MapView(props: MapViewProps) {
         },
         layout: { "line-cap": "round", "line-join": "round" },
       });
+      map.addSource("sections-points", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+      map.addLayer({
+        id: "sections-danger-circle",
+        type: "circle",
+        source: "sections-points",
+        paint: {
+          "circle-radius": 11,
+          "circle-color": [
+            "match",
+            ["get", "severity"],
+            "hard", "#f87171",
+            "warn", "#fbbf24",
+            "#38bdf8",
+          ],
+          "circle-stroke-color": "#0b1221",
+          "circle-stroke-width": 1.8,
+          "circle-opacity": 0.95,
+        },
+      });
+      map.addLayer({
+        id: "sections-danger-label",
+        type: "symbol",
+        source: "sections-points",
+        layout: {
+          "text-field": "!",
+          "text-size": 14,
+          "text-font": ["Open Sans Semibold", "Arial Unicode MS Regular"],
+          "text-allow-overlap": true,
+          "text-ignore-placement": true,
+          "text-offset": [0, 0.05],
+        },
+        paint: {
+          "text-color": "#0b1221",
+          "text-halo-color": "#ffffff",
+          "text-halo-width": 0.5,
+        },
+      });
+      map.addSource("bridges", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+      map.addLayer({
+        id: "bridges-circle",
+        type: "circle",
+        source: "bridges",
+        paint: {
+          "circle-radius": 10,
+          "circle-color": "#22d3ee",
+          "circle-stroke-color": "#0b1221",
+          "circle-stroke-width": 1.8,
+          "circle-opacity": 0.95,
+        },
+      });
       map.addSource("kmMarkers", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
       map.addLayer({
         id: "kmMarkers-circle",
@@ -411,6 +486,8 @@ export default function MapView(props: MapViewProps) {
             CATEGORY_META.hut.color,
             "lodging",
             CATEGORY_META.lodging.color,
+            "campsite",
+            CATEGORY_META.campsite.color,
             "shop",
             CATEGORY_META.shop.color,
             "restaurant",
@@ -867,6 +944,49 @@ export default function MapView(props: MapViewProps) {
           )
           .addTo(map);
       });
+      map.on("click", "sections-danger-circle", (e) => {
+        const f = e.features?.[0] as MapGeoJSONFeature | undefined;
+        if (!f) return;
+        const label = (f.properties as { label?: string }).label ?? "";
+        const descEn = (f.properties as { description_en?: string }).description_en ?? "";
+        const severity = (f.properties as { severity?: string }).severity ?? "info";
+        const badge =
+          severity === "hard"
+            ? `<span style="background:#f87171;color:#fff;padding:1px 6px;border-radius:4px;font-size:10px">HARD</span>`
+            : severity === "warn"
+              ? `<span style="background:#fbbf24;color:#0b1221;padding:1px 6px;border-radius:4px;font-size:10px">WARN</span>`
+              : "";
+        new maplibregl.Popup({ closeButton: true, offset: 12 })
+          .setLngLat(e.lngLat)
+          .setHTML(
+            `<div style="font: 12px/1.4 ui-sans-serif, system-ui; color:#0b1221; max-width: 240px">
+              <div style="font-weight:700; margin-bottom:5px">${escapeHtml(label)} ${badge}</div>
+              <div>${escapeHtml(descEn)}</div>
+            </div>`
+          )
+          .addTo(map);
+      });
+      map.on("mouseenter", "sections-danger-circle", () => (map.getCanvas().style.cursor = "help"));
+      map.on("mouseleave", "sections-danger-circle", () => (map.getCanvas().style.cursor = ""));
+      map.on("click", "bridges-circle", (e) => {
+        const f = e.features?.[0] as MapGeoJSONFeature | undefined;
+        if (!f) return;
+        const name = (f.properties as { name?: string }).name ?? "";
+        const desc = (f.properties as { description_en?: string }).description_en ?? "";
+        new maplibregl.Popup({ closeButton: true, offset: 12 })
+          .setLngLat(e.lngLat)
+          .setHTML(
+            `<div style="font: 12px/1.4 ui-sans-serif, system-ui; color:#0b1221; max-width: 240px">
+              <div style="font-weight:700; margin-bottom:5px">
+                <span style="color:#0891b2">Bridge</span> · ${escapeHtml(name)}
+              </div>
+              <div>${escapeHtml(desc)}</div>
+            </div>`
+          )
+          .addTo(map);
+      });
+      map.on("mouseenter", "bridges-circle", () => (map.getCanvas().style.cursor = "pointer"));
+      map.on("mouseleave", "bridges-circle", () => (map.getCanvas().style.cursor = ""));
       map.on("click", "checkpoints-core", (e) => {
         const f = e.features?.[0] as MapGeoJSONFeature | undefined;
         if (!f) return;
@@ -937,6 +1057,39 @@ export default function MapView(props: MapViewProps) {
         : { type: "FeatureCollection", features: [] }
     );
   }, [sectionFeatures, props.showSections]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !readyRef.current) return;
+    const src = map.getSource("sections-points") as maplibregl.GeoJSONSource | undefined;
+    src?.setData(
+      props.showSections
+        ? { type: "FeatureCollection", features: sectionPointFeatures }
+        : { type: "FeatureCollection", features: [] }
+    );
+  }, [sectionPointFeatures, props.showSections]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !readyRef.current) return;
+    const src = map.getSource("bridges") as maplibregl.GeoJSONSource | undefined;
+    src?.setData(
+      props.showSections
+        ? {
+            type: "FeatureCollection",
+            features: props.bridges.map((b) => ({
+              type: "Feature" as const,
+              properties: {
+                id: b.id,
+                name: b.name,
+                description_en: b.description_en,
+              },
+              geometry: { type: "Point" as const, coordinates: [b.lng, b.lat] },
+            })),
+          }
+        : { type: "FeatureCollection", features: [] }
+    );
+  }, [props.bridges, props.showSections]);
 
   useEffect(() => {
     const map = mapRef.current;

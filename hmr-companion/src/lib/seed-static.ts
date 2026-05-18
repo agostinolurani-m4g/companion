@@ -104,6 +104,9 @@ export type StaticResupplySeed = {
   along_km: number;
   leg_km: number | null;
   notes: string;
+  /** Se presenti, ingest proietta sulla traccia e ricava `along_km` (GPX FINAL). */
+  lat?: number;
+  lng?: number;
 };
 
 /** Tabella resupply ufficiale (Race Manual pag. 7). */
@@ -122,7 +125,25 @@ export const STATIC_RESUPPLY: StaticResupplySeed[] = [
   },
   { id: "r-konitsa", name: "Konitsa", along_km: 267, leg_km: 29, notes: "Shops, restaurants, hotels." },
   { id: "r-klidonia", name: "Klidonia", along_km: 279, leg_km: 12, notes: "Petrol station shop." },
+  {
+    id: "r-aristi",
+    name: "Aristi",
+    along_km: 0,
+    leg_km: null,
+    notes: "Hotels (GPX FINAL).",
+    lat: 39.93456,
+    lng: 20.67135,
+  },
   { id: "r-monodendri", name: "Monodendri", along_km: 314, leg_km: 35, notes: "Restaurants and hotels." },
+  {
+    id: "r-vitsa",
+    name: "Vitsa",
+    along_km: 0,
+    leg_km: null,
+    notes: "Lodging and shops (GPX FINAL).",
+    lat: 39.87365356384967,
+    lng: 20.751893022973945,
+  },
   { id: "r-kipoi", name: "Kipoi", along_km: 323, leg_km: 9, notes: "Shop and restaurant." },
   { id: "r-metsovo", name: "Metsovo", along_km: 406, leg_km: 83, notes: "Hotels, restaurants & shops." },
   { id: "r-syrrako", name: "Syrrako", along_km: 458, leg_km: 52, notes: "Hotels, restaurants." },
@@ -139,6 +160,15 @@ export const STATIC_RESUPPLY: StaticResupplySeed[] = [
   { id: "r-raptopoulou", name: "Raptopoulou", along_km: 615, leg_km: 48, notes: "Restaurants & shops." },
   { id: "r-limeri", name: "Limeri", along_km: 638, leg_km: 23, notes: "Restaurants & coffee shops." },
   { id: "r-krentis", name: "Krentis", along_km: 660, leg_km: 22, notes: "Petrol station shop." },
+  {
+    id: "r-hotel-makkas",
+    name: "Hotel Makkas",
+    along_km: 0,
+    leg_km: null,
+    notes: "Friendly hotel that have hosted riders in the past.",
+    lat: 39.000049972702556,
+    lng: 21.61845636264573,
+  },
   { id: "r-agia-triada", name: "Agia Triada", along_km: 704, leg_km: 44, notes: "Hotel." },
   {
     id: "r-karpenissi",
@@ -171,6 +201,7 @@ export type StaticSectionSeed = {
   km_end: number;
   severity: "info" | "warn" | "hard";
   description: string;
+  description_en: string;
 };
 
 /** "Toughest Sections & Notable Difficulties" (Race Manual pag. 8). */
@@ -183,6 +214,8 @@ export const STATIC_SECTIONS: StaticSectionSeed[] = [
     severity: "hard",
     description:
       "Grande salita ripida, meteo esposto e notoriamente brutto. Track a tratti difficile da seguire.",
+    description_en:
+      "Steep climb to an exposed summit with notoriously bad weather. Track difficult to follow in places.",
   },
   {
     id: "sec-smolikas",
@@ -192,6 +225,8 @@ export const STATIC_SECTIONS: StaticSectionSeed[] = [
     severity: "hard",
     description:
       "~9 km di hike in salita, poi uno dei singletrack più belli della Grecia in discesa — vero mountain bike.",
+    description_en:
+      "~9 km steep hike on foot to the summit, then one of Greece's finest singletrack descents — true mountain-bike terrain.",
   },
   {
     id: "sec-steep-hike-298",
@@ -200,6 +235,7 @@ export const STATIC_SECTIONS: StaticSectionSeed[] = [
     km_end: 300,
     severity: "warn",
     description: "Hike ripido breve, traccia quasi invisibile.",
+    description_en: "Short steep hike, track almost invisible on the ground.",
   },
   {
     id: "sec-stone-path-317",
@@ -208,23 +244,46 @@ export const STATIC_SECTIONS: StaticSectionSeed[] = [
     km_end: 319,
     severity: "warn",
     description: "Mulattiera lastricata: tecnica in discesa, hike in salita, scivolosa se bagnata.",
+    description_en: "Stone paved mule path: technical descent, hike uphill, very slippery when wet.",
+  },
+  {
+    id: "sec-vikos-gorge",
+    label: "Vikos Gorge",
+    km_start: 300,
+    km_end: 310,
+    severity: "hard",
+    description: "Salita ripida a Vikos, traccia quasi assente; vista obbligatoria sul gorge.",
+    description_en:
+      "Steep hike to the top of Vikos Gorge — trail almost non-existent. Mandatory viewpoint into the gorge.",
+  },
+  {
+    id: "sec-washed-out-cp2",
+    label: "Washed out roads after CP2",
+    km_start: 486,
+    km_end: 492,
+    severity: "warn",
+    description: "Strade danneggiate / franate subito dopo CP2.",
+    description_en: "Several washed-out and badly damaged road sections just after CP2.",
   },
   {
     id: "sec-post-cp2-high",
-    label: "High mountains dopo CP2",
+    label: "High mountains after CP2",
     km_start: 484,
     km_end: 510,
     severity: "hard",
     description:
       "Montagne alte, strade ripide e a tratti danneggiate. Se il tempo peggiora non è facile.",
+    description_en:
+      "High mountain terrain with steep and partially damaged roads. Gets serious if weather deteriorates.",
   },
   {
     id: "sec-steep-hike-673",
-    label: "Steep hike dal ponte alla main road",
+    label: "Steep hike to main road",
     km_start: 673,
     km_end: 678,
     severity: "warn",
     description: "Salita ripida a piedi da ponte fino alla strada principale.",
+    description_en: "Steep hike on foot from the bridge up to the main road.",
   },
   {
     id: "sec-karpenisi-climb",
@@ -233,6 +292,7 @@ export const STATIC_SECTIONS: StaticSectionSeed[] = [
     km_end: 718,
     severity: "warn",
     description: "Lunga salita asfaltata di accesso a Karpenisi (CP3).",
+    description_en: "Long tarmac climb up to Karpenisi (CP3).",
   },
   {
     id: "sec-kaliakoudas",
@@ -241,6 +301,7 @@ export const STATIC_SECTIONS: StaticSectionSeed[] = [
     km_end: 780,
     severity: "hard",
     description: "Grande salita e discesa sopra il passo Diaselo Kaliakoudas.",
+    description_en: "Big climb and descent over the Diaselo Kaliakoudas pass.",
   },
   {
     id: "sec-final-nafpaktos",
@@ -250,5 +311,47 @@ export const STATIC_SECTIONS: StaticSectionSeed[] = [
     severity: "hard",
     description:
       "Ultima sfida prima dell'arrivo: salita massiccia in cima alla montagna sopra Nafpaktos.",
+    description_en:
+      "Final challenge before the finish: massive climb to the mountain top above Nafpaktos.",
+  },
+];
+
+/** Ponti dal GPX FINAL (RideWithGPS) — unico layer con colore dedicato in mappa. */
+export type StaticBridgeSeed = {
+  id: string;
+  name: string;
+  lat: number;
+  lng: number;
+  description_en: string;
+};
+
+export const STATIC_BRIDGES: StaticBridgeSeed[] = [
+  {
+    id: "br-konitsa-stone",
+    name: "Stone bridge (Konitsa)",
+    lat: 40.0365253046175,
+    lng: 20.745136960206793,
+    description_en: "A rather pretty stone bridge. More to come.",
+  },
+  {
+    id: "br-misiou",
+    name: "Misiou Bridge",
+    lat: 39.86953025989115,
+    lng: 20.764246251613287,
+    description_en: "Misiou Bridge — stone arch on the Zagori route.",
+  },
+  {
+    id: "br-kalogeriko",
+    name: "Kalogeriko Bridge",
+    lat: 39.86166756642584,
+    lng: 20.78631792003631,
+    description_en: "Kalogeriko Bridge — triple-arch stone bridge near Kipoi.",
+  },
+  {
+    id: "br-stenoma-viniani",
+    name: "Stenoma-Viniani Bridge",
+    lat: 38.97964244322915,
+    lng: 21.69855574647343,
+    description_en: "Stenoma-Viniani Bridge.",
   },
 ];

@@ -7,6 +7,7 @@ const ALL_CATEGORIES: PoiCategory[] = [
   "water",
   "hut",
   "lodging",
+  "campsite",
   "shop",
   "restaurant",
   "pharmacy",

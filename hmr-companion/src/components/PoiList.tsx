@@ -5,6 +5,7 @@ import type { PoiCategory, PoiRow, ResupplyRow } from "@/lib/db";
 import { CATEGORY_META, CATEGORY_ORDER } from "@/lib/categories";
 
 export type PoiListProps = {
+  trackId: string;
   pois: PoiRow[];
   resupply: ResupplyRow[];
   atKm: number | null;
@@ -14,6 +15,7 @@ export type PoiListProps = {
   showResupply: boolean;
   onToggleResupply: () => void;
   onSelectPoi?: (poi: PoiRow) => void;
+  onPoiUpdated?: (poi: PoiRow) => void;
 };
 
 export default function PoiList(props: PoiListProps) {
@@ -217,7 +219,13 @@ export default function PoiList(props: PoiListProps) {
                 </div>
               ))}
               {row.pois.map((p) => (
-                <PoiCard key={p.id} poi={p} onSelect={props.onSelectPoi} />
+                <PoiCard
+                  key={p.id}
+                  trackId={props.trackId}
+                  poi={p}
+                  onSelect={props.onSelectPoi}
+                  onPoiUpdated={props.onPoiUpdated}
+                />
               ))}
             </div>
           </div>
@@ -227,8 +235,44 @@ export default function PoiList(props: PoiListProps) {
   );
 }
 
-function PoiCard({ poi, onSelect }: { poi: PoiRow; onSelect?: (p: PoiRow) => void }) {
+function PoiCard({
+  trackId,
+  poi,
+  onSelect,
+  onPoiUpdated,
+}: {
+  trackId: string;
+  poi: PoiRow;
+  onSelect?: (p: PoiRow) => void;
+  onPoiUpdated?: (p: PoiRow) => void;
+}) {
   const meta = CATEGORY_META[poi.category];
+  const [raceBusy, setRaceBusy] = useState(false);
+  const raceOn = (poi.race_visible ?? 1) === 1;
+
+  const toggleRaceVisible = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!onPoiUpdated) return;
+    setRaceBusy(true);
+    try {
+      const res = await fetch(
+        `/api/track/${encodeURIComponent(trackId)}/pois/custom?poiId=${encodeURIComponent(poi.id)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ race_visible: raceOn ? 0 : 1 }),
+        }
+      );
+      const data = (await res.json()) as { poi?: PoiRow; error?: string };
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      if (data.poi) onPoiUpdated(data.poi);
+    } catch {
+      /* ignore */
+    } finally {
+      setRaceBusy(false);
+    }
+  };
+
   return (
     <div className="flex items-start gap-3 px-3 py-2">
       <span
@@ -265,6 +309,17 @@ function PoiCard({ poi, onSelect }: { poi: PoiRow; onSelect?: (p: PoiRow) => voi
         )}
       </button>
       <div className="flex flex-col gap-1">
+        {onPoiUpdated && (
+          <button
+            type="button"
+            disabled={raceBusy}
+            title="Visibile in Race"
+            onClick={toggleRaceVisible}
+            className={`hmr-btn hmr-tap text-[10px] ${raceOn ? "hmr-chip-on" : "hmr-chip-off"}`}
+          >
+            Race
+          </button>
+        )}
         <a
           href={`https://maps.google.com/?q=${poi.lat},${poi.lng}`}
           target="_blank"

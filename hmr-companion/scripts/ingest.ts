@@ -25,6 +25,7 @@ import {
 import type { StoredCoord } from "../src/lib/track-coords";
 import { measureBetween } from "../src/lib/track-measure";
 import {
+  STATIC_BRIDGES,
   STATIC_CHECKPOINTS,
   STATIC_RESUPPLY,
   STATIC_SECTIONS,
@@ -200,33 +201,74 @@ function main() {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     );
     for (const r of STATIC_RESUPPLY) {
-      const pos = positionAtKm(simplified, cum, r.along_km);
+      let alongKm = r.along_km;
+      let lat: number;
+      let lng: number;
+      if (r.lat != null && r.lng != null) {
+        const nearest = nearestPointOnPolyline(simplified, [r.lng, r.lat], cum);
+        if (nearest) {
+          alongKm = nearest.alongKm;
+          lng = nearest.closest[0];
+          lat = nearest.closest[1];
+        } else {
+          const pos = positionAtKm(simplified, cum, r.along_km);
+          lat = pos[1];
+          lng = pos[0];
+        }
+      } else {
+        const pos = positionAtKm(simplified, cum, r.along_km);
+        lat = pos[1];
+        lng = pos[0];
+      }
       insRs.run(
         r.id,
         TRACK_ID,
         r.name,
-        r.along_km,
+        Number(alongKm.toFixed(3)),
         r.leg_km,
-        Number(pos[1].toFixed(6)),
-        Number(pos[0].toFixed(6)),
+        Number(lat.toFixed(6)),
+        Number(lng.toFixed(6)),
         r.notes
+      );
+    }
+
+    db.prepare(`DELETE FROM course_bridges WHERE track_id = ?`).run(TRACK_ID);
+    const insBr = db.prepare(
+      `INSERT INTO course_bridges (id, track_id, name, lat, lng, along_km, description_en)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    );
+    for (const b of STATIC_BRIDGES) {
+      const nearest = nearestPointOnPolyline(simplified, [b.lng, b.lat], cum);
+      const lat = nearest ? nearest.closest[1] : b.lat;
+      const lng = nearest ? nearest.closest[0] : b.lng;
+      const alongKm = nearest?.alongKm ?? 0;
+      insBr.run(
+        b.id,
+        TRACK_ID,
+        b.name,
+        Number(lat.toFixed(6)),
+        Number(lng.toFixed(6)),
+        Number(alongKm.toFixed(3)),
+        b.description_en
       );
     }
 
     db.prepare(`DELETE FROM notable_sections WHERE track_id = ?`).run(TRACK_ID);
     const insSec = db.prepare(
-      `INSERT INTO notable_sections (id, track_id, label, km_start, km_end, severity, description)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO notable_sections (id, track_id, label, km_start, km_end, severity, description, description_en)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     );
     for (const s of STATIC_SECTIONS) {
-      insSec.run(s.id, TRACK_ID, s.label, s.km_start, s.km_end, s.severity, s.description);
+      insSec.run(s.id, TRACK_ID, s.label, s.km_start, s.km_end, s.severity, s.description, s.description_en);
     }
   });
 
   tx();
 
   console.log(`[ingest] OK · track id=${TRACK_ID}`);
-  console.log(`[ingest] ${STATIC_CHECKPOINTS.length} checkpoints / ${STATIC_RESUPPLY.length} resupply / ${STATIC_SECTIONS.length} notable sections`);
+  console.log(
+    `[ingest] ${STATIC_CHECKPOINTS.length} checkpoints / ${STATIC_RESUPPLY.length} resupply / ${STATIC_SECTIONS.length} sections / ${STATIC_BRIDGES.length} bridges`
+  );
   console.log(`[ingest] Run \`npm run snapshot\` per POI Overpass.`);
   console.log(`[ingest] Opzionale: \`npm run snapshot:surface\` per asfalto/sterrato/single (OSM).`);
   console.log(`[ingest] (uuid helper preload: ${uuidv4().slice(0, 4)}…) — dependency ok`);

@@ -22,6 +22,8 @@ export type BottomSheetProps = {
   railTop?: ReactNode;
   /** Layout inferiore: rialza il foglio per lasciare spazio al profilo fisso sotto. */
   reserveProfileStrip?: boolean;
+  /** Layout rail: tab in colonna (desktop Planner). */
+  railNavVertical?: boolean;
 };
 
 /** Altezza foglio (mobile bottom): peek = linguetta compatta, half = contenuto senza mangiare metà mappa. */
@@ -51,6 +53,7 @@ export default function BottomSheet({
   children,
   railTop,
   reserveProfileStrip = false,
+  railNavVertical = false,
 }: BottomSheetProps) {
   const railLeft = useSyncExternalStore(subscribeHmrWideRail, getHmrWideRailSnapshot, () => false);
   const [dragDelta, setDragDelta] = useState(0);
@@ -124,7 +127,11 @@ export default function BottomSheet({
             </div>
           )}
           <div className="flex flex-col gap-2 border-b border-[color:var(--hmr-border)]/80 px-2 py-2">
-            <div className="flex w-full items-center justify-between gap-2">{header}</div>
+            <div
+              className={`flex w-full gap-2 ${railNavVertical ? "flex-col items-stretch" : "items-center justify-between"}`}
+            >
+              {header}
+            </div>
           </div>
           <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
             {children}

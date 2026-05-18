@@ -24,6 +24,7 @@ const CATS: PoiCategory[] = [
   "water",
   "hut",
   "lodging",
+  "campsite",
   "shop",
   "restaurant",
   "pharmacy",

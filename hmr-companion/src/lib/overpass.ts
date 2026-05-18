@@ -394,6 +394,8 @@ const BBOX_LINES = {
     `way["tourism"="hostel"]`,
     `node["tourism"="motel"]`,
     `way["tourism"="motel"]`,
+  ],
+  campsite: [
     `node["tourism"="camp_site"]`,
     `way["tourism"="camp_site"]`,
   ],
@@ -472,6 +474,9 @@ export function bboxKeysForPoiCategories(categories: PoiCategory[]): BboxCategor
         break;
       case "lodging":
         keys.add("lodging");
+        break;
+      case "campsite":
+        keys.add("campsite");
         break;
       case "shop":
         keys.add("shop");
@@ -616,7 +621,7 @@ export function classifyOsm(tags: Record<string, string>): ClassifiedOsm | null 
   if (tags.tourism === "guest_house") return { category: "lodging", sub_kind: "guest_house" };
   if (tags.tourism === "hostel") return { category: "lodging", sub_kind: "hostel" };
   if (tags.tourism === "motel") return { category: "lodging", sub_kind: "motel" };
-  if (tags.tourism === "camp_site") return { category: "lodging", sub_kind: "camp_site" };
+  if (tags.tourism === "camp_site") return { category: "campsite", sub_kind: "camp_site" };
 
   if (tags.shop === "supermarket") return { category: "shop", sub_kind: "supermarket" };
   if (tags.shop === "convenience") return { category: "shop", sub_kind: "convenience" };
