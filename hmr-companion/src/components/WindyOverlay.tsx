@@ -53,8 +53,9 @@ export default function WindyOverlay({
             className={`hmr-chip max-sm:!min-h-[26px] max-sm:!px-1.5 max-sm:!py-0 max-sm:!text-[8px] sm:min-h-0 sm:px-2 sm:py-0.5 sm:text-[9px] ${
               mode === "radar" ? "hmr-chip-on" : "hmr-chip-off"
             }`}
+            title="Satellite (tier API di test: radar spesso non incluso)"
           >
-            Radar
+            Satellite
           </button>
           <button
             type="button"

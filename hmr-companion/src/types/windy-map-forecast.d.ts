@@ -27,7 +27,7 @@ declare global {
         verbose?: boolean;
       },
       callback: (api: WindyMapForecastApi) => void
-    ) => void;
+    ) => void | Promise<unknown>;
     L?: {
       polyline: (
         latlngs: [number, number][],

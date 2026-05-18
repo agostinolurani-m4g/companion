@@ -233,7 +233,7 @@ function MapChromeControls({
               onClick={onWindyToggle}
               className={`hmr-chip max-sm:!min-h-[26px] max-sm:!px-1.5 max-sm:!py-0 max-sm:!text-[8px] sm:min-h-0 sm:px-2 sm:py-0.5 sm:text-[9px] ${windyActive ? "hmr-chip-on" : "hmr-chip-off"}`}
               aria-pressed={windyActive}
-              title="Mappa meteo Windy (radar / pioggia)"
+              title="Mappa meteo Windy (satellite / pioggia GFS)"
             >
               Meteo
             </button>

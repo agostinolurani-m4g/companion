@@ -21,6 +21,15 @@ const nextConfig: NextConfig = {
       },
     ];
   },
+  /** Windy risolve `img/...` sotto `/track/:id/meteo` → 404; proxy verso asset ufficiali. */
+  async rewrites() {
+    return [
+      {
+        source: "/track/:slug/img/:path*",
+        destination: "https://www.windy.com/img/:path*",
+      },
+    ];
+  },
 };
 
 export default nextConfig;

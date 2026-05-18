@@ -8,7 +8,6 @@ import {
   computeSteepUnpavedInChunk,
   ROADBOOK_SCHEMA_VERSION,
   surfaceKmInRange,
-  STEEP_UNPAVED_GRADE_PCT,
 } from "../roadbook-chunk";
 
 const emptyInputs = {

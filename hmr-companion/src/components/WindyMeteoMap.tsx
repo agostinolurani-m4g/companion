@@ -131,42 +131,68 @@ export default function WindyMeteoMap({ trackId, lat, lng, zoom, mode }: Props) 
           zoom: number;
           overlay?: string;
           product?: string;
+          verbose?: boolean;
         } = {
           key: windyKey,
           lat: latN,
           lon: lonN,
           zoom: zoomClamped,
+          verbose: process.env.NODE_ENV === "development",
         };
+        /** Tier di test: spesso niente `radar`; `rain` va con GFS, non ECMWF (messaggio Windy in console). */
         if (mode === "rain") {
           options.overlay = "rain";
-          options.product = "ecmwf";
+          options.product = "gfs";
         } else {
-          options.overlay = "radar";
+          options.overlay = "satellite";
         }
 
-        windyInit(options, (windyAPI) => {
-          if (cancelled) {
+        try {
+          const initResult = windyInit(options, (windyAPI) => {
+            if (cancelled) {
+              try {
+                windyAPI.map.remove();
+              } catch {
+                /* ignore */
+              }
+              return;
+            }
+            apiRef.current = windyAPI;
             try {
-              windyAPI.map.remove();
+              if (mode === "rain") {
+                windyAPI.store.set("product", "gfs");
+                windyAPI.store.set("overlay", "rain");
+              } else {
+                windyAPI.store.set("overlay", "satellite");
+              }
             } catch {
-              /* ignore */
+              /* overlay/modello non disponibili per questa key */
             }
-            return;
-          }
-          apiRef.current = windyAPI;
-          try {
-            if (mode === "rain") {
-              windyAPI.store.set("product", "ecmwf");
-              windyAPI.store.set("overlay", "rain");
-            } else {
-              windyAPI.store.set("overlay", "radar");
-            }
-          } catch {
-            /* overlay potrebbe non essere nella tier gratuita */
-          }
 
-          addTrackPolylineToWindyMap(L, windyAPI.map, latlngs);
-        });
+            try {
+              addTrackPolylineToWindyMap(L, windyAPI.map, latlngs);
+            } catch (polyErr) {
+              if (!cancelled) {
+                setError(
+                  polyErr instanceof Error ? polyErr.message : "Errore disegno traccia sulla mappa meteo."
+                );
+              }
+            }
+          });
+          if (initResult != null && typeof (initResult as PromiseLike<unknown>).then === "function") {
+            void Promise.resolve(initResult).catch((reason: unknown) => {
+              if (!cancelled) {
+                const msg =
+                  reason instanceof Error ? reason.message : reason != null ? String(reason) : "Errore Windy (async).";
+                setError(msg);
+              }
+            });
+          }
+        } catch (initErr) {
+          if (!cancelled) {
+            setError(initErr instanceof Error ? initErr.message : "windyInit fallita.");
+          }
+        }
       } catch (e) {
         if (!cancelled) {
           setError(e instanceof Error ? e.message : "Errore caricamento meteo.");
@@ -220,11 +246,22 @@ export default function WindyMeteoMap({ trackId, lat, lng, zoom, mode }: Props) 
     return (
       <div className="flex h-[100dvh] flex-col items-center justify-center gap-3 bg-[color:var(--hmr-bg)] px-4 text-center text-sm text-[color:var(--hmr-muted)]">
         <p>{error}</p>
-        <p className="text-xs text-[color:var(--hmr-faint)]">
-          Windy Map Forecast API —{" "}
+        <p className="max-w-md text-xs leading-relaxed text-[color:var(--hmr-faint)]">
+          Se in <strong>locale</strong> funziona ma sul sito pubblico no: nella console del browser spesso compare un
+          rifiuto per <strong>dominio non autorizzato</strong>. Apri{" "}
           <a className="underline" href="https://api.windy.com/keys" target="_blank" rel="noreferrer">
             api.windy.com/keys
           </a>
+          , modifica la key Map Forecast e aggiungi tra i domini consentiti l&apos;host reale (es.{" "}
+          <code className="text-[color:var(--hmr-text)]">companion.amarobici.it</code>
+          ), poi ricarica la pagina.
+        </p>
+        <p className="text-xs text-[color:var(--hmr-faint)]">
+          Windy Map Forecast —{" "}
+          <a className="underline" href="https://api.windy.com/map-forecast/docs" target="_blank" rel="noreferrer">
+            documentazione
+          </a>
+          . La tier di test non è pensata per produzione commerciale: verifica i termini sul sito Windy.
         </p>
       </div>
     );

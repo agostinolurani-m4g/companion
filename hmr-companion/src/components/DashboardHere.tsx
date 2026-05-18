@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { PoiCategory, PoiRow, CheckpointRow, ResupplyRow } from "@/lib/db";
+import type { PoiRow, CheckpointRow, ResupplyRow } from "@/lib/db";
 import { CATEGORY_META, CATEGORY_ORDER } from "@/lib/categories";
 
 export type SurfaceKmBreakdown = {

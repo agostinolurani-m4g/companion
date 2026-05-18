@@ -88,34 +88,6 @@ function elevRangeInWindow(coords: StoredCoord[], k0: number, k1: number): { min
   return { minElev: minE - pad, maxElev: maxE + pad };
 }
 
-function buildPathInWindow(
-  coords: StoredCoord[],
-  vMin: number,
-  vMax: number,
-  minElev: number,
-  maxElev: number
-): string {
-  const spanK = Math.max(1e-6, vMax - vMin);
-  const spanE = Math.max(1, maxElev - minElev);
-  const xFor = (km: number) => PAD_L + ((km - vMin) / spanK) * (CHART_W - PAD_L - PAD_R);
-  const yFor = (e: number) =>
-    PAD_T + (1 - (e - minElev) / spanE) * (CHART_H - PAD_T - PAD_B);
-  const step = Math.max(1, Math.floor(coords.length / 900));
-  let path = "";
-  let started = false;
-  for (let i = 0; i < coords.length; i += step) {
-    const c = coords[i];
-    if (c[2] == null) continue;
-    const k = c[3];
-    if (k < vMin || k > vMax) continue;
-    const x = xFor(k);
-    const y = yFor(c[2]);
-    path += `${started ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`;
-    started = true;
-  }
-  return path || `M${PAD_L},${(PAD_T + CHART_H - PAD_B) / 2}`;
-}
-
 /** Poligono chiuso: area tra baseline e profilo (per clip delle fasce superficie). */
 function buildClipUnderProfilePath(
   coords: StoredCoord[],
@@ -282,6 +254,12 @@ export default function ElevationChart({
     return { vMin, vMax, minElev, maxElev, underClip };
   }, [geom, coords, zoomKmLo, zoomKmHi]);
 
+  const profileStrokes = useMemo(() => {
+    if (!geom || !zoomed) return [] as { d: string; stroke: string }[];
+    const { vMin, vMax, minElev, maxElev } = zoomed;
+    return buildProfileStrokeSegments(coords, vMin, vMax, minElev, maxElev, surfaceBands);
+  }, [geom, zoomed, coords, surfaceBands]);
+
   if (!geom || !zoomed) return null;
   const { totalKm } = geom;
   const { vMin, vMax, minElev, maxElev, underClip } = zoomed;
@@ -308,11 +286,6 @@ export default function ElevationChart({
 
   const kmLabel0 = vMin <= 0.05 ? "0 km" : `${vMin.toFixed(1)} km`;
   const kmLabel1 = vMax >= totalKm - 0.05 ? `${totalKm.toFixed(0)} km` : `${vMax.toFixed(1)} km`;
-
-  const profileStrokes = useMemo(
-    () => buildProfileStrokeSegments(coords, vMin, vMax, minElev, maxElev, surfaceBands),
-    [coords, vMin, vMax, minElev, maxElev, surfaceBands]
-  );
 
   const baseY = CHART_H - PAD_B;
 
