@@ -32,6 +32,59 @@ function clampZoom(z: number): number {
   return Math.min(18, Math.max(3, z));
 }
 
+/** Pane dedicato sopra i layer meteo Windy (canvas/tile ~400–600). */
+const WINDY_TRACK_PANE = "hmrWindyTrack";
+
+function ensureTrackPaneAboveWindy(map: WindyMapForecastApi["map"]): boolean {
+  const createPane = map.createPane;
+  const getPane = map.getPane;
+  if (typeof createPane !== "function" || typeof getPane !== "function") return false;
+  if (!getPane.call(map, WINDY_TRACK_PANE)) {
+    createPane.call(map, WINDY_TRACK_PANE);
+    const el = getPane.call(map, WINDY_TRACK_PANE);
+    if (el) {
+      el.style.zIndex = "920";
+      el.style.pointerEvents = "none";
+    }
+  }
+  return Boolean(getPane.call(map, WINDY_TRACK_PANE));
+}
+
+function addTrackPolylineToWindyMap(
+  L: NonNullable<Window["L"]>,
+  map: WindyMapForecastApi["map"],
+  latlngs: [number, number][]
+) {
+  const usePane = ensureTrackPaneAboveWindy(map);
+  const paneOpt = usePane ? ({ pane: WINDY_TRACK_PANE } as const) : {};
+
+  L.polyline(latlngs, {
+    ...paneOpt,
+    color: "#0f172a",
+    weight: 8,
+    opacity: 0.45,
+  }).addTo(map);
+
+  const line = L.polyline(latlngs, {
+    ...paneOpt,
+    color: "#38bdf8",
+    weight: 4,
+    opacity: 0.98,
+  }).addTo(map);
+
+  const bringUp = () => {
+    try {
+      line.bringToFront?.();
+    } catch {
+      /* ignore */
+    }
+  };
+  bringUp();
+  for (const ms of [80, 250, 800, 2500]) {
+    window.setTimeout(bringUp, ms);
+  }
+}
+
 type Props = {
   trackId: string;
   lat: number;
@@ -112,11 +165,7 @@ export default function WindyMeteoMap({ trackId, lat, lng, zoom, mode }: Props) 
             /* overlay potrebbe non essere nella tier gratuita */
           }
 
-          L.polyline(latlngs, {
-            color: "#38bdf8",
-            weight: 4,
-            opacity: 0.95,
-          }).addTo(windyAPI.map);
+          addTrackPolylineToWindyMap(L, windyAPI.map, latlngs);
         });
       } catch (e) {
         if (!cancelled) {

@@ -5,6 +5,8 @@
 export type WindyMapForecastApi = {
   map: {
     remove: () => void;
+    createPane?: (name: string) => void;
+    getPane?: (name: string) => HTMLElement | undefined;
   };
   store: {
     set: (key: string, value: unknown, opts?: { forceChange?: boolean }) => void;
@@ -29,8 +31,15 @@ declare global {
     L?: {
       polyline: (
         latlngs: [number, number][],
-        options?: { color?: string; weight?: number; opacity?: number }
-      ) => { addTo: (map: WindyMapForecastApi["map"]) => unknown };
+        options?: {
+          color?: string;
+          weight?: number;
+          opacity?: number;
+          pane?: string;
+        }
+      ) => {
+        addTo: (map: WindyMapForecastApi["map"]) => { bringToFront?: () => void };
+      };
     };
   }
 }
