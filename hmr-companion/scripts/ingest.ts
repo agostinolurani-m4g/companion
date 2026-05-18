@@ -133,27 +133,57 @@ function main() {
   );
 
   const db = getDb();
-  console.log(`[ingest] DB path: ${getDbPath()}`);
+  const dbPath = getDbPath();
+  console.log(`[ingest] DB path: ${dbPath}`);
+
+  const existingTrack = db.prepare(`SELECT id, created_at FROM tracks WHERE id = ?`).get(TRACK_ID) as
+    | { id: string; created_at: number }
+    | undefined;
+  const poiCountBefore = (
+    db.prepare(`SELECT COUNT(*) AS n FROM pois WHERE track_id = ?`).get(TRACK_ID) as { n: number }
+  ).n;
 
   const tx = db.transaction(() => {
-    db.prepare(`DELETE FROM tracks WHERE id = ?`).run(TRACK_ID);
-    db.prepare(
-      `INSERT INTO tracks (id, name, gpx_path, coords_json, length_km, elev_gain_m, elev_loss_m, elev_profile_gain_scale, elev_profile_loss_scale, bbox_json, point_count, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(
-      TRACK_ID,
-      TRACK_NAME,
-      `data/${fileName}`,
-      JSON.stringify(coordsJson),
-      Number(totalKm.toFixed(3)),
-      Math.round(gain),
-      Math.round(loss),
-      elevProfileGainScale,
-      elevProfileLossScale,
-      JSON.stringify(bbox),
-      simplified.length,
-      Date.now()
-    );
+    const now = Date.now();
+    const createdAt = existingTrack?.created_at ?? now;
+    if (existingTrack) {
+      db.prepare(
+        `UPDATE tracks SET
+           name = ?, gpx_path = ?, coords_json = ?, length_km = ?, elev_gain_m = ?, elev_loss_m = ?,
+           elev_profile_gain_scale = ?, elev_profile_loss_scale = ?, bbox_json = ?, point_count = ?
+         WHERE id = ?`
+      ).run(
+        TRACK_NAME,
+        `data/${fileName}`,
+        JSON.stringify(coordsJson),
+        Number(totalKm.toFixed(3)),
+        Math.round(gain),
+        Math.round(loss),
+        elevProfileGainScale,
+        elevProfileLossScale,
+        JSON.stringify(bbox),
+        simplified.length,
+        TRACK_ID
+      );
+    } else {
+      db.prepare(
+        `INSERT INTO tracks (id, name, gpx_path, coords_json, length_km, elev_gain_m, elev_loss_m, elev_profile_gain_scale, elev_profile_loss_scale, bbox_json, point_count, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        TRACK_ID,
+        TRACK_NAME,
+        `data/${fileName}`,
+        JSON.stringify(coordsJson),
+        Number(totalKm.toFixed(3)),
+        Math.round(gain),
+        Math.round(loss),
+        elevProfileGainScale,
+        elevProfileLossScale,
+        JSON.stringify(bbox),
+        simplified.length,
+        createdAt
+      );
+    }
 
     db.prepare(`DELETE FROM checkpoints WHERE track_id = ?`).run(TRACK_ID);
     const insCp = db.prepare(
@@ -265,11 +295,20 @@ function main() {
 
   tx();
 
+  const poiCountAfter = (
+    db.prepare(`SELECT COUNT(*) AS n FROM pois WHERE track_id = ?`).get(TRACK_ID) as { n: number }
+  ).n;
+
   console.log(`[ingest] OK · track id=${TRACK_ID}`);
   console.log(
     `[ingest] ${STATIC_CHECKPOINTS.length} checkpoints / ${STATIC_RESUPPLY.length} resupply / ${STATIC_SECTIONS.length} sections / ${STATIC_BRIDGES.length} bridges`
   );
-  console.log(`[ingest] Run \`npm run snapshot\` per POI Overpass.`);
+  console.log(
+    `[ingest] POI in DB: ${poiCountAfter} (prima ${poiCountBefore}) — ingest non cancella POI/piani custom.`
+  );
+  if (poiCountAfter === 0) {
+    console.log(`[ingest] Nessun POI: esegui \`npm run snapshot\` per scaricare Overpass (~10–20 min).`);
+  }
   console.log(`[ingest] Opzionale: \`npm run snapshot:surface\` per asfalto/sterrato/single (OSM).`);
   console.log(`[ingest] (uuid helper preload: ${uuidv4().slice(0, 4)}…) — dependency ok`);
 }

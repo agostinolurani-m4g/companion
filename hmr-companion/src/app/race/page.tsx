@@ -2,6 +2,7 @@ import {
   countPois,
   getFirstTrack,
   listCheckpoints,
+  listCourseBridges,
   listNotableSections,
   listPois,
   listRacePlansWithItems,
@@ -39,6 +40,7 @@ export default async function RacePage() {
   const checkpoints = listCheckpoints(track.id);
   const resupply = listResupply(track.id);
   const sections = listNotableSections(track.id);
+  const bridges = listCourseBridges(track.id);
   const pois = listPois(track.id);
   const racePlans = listRacePlansWithItems(track.id);
   const surfaceSegments = listTrackSurfaceSegments(track.id);
@@ -62,6 +64,7 @@ export default async function RacePage() {
         checkpoints,
         resupply,
         sections,
+        bridges,
         pois,
         racePlans,
         surfaceSegments,
