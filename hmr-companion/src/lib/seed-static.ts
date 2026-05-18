@@ -202,6 +202,10 @@ export type StaticSectionSeed = {
   severity: "info" | "warn" | "hard";
   description: string;
   description_en: string;
+  /** GPX waypoint: ingest proietta e imposta km ± span_km/2 (ignora km_start/km_end se presenti). */
+  anchor_lat?: number;
+  anchor_lng?: number;
+  span_km?: number;
 };
 
 /** "Toughest Sections & Notable Difficulties" (Race Manual pag. 8). */
@@ -264,6 +268,18 @@ export const STATIC_SECTIONS: StaticSectionSeed[] = [
     severity: "warn",
     description: "Strade danneggiate / franate subito dopo CP2.",
     description_en: "Several washed-out and badly damaged road sections just after CP2.",
+  },
+  {
+    id: "sec-road-damaged",
+    label: "Road damaged",
+    km_start: 0,
+    km_end: 0,
+    severity: "warn",
+    description: "Tratto con strada danneggiata (waypoint GPX).",
+    description_en: "Road damaged.",
+    anchor_lat: 39.83756890943954,
+    anchor_lng: 21.039143268008644,
+    span_km: 4,
   },
   {
     id: "sec-post-cp2-high",

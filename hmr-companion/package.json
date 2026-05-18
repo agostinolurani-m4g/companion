@@ -9,6 +9,7 @@
     "lint": "eslint",
     "test": "vitest run",
     "ingest": "tsx scripts/ingest.ts",
+    "ingest:markers": "tsx scripts/ingest-markers.ts",
     "snapshot": "tsx scripts/snapshot-pois.ts",
     "snapshot:surface": "tsx scripts/snapshot-surface.ts",
     "seed": "npm run ingest && npm run snapshot",
