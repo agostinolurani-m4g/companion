@@ -1,4 +1,4 @@
-import type Database from "better-sqlite3";
+import type { Database as SqliteDatabase } from "better-sqlite3";
 import type { Position } from "geojson";
 import { nearestPointOnPolyline, positionAtKm } from "@/lib/track-geometry";
 import {
@@ -39,7 +39,7 @@ function resolveSectionKm(
 
 /** Aggiorna solo resupply ufficiali, ponti e sezioni tough — non tocca traccia né POI OSM. */
 export function reseedCourseMarkers(
-  db: Database,
+  db: SqliteDatabase,
   trackId: string,
   simplified: Position[],
   cum: number[],
