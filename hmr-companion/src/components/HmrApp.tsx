@@ -1155,7 +1155,7 @@ export default function HmrApp({
       )}
 
       <div
-        className="pointer-events-auto fixed inset-x-0 bottom-0 z-[18] border-t border-[color:var(--hmr-border)] bg-[color:var(--hmr-surface)]/97 shadow-[0_-6px_28px_rgba(0,0,0,0.42)]"
+        className="pointer-events-auto fixed inset-x-0 bottom-0 z-[18] border-t border-[color:var(--hmr-border)] bg-[color:var(--hmr-surface)]/97 shadow-[0_-6px_28px_rgba(0,0,0,0.42)] [@media(min-aspect-ratio:5/4)]:left-[var(--hmr-rail-width)]"
         style={{ paddingBottom: "var(--safe-bottom)" }}
       >
         <div className="mx-auto flex h-[var(--hmr-profile-strip)] min-h-0 w-full max-w-[100vw] px-0.5 pt-0.5">

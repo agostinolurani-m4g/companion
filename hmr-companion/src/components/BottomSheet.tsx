@@ -55,13 +55,6 @@ function sheetHeightStyle(snap: SheetSnap, reserveProfileStrip: boolean): CSSPro
   };
 }
 
-/** Larghezza pannello sinistro (viewport largo / basso). */
-function snapToLeftWidth(s: SheetSnap): string {
-  if (s === "peek") return "min(16vw, 10rem)";
-  if (s === "half") return "min(34vw, 22rem)";
-  return "min(50vw, 30rem)";
-}
-
 export default function BottomSheet({
   snap,
   onSnapChange,
@@ -84,7 +77,6 @@ export default function BottomSheet({
   }, [snap]);
 
   const bottomHeightStyle = sheetHeightStyle(snap, reserveProfileStrip);
-  const leftWidth = snapToLeftWidth(snap);
 
   const collapseSheet = () => {
     if (snap === "full") onSnapChange("half");
@@ -139,11 +131,9 @@ export default function BottomSheet({
     return (
       <div
         ref={rootRef}
-        className="pointer-events-auto fixed left-0 top-0 z-20 flex h-[calc(100dvh-var(--hmr-profile-strip))] max-h-[calc(100dvh-var(--hmr-profile-strip))] flex-row border-r border-[color:var(--hmr-border)] bg-[color:var(--hmr-surface)] shadow-[16px_0_48px_rgba(0,0,0,0.45)] transition-[width] duration-200 ease-out"
+        className="pointer-events-auto fixed left-0 top-0 z-20 flex h-[100dvh] max-h-[100dvh] w-[var(--hmr-rail-width)] max-w-[var(--hmr-rail-width)] flex-col border-r border-[color:var(--hmr-border)] bg-[color:var(--hmr-surface)] shadow-[16px_0_48px_rgba(0,0,0,0.45)]"
         style={{
-          width: leftWidth,
           paddingLeft: "var(--safe-left, env(safe-area-inset-left, 0px))",
-          transform: dragDelta ? `translateX(${Math.max(0, dragDelta)}px)` : undefined,
         }}
       >
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -162,15 +152,6 @@ export default function BottomSheet({
           <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
             {children}
           </div>
-        </div>
-        <div
-          className="hmr-grab flex w-3 shrink-0 cursor-ew-resize touch-none flex-col items-center justify-center border-l border-[color:var(--hmr-border)]/60 bg-[color:var(--hmr-surface)] py-6 select-none"
-          onPointerDown={onGrabPointerDown}
-          onPointerMove={onGrabPointerMove}
-          onPointerUp={onGrabPointerUp}
-          onPointerCancel={onGrabPointerUp}
-        >
-          <span className="h-14 w-1.5 rounded-full bg-[color:var(--hmr-border)]" title="Trascina" />
         </div>
       </div>
     );

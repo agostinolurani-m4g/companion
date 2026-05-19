@@ -28,6 +28,14 @@
   }
 }
 
+/* Desktop largo: rail sinistro fisso a tutta altezza; profilo solo a destra, leggermente più basso. */
+@media (min-aspect-ratio: 5/4) {
+  :root {
+    --hmr-rail-width: 27rem;
+    --hmr-profile-strip: 9rem;
+  }
+}
+
 @theme inline {
   --color-hmr-bg: var(--hmr-bg);
   --color-hmr-surface: var(--hmr-surface);
