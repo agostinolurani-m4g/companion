@@ -86,7 +86,6 @@ type MapSurfaceKmSummary = {
 
 function MapChromeControls({
   variant,
-  trackName,
   lengthKm,
   elevGainM,
   elevLossM,
@@ -115,7 +114,6 @@ function MapChromeControls({
   raceFilterRow,
 }: {
   variant: "overlay" | "rail";
-  trackName: string;
   lengthKm: number;
   elevGainM: number;
   elevLossM: number;
@@ -144,67 +142,9 @@ function MapChromeControls({
   raceFilterRow?: ReactNode;
 }) {
   const popX = variant === "rail" ? "left-0" : "right-0";
-  const infoBlockAlign = variant === "rail" ? "text-left" : "text-right";
-  const trailColAlign = variant === "rail" ? "items-start" : "items-end";
 
   return (
     <>
-      <div
-        className={`pointer-events-auto hmr-panel flex items-center shadow-lg max-sm:py-1 max-sm:pl-2 max-sm:pr-2 max-sm:gap-1.5 ${
-          variant === "rail" ? "gap-2 px-2 py-1.5" : "gap-2 px-2 py-1.5 sm:gap-3 sm:px-3 sm:py-2"
-        }`}
-      >
-            <div className="flex min-w-0 flex-col">
-              <span className="text-[8px] uppercase tracking-[0.18em] text-[color:var(--hmr-muted)] max-sm:leading-none sm:text-[10px]">
-                HMR 2026
-              </span>
-              <span className="truncate text-[10px] font-bold leading-tight tracking-tight sm:text-xs md:text-sm">
-                {trackName}
-              </span>
-            </div>
-            <div className={`ml-auto flex min-w-0 flex-col gap-0.5 sm:gap-1 ${trailColAlign}`}>
-              <div
-                className={`flex flex-wrap items-center gap-1 text-[8px] text-[color:var(--hmr-faint)] sm:gap-2 sm:text-[9px] ${
-                  variant === "rail" ? "justify-start" : "justify-end"
-                }`}
-              >
-                <span className="max-w-[7rem] truncate sm:max-w-[11rem]">{sessionEmail}</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    void fetch("/api/auth/logout", { method: "POST" }).finally(() => {
-                      window.location.reload();
-                    });
-                  }}
-                  className="hmr-btn hmr-tap max-sm:!min-h-0 max-sm:!min-w-0 max-sm:px-1.5 max-sm:py-0 max-sm:text-[8px] rounded-none px-2 py-0.5 text-[9px] sm:text-[10px]"
-                >
-                  Esci
-                </button>
-              </div>
-              <details className={`relative ${infoBlockAlign}`}>
-                <summary className="cursor-pointer list-none text-[8px] text-[color:var(--hmr-muted)] underline decoration-dotted underline-offset-2 select-none sm:text-[10px] [&::-webkit-details-marker]:hidden">
-                  Info traccia
-                </summary>
-                <div
-                  className={`hmr-panel absolute ${popX} z-40 mt-1 min-w-[12rem] rounded-none border border-[color:var(--hmr-border)]/80 p-2 text-left text-[10px] font-semibold tracking-tight shadow-xl`}
-                >
-                  <div className="grid grid-cols-3 gap-2 text-[color:var(--hmr-muted)]">
-                    <Stat label="Dist." value={`${lengthKm.toFixed(0)} km`} />
-                    <Stat label="D+" value={`${Math.round(elevGainM)} m`} />
-                    <Stat label="D-" value={`${Math.round(elevLossM)} m`} />
-                  </div>
-                  {(surfaceKm.asphalt + surfaceKm.gravel + surfaceKm.single + surfaceKm.unknown) >
-                    0.5 && (
-                    <div className="mt-2 border-t border-[color:var(--hmr-border)]/50 pt-2 text-[9px] leading-tight text-[color:var(--hmr-faint)]">
-                      Strada: asfalto {surfaceKm.asphalt.toFixed(0)} km · sterrato{" "}
-                      {surfaceKm.gravel.toFixed(0)} km · single {surfaceKm.single.toFixed(0)} km
-                      {surfaceKm.unknown > 2 ? ` · n/d ${surfaceKm.unknown.toFixed(0)} km` : ""}
-                    </div>
-                  )}
-                </div>
-              </details>
-            </div>
-          </div>
       <div
         className={`pointer-events-auto flex max-w-[100vw] flex-wrap items-start ${variant === "rail" ? "gap-1" : "gap-1 sm:gap-1.5"}`}
       >
@@ -305,6 +245,46 @@ function MapChromeControls({
             </details>
               </>
             )}
+            <div
+              className={`flex shrink-0 flex-wrap items-center gap-1 ${variant === "rail" ? "" : "ml-auto"}`}
+            >
+              <span className="max-w-[7rem] truncate text-[8px] text-[color:var(--hmr-faint)] sm:max-w-[11rem] sm:text-[9px]">
+                {sessionEmail}
+              </span>
+              <details className="relative">
+                <summary className="hmr-chip hmr-chip-off max-sm:!min-h-[26px] max-sm:!px-1.5 max-sm:!py-0 max-sm:!text-[8px] cursor-pointer list-none select-none sm:min-h-0 sm:px-2 sm:py-0.5 sm:text-[9px]">
+                  Info
+                </summary>
+                <div
+                  className={`hmr-panel absolute ${popX} z-40 mt-2 min-w-[12rem] rounded-none border border-[color:var(--hmr-border)]/80 p-2 text-left text-[10px] font-semibold tracking-tight shadow-xl`}
+                >
+                  <div className="grid grid-cols-3 gap-2 text-[color:var(--hmr-muted)]">
+                    <Stat label="Dist." value={`${lengthKm.toFixed(0)} km`} />
+                    <Stat label="D+" value={`${Math.round(elevGainM)} m`} />
+                    <Stat label="D-" value={`${Math.round(elevLossM)} m`} />
+                  </div>
+                  {(surfaceKm.asphalt + surfaceKm.gravel + surfaceKm.single + surfaceKm.unknown) >
+                    0.5 && (
+                    <div className="mt-2 border-t border-[color:var(--hmr-border)]/50 pt-2 text-[9px] leading-tight text-[color:var(--hmr-faint)]">
+                      Strada: asfalto {surfaceKm.asphalt.toFixed(0)} km · sterrato{" "}
+                      {surfaceKm.gravel.toFixed(0)} km · single {surfaceKm.single.toFixed(0)} km
+                      {surfaceKm.unknown > 2 ? ` · n/d ${surfaceKm.unknown.toFixed(0)} km` : ""}
+                    </div>
+                  )}
+                </div>
+              </details>
+              <button
+                type="button"
+                onClick={() => {
+                  void fetch("/api/auth/logout", { method: "POST" }).finally(() => {
+                    window.location.reload();
+                  });
+                }}
+                className="hmr-chip hmr-chip-off max-sm:!min-h-[26px] max-sm:!px-1.5 max-sm:!py-0 max-sm:!text-[8px] sm:min-h-0 sm:px-2 sm:py-0.5 sm:text-[9px]"
+              >
+                Esci
+              </button>
+            </div>
           </div>
     </>
   );
@@ -965,7 +945,6 @@ export default function HmrApp({
   );
 
   const mapChromeProps = {
-    trackName: initial.name,
     lengthKm: initial.length_km,
     elevGainM: initial.elev_gain_m,
     elevLossM: initial.elev_loss_m,
@@ -1067,7 +1046,7 @@ export default function HmrApp({
           className={`pointer-events-none absolute left-3 right-3 z-30 flex justify-center ${
             wideRail
               ? "top-[calc(var(--safe-top)+0.65rem)]"
-              : "top-[calc(var(--safe-top)+5.25rem)] max-sm:top-[calc(var(--safe-top)+4.75rem)]"
+              : "top-[calc(var(--safe-top)+2.75rem)] max-sm:top-[calc(var(--safe-top)+2.5rem)]"
           }`}
         >
           <div className="pointer-events-auto flex max-h-[min(40vh,18rem)] max-w-lg flex-col overflow-hidden rounded-none border border-emerald-500/40 bg-[color:var(--hmr-panel-bg)] shadow-lg">
@@ -1133,7 +1112,7 @@ export default function HmrApp({
         ) : (
         <div
           className={`pointer-events-none absolute left-3 z-30 flex max-w-[min(calc(100vw-1.5rem),20rem)] ${
-            wideRail ? "top-[calc(var(--safe-top)+0.65rem)]" : "top-[calc(var(--safe-top)+5.25rem)]"
+            wideRail ? "top-[calc(var(--safe-top)+0.65rem)]" : "top-[calc(var(--safe-top)+2.75rem)]"
           }`}
         >
           <div className="pointer-events-auto flex w-full items-center gap-2 rounded-none border border-emerald-500/40 bg-[color:var(--hmr-panel-bg)] px-2 py-1.5 text-[10px] shadow-lg">
