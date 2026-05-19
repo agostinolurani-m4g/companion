@@ -160,7 +160,9 @@ export default function BottomSheet({
   return (
     <div
       ref={rootRef}
-      className={`pointer-events-auto fixed inset-x-0 z-20 flex min-h-0 flex-col overflow-hidden rounded-t-xl border-t border-[color:var(--hmr-border)] bg-[color:var(--hmr-surface)] shadow-[0_-20px_60px_rgba(0,0,0,0.5)] transition-[height] duration-200 ease-out ${
+      className={`pointer-events-auto fixed inset-x-0 flex min-h-0 flex-col overflow-hidden rounded-t-xl border-t border-[color:var(--hmr-border)] bg-[color:var(--hmr-surface)] shadow-[0_-20px_60px_rgba(0,0,0,0.5)] transition-[height,z-index] duration-200 ease-out ${
+        snap === "full" ? "z-[35]" : "z-20"
+      } ${
         reserveProfileStrip ? "bottom-[calc(var(--hmr-profile-strip)+var(--safe-bottom))]" : "bottom-0"
       }`}
       style={{
