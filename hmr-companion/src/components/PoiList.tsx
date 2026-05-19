@@ -66,7 +66,7 @@ export default function PoiList(props: PoiListProps) {
   return (
     <div className="flex flex-col gap-3 p-3 text-sm">
       <div className="hmr-panel flex flex-col gap-3 p-3">
-        <div className="flex flex-wrap gap-2">
+        <div className="flex min-w-0 max-w-full flex-wrap gap-2">
           {CATEGORY_ORDER.map((cat) => {
             const meta = CATEGORY_META[cat];
             const on = props.visibleCategories.has(cat);

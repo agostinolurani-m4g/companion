@@ -141,12 +141,14 @@ function MapChromeControls({
   onExitRaceLayout?: () => void;
   raceFilterRow?: ReactNode;
 }) {
-  const popX = variant === "rail" ? "left-0" : "right-0";
+  const popMenuLeft =
+    variant === "rail" ? "left-0 right-auto" : "left-0 right-auto max-sm:max-w-[min(11rem,calc(100vw-1.5rem))]";
+  const popMenuRight = variant === "rail" ? "right-0 left-auto" : "right-0 left-auto max-sm:max-w-[min(14rem,calc(100vw-1.5rem))]";
 
   return (
     <>
       <div
-        className={`pointer-events-auto flex max-w-[100vw] flex-wrap items-start ${variant === "rail" ? "gap-1" : "gap-1 sm:gap-1.5"}`}
+        className={`pointer-events-auto flex w-full min-w-0 max-w-full flex-wrap items-start ${variant === "rail" ? "gap-1" : "gap-1 sm:gap-1.5"}`}
       >
             {layout === "race" ? (
               <>
@@ -166,7 +168,11 @@ function MapChromeControls({
                 >
                   Modalità Planner
                 </button>
-                {raceFilterRow}
+                {raceFilterRow != null && (
+                  <div className="flex min-w-0 max-w-full flex-[1_1_100%] flex-wrap gap-1">
+                    {raceFilterRow}
+                  </div>
+                )}
               </>
             ) : (
               <>
@@ -224,7 +230,7 @@ function MapChromeControls({
                 Filtri POI
               </summary>
               <div
-                className={`hmr-panel absolute ${popX} z-40 mt-2 w-44 rounded-none border border-[color:var(--hmr-border)]/80 p-2 text-xs font-semibold tracking-tight shadow-xl`}
+                className={`hmr-panel absolute ${popMenuLeft} z-40 mt-2 w-44 max-h-[min(70dvh,20rem)] overflow-y-auto rounded-none border border-[color:var(--hmr-border)]/80 p-2 text-xs font-semibold tracking-tight shadow-xl`}
               >
                 <p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-[color:var(--hmr-faint)]">
                   Mostra categorie
@@ -246,7 +252,7 @@ function MapChromeControls({
               </>
             )}
             <div
-              className={`flex shrink-0 flex-wrap items-center gap-1 ${variant === "rail" ? "" : "ml-auto"}`}
+              className={`flex shrink-0 flex-wrap items-center gap-1 ${variant === "rail" ? "" : "max-sm:basis-full max-sm:justify-end sm:ml-auto"}`}
             >
               <span className="max-w-[7rem] truncate text-[8px] text-[color:var(--hmr-faint)] sm:max-w-[11rem] sm:text-[9px]">
                 {sessionEmail}
@@ -256,7 +262,7 @@ function MapChromeControls({
                   Info
                 </summary>
                 <div
-                  className={`hmr-panel absolute ${popX} z-40 mt-2 min-w-[12rem] rounded-none border border-[color:var(--hmr-border)]/80 p-2 text-left text-[10px] font-semibold tracking-tight shadow-xl`}
+                  className={`hmr-panel absolute ${popMenuRight} z-40 mt-2 min-w-[12rem] rounded-none border border-[color:var(--hmr-border)]/80 p-2 text-left text-[10px] font-semibold tracking-tight shadow-xl`}
                 >
                   <div className="grid grid-cols-3 gap-2 text-[color:var(--hmr-muted)]">
                     <Stat label="Dist." value={`${lengthKm.toFixed(0)} km`} />
@@ -979,10 +985,10 @@ export default function HmrApp({
 
   return (
     <main
-      className="relative w-full overflow-hidden"
+      className="relative w-full min-w-0 overflow-x-hidden"
       style={{ height: "100dvh" }}
     >
-      <div className="absolute inset-0" style={{ height: "100dvh" }}>
+      <div className="absolute inset-0 overflow-hidden" style={{ height: "100dvh" }}>
         <MapView
           coords={initial.coords}
           bbox={initial.bbox}
@@ -1036,7 +1042,7 @@ export default function HmrApp({
       )}
 
       {!wideRail && (
-        <header className="pointer-events-none absolute inset-x-0 top-0 z-30 flex flex-col gap-2 px-3 pt-[calc(var(--safe-top)+0.5rem)]">
+        <header className="pointer-events-none absolute inset-x-0 top-0 z-30 flex w-full min-w-0 flex-col gap-2 px-3 pt-[calc(var(--safe-top)+0.5rem)]">
           <MapChromeControls variant="overlay" {...mapChromeProps} />
         </header>
       )}

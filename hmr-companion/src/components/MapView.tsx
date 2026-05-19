@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Map as MaplibreMap, StyleSpecification, MapGeoJSONFeature, MapMouseEvent } from "maplibre-gl";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
@@ -106,10 +106,21 @@ const OSM_STYLE: StyleSpecification = {
   ],
 };
 
+function lngLatOnTrack(
+  coords: StoredCoord[],
+  alongKm: number,
+  fallbackLng: number,
+  fallbackLat: number
+): [number, number] {
+  const onTrack = coordAtKm(coords, alongKm);
+  return onTrack ? [onTrack.lng, onTrack.lat] : [fallbackLng, fallbackLat];
+}
+
 export default function MapView(props: MapViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MaplibreMap | null>(null);
   const readyRef = useRef(false);
+  const [mapReady, setMapReady] = useState(false);
   const coordsArray = useMemo<[number, number][]>(
     () => props.coords.map((c) => [c[0], c[1]]),
     [props.coords]
@@ -823,13 +834,20 @@ export default function MapView(props: MapViewProps) {
         "pois-circle"
       );
 
-      // Visibili sopra traccia, POI, checkpoint, media (sotto solo popup)
+      // Marker km sopra tutto; checkpoint/resupply sopra POI e traccia
       try {
+        map.moveLayer("checkpoints-halo");
+        map.moveLayer("checkpoints-core");
+        map.moveLayer("checkpoints-label");
+        map.moveLayer("resupply-circle");
+        map.moveLayer("resupply-label");
         map.moveLayer("kmMarkers-circle");
         map.moveLayer("kmMarkers-label");
       } catch {
         /* ignore */
       }
+
+      setMapReady(true);
 
       map.on("click", "streetview-circle", (e) => {
         const f = e.features?.[0] as MapGeoJSONFeature | undefined;
@@ -1019,23 +1037,24 @@ export default function MapView(props: MapViewProps) {
       map.remove();
       mapRef.current = null;
       readyRef.current = false;
+      setMapReady(false);
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !readyRef.current) return;
+    if (!map || !mapReady) return;
     const src = map.getSource("track") as maplibregl.GeoJSONSource | undefined;
     src?.setData({
       type: "Feature",
       properties: {},
       geometry: { type: "LineString", coordinates: coordsArray },
     });
-  }, [coordsArray]);
+  }, [coordsArray, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !readyRef.current) return;
+    if (!map || !mapReady) return;
     const src = map.getSource("kmMarkers") as maplibregl.GeoJSONSource | undefined;
     src?.setData({
       type: "FeatureCollection",
@@ -1045,33 +1064,33 @@ export default function MapView(props: MapViewProps) {
         geometry: { type: "Point", coordinates: [m.lng, m.lat] },
       })),
     });
-  }, [kmMarkers]);
+  }, [kmMarkers, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !readyRef.current) return;
+    if (!map || !mapReady) return;
     const src = map.getSource("sections") as maplibregl.GeoJSONSource | undefined;
     src?.setData(
       props.showSections
         ? { type: "FeatureCollection", features: sectionFeatures }
         : { type: "FeatureCollection", features: [] }
     );
-  }, [sectionFeatures, props.showSections]);
+  }, [sectionFeatures, props.showSections, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !readyRef.current) return;
+    if (!map || !mapReady) return;
     const src = map.getSource("sections-points") as maplibregl.GeoJSONSource | undefined;
     src?.setData(
       props.showSections
         ? { type: "FeatureCollection", features: sectionPointFeatures }
         : { type: "FeatureCollection", features: [] }
     );
-  }, [sectionPointFeatures, props.showSections]);
+  }, [sectionPointFeatures, props.showSections, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !readyRef.current) return;
+    if (!map || !mapReady) return;
     const src = map.getSource("bridges") as maplibregl.GeoJSONSource | undefined;
     src?.setData(
       props.showSections
@@ -1089,11 +1108,11 @@ export default function MapView(props: MapViewProps) {
           }
         : { type: "FeatureCollection", features: [] }
     );
-  }, [props.bridges, props.showSections]);
+  }, [props.bridges, props.showSections, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !readyRef.current) return;
+    if (!map || !mapReady) return;
     const features = props.pois
       .filter((p) => props.visibleCategories.has(p.category))
       .map((p) => ({
@@ -1103,38 +1122,41 @@ export default function MapView(props: MapViewProps) {
       }));
     const src = map.getSource("pois") as maplibregl.GeoJSONSource | undefined;
     src?.setData({ type: "FeatureCollection", features });
-  }, [props.pois, props.visibleCategories]);
+  }, [props.pois, props.visibleCategories, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !readyRef.current) return;
+    if (!map || !mapReady) return;
     const segSrc = map.getSource("racePlanSegs") as maplibregl.GeoJSONSource | undefined;
     segSrc?.setData({ type: "FeatureCollection", features: racePlanGeo.lineFeatures });
     const ptSrc = map.getSource("racePlanPts") as maplibregl.GeoJSONSource | undefined;
     ptSrc?.setData({ type: "FeatureCollection", features: racePlanGeo.ptFeatures });
-  }, [racePlanGeo]);
+  }, [racePlanGeo, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !readyRef.current) return;
+    if (!map || !mapReady) return;
     const src = map.getSource("resupply") as maplibregl.GeoJSONSource | undefined;
     src?.setData(
       props.showResupply
         ? {
             type: "FeatureCollection",
-            features: props.resupply.map((r) => ({
-              type: "Feature" as const,
-              properties: { id: r.id, name: r.name, notes: r.notes, along_km: r.along_km },
-              geometry: { type: "Point" as const, coordinates: [r.lng, r.lat] },
-            })),
+            features: props.resupply.map((r) => {
+              const [lng, lat] = lngLatOnTrack(props.coords, r.along_km, r.lng, r.lat);
+              return {
+                type: "Feature" as const,
+                properties: { id: r.id, name: r.name, notes: r.notes, along_km: r.along_km },
+                geometry: { type: "Point" as const, coordinates: [lng, lat] },
+              };
+            }),
           }
         : { type: "FeatureCollection", features: [] }
     );
-  }, [props.resupply, props.showResupply]);
+  }, [props.resupply, props.showResupply, props.coords, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !readyRef.current) return;
+    if (!map || !mapReady) return;
     const src = map.getSource("checkpoints") as maplibregl.GeoJSONSource | undefined;
     src?.setData({
       type: "FeatureCollection",
@@ -1144,11 +1166,11 @@ export default function MapView(props: MapViewProps) {
         geometry: { type: "Point", coordinates: [c.lng, c.lat] },
       })),
     });
-  }, [props.checkpoints]);
+  }, [props.checkpoints, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !readyRef.current) return;
+    if (!map || !mapReady) return;
     const meSrc = map.getSource("me") as maplibregl.GeoJSONSource | undefined;
     if (!meSrc) return;
     if (props.myPosition) {
@@ -1165,11 +1187,11 @@ export default function MapView(props: MapViewProps) {
     } else {
       meSrc.setData({ type: "FeatureCollection", features: [] });
     }
-  }, [props.myPosition]);
+  }, [props.myPosition, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !readyRef.current) return;
+    if (!map || !mapReady) return;
     const src = map.getSource("projected") as maplibregl.GeoJSONSource | undefined;
     if (!src) return;
     if (props.myAlongKm != null) {
@@ -1189,11 +1211,11 @@ export default function MapView(props: MapViewProps) {
       }
     }
     src.setData({ type: "FeatureCollection", features: [] });
-  }, [props.myAlongKm, props.coords]);
+  }, [props.myAlongKm, props.coords, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !readyRef.current) return;
+    if (!map || !mapReady) return;
     const src = map.getSource("hover-point") as maplibregl.GeoJSONSource | undefined;
     if (!src) return;
     if (props.hoverKm != null) {
@@ -1213,11 +1235,11 @@ export default function MapView(props: MapViewProps) {
       }
     }
     src.setData({ type: "FeatureCollection", features: [] });
-  }, [props.hoverKm, props.coords]);
+  }, [props.hoverKm, props.coords, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !readyRef.current) return;
+    if (!map || !mapReady) return;
     const src = map.getSource("pins") as maplibregl.GeoJSONSource | undefined;
     if (!src) return;
     const features: GeoJSON.Feature<GeoJSON.Point>[] = [];
@@ -1242,11 +1264,11 @@ export default function MapView(props: MapViewProps) {
       }
     }
     src.setData({ type: "FeatureCollection", features });
-  }, [props.pinAKm, props.pinBKm, props.coords]);
+  }, [props.pinAKm, props.pinBKm, props.coords, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !readyRef.current) return;
+    if (!map || !mapReady) return;
     const src = map.getSource("measure-segment") as maplibregl.GeoJSONSource | undefined;
     if (!src) return;
     const a: number | null = props.pinAKm;
@@ -1270,11 +1292,11 @@ export default function MapView(props: MapViewProps) {
         },
       ],
     });
-  }, [props.pinAKm, props.pinBKm, props.hoverKm, props.coords]);
+  }, [props.pinAKm, props.pinBKm, props.hoverKm, props.coords, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !readyRef.current) return;
+    if (!map || !mapReady) return;
     const src = map.getSource("streetview") as maplibregl.GeoJSONSource | undefined;
     if (!src) return;
     const on = props.showStreetViewLayer !== false;
@@ -1294,11 +1316,11 @@ export default function MapView(props: MapViewProps) {
         geometry: { type: "Point" as const, coordinates: [p.lng, p.lat] },
       })),
     });
-  }, [props.streetViewPoints, props.showStreetViewLayer]);
+  }, [props.streetViewPoints, props.showStreetViewLayer, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !readyRef.current) return;
+    if (!map || !mapReady) return;
     const range = props.flyToKmRange;
     if (!range) return;
     const bounds = bboxLngLatForKmRange(props.coords, range.lo, range.hi);
@@ -1308,7 +1330,7 @@ export default function MapView(props: MapViewProps) {
     } catch {
       /* ignore */
     }
-  }, [props.flyToKmRange, props.coords]);
+  }, [props.flyToKmRange, props.coords, mapReady]);
 
   return (
     <div
