@@ -118,7 +118,7 @@ export default function TrackPicker({ tracks, credits, isAdmin = false }: Props)
       setIngestStartedAt(null);
       setIngestDone({
         trackId: data.trackId,
-        trackName: data.name ?? name.trim() || file.name,
+        trackName: data.name ?? (name.trim() || file.name),
         poiCount: data.poiCount,
         partial: !data.snapshotComplete,
         warning: data.snapshotWarning,
