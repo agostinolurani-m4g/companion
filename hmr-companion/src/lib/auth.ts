@@ -97,3 +97,16 @@ export async function requireAuthenticated(): Promise<{ email: string } | null> 
   if (!email) return null;
   return { email };
 }
+
+/** Solo admin: eliminazione tracce. */
+export const ADMIN_USERS = new Set(["ago"]);
+
+export function isAdminUser(username: string): boolean {
+  return ADMIN_USERS.has(normalizeUsername(username));
+}
+
+export async function requireAdmin(): Promise<{ email: string } | null> {
+  const auth = await requireAuthenticated();
+  if (!auth || !isAdminUser(auth.email)) return null;
+  return auth;
+}

@@ -93,13 +93,25 @@ export async function POST(req: Request) {
       persistGpxFile: true,
     });
 
-    const { poiCount: snapshotPoiCount } = await runFullTrackSnapshot(trackId, {
-      webFast: true,
-    });
+    let snapshotComplete = false;
+    let snapshotWarning: string | undefined;
+    let poiCount = 0;
+    try {
+      const snap = await runFullTrackSnapshot(trackId, { webFast: true });
+      snapshotComplete = true;
+      poiCount = snap.poiCount;
+    } catch (snapErr) {
+      snapshotWarning =
+        snapErr instanceof Error
+          ? snapErr.message
+          : "Snapshot OpenStreetMap non riuscito. La traccia è salvata: riprova con TRACK_ID=… npm run snapshot.";
+      poiCount = countPois(trackId);
+    }
 
-    consumeIngestCredit(auth.email);
+    if (snapshotComplete) {
+      consumeIngestCredit(auth.email);
+    }
     const creditsAfter = getIngestCreditsInfo(auth.email);
-    const poiCount = snapshotPoiCount || countPois(trackId);
 
     return NextResponse.json({
       trackId: result.trackId,
@@ -108,7 +120,8 @@ export async function POST(req: Request) {
       elev_gain_m: result.elev_gain_m,
       elev_loss_m: result.elev_loss_m,
       updated: result.updated,
-      snapshotComplete: true,
+      snapshotComplete,
+      snapshotWarning,
       poiCount,
       credits: creditsAfter,
     });

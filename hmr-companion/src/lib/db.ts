@@ -653,6 +653,12 @@ export function getFirstTrack(): TrackRow | undefined {
     .get() as TrackRow | undefined;
 }
 
+/** Elimina traccia e dati collegati (ON DELETE CASCADE). */
+export function deleteTrack(id: string): boolean {
+  const res = getDb().prepare(`DELETE FROM tracks WHERE id = ?`).run(id);
+  return res.changes > 0;
+}
+
 export function listCheckpoints(trackId: string): CheckpointRow[] {
   return getDb()
     .prepare(`SELECT * FROM checkpoints WHERE track_id = ? ORDER BY along_km ASC`)

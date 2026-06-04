@@ -7,9 +7,12 @@
 import type { Position } from "geojson";
 import type { PoiCategory } from "./db";
 
+/** Mirror pubblici; ordine = priorità. Kumi/FR spesso più stabili del solo cluster DE. */
 const DEFAULT_INTERPRETERS = [
+  "https://overpass.kumi.systems/api/interpreter",
   "https://overpass-api.de/api/interpreter",
   "https://lz4.overpass-api.de/api/interpreter",
+  "https://overpass.openstreetmap.fr/api/interpreter",
   "https://z.overpass-api.de/api/interpreter",
 ];
 
@@ -35,6 +38,23 @@ export type OsmNode = {
 };
 
 let mirrorOffset = 0;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function mirrorSwitchDelayMs(): number {
+  const raw = process.env.HMR_OVERPASS_MIRROR_PAUSE_MS;
+  const n = raw ? parseInt(raw, 10) : NaN;
+  if (Number.isFinite(n) && n >= 0 && n <= 10_000) return n;
+  return 800;
+}
+
+function isLikelyNetworkError(message: string): boolean {
+  return /fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|socket|network|timed out|abort/i.test(
+    message
+  );
+}
 
 function overpassTimeoutMs(): number {
   const raw = process.env.HMR_OVERPASS_TIMEOUT_MS;
@@ -78,10 +98,11 @@ export async function fetchOverpassRawElements(query: string): Promise<unknown[]
   const ua = process.env.HMR_OVERPASS_UA?.trim() || DEFAULT_UA;
   const formBody = `data=${encodeURIComponent(query)}`;
   const mirrors = activeInterpreters();
-  let lastErr: Error | null = null;
+  const failures: string[] = [];
   const startIdx = mirrorOffset % mirrors.length;
   for (let k = 0; k < mirrors.length; k++) {
     const url = mirrors[(startIdx + k) % mirrors.length];
+    if (k > 0) await sleep(mirrorSwitchDelayMs());
     try {
       const res = await fetch(url, {
         method: "POST",
@@ -105,58 +126,67 @@ export async function fetchOverpassRawElements(query: string): Promise<unknown[]
           }
           retryAfter = parseRetryAfter(res, body);
         }
-        lastErr = new OverpassError(
+        const httpErr = new OverpassError(
           `Overpass HTTP ${res.status} (${url})${retryAfter != null ? ` retry-after ${retryAfter}s` : ""}`,
           res.status,
           transient,
           retryAfter
         );
+        failures.push(httpErr.message);
         if (transient) continue;
-        throw lastErr;
+        throw httpErr;
       }
       const text = await res.text();
       const looksJson = text.trimStart().startsWith("{");
       if (!looksJson) {
         const busy = /timed? out|too busy|runtime error|osm3s/i.test(text);
-        lastErr = new OverpassError(
+        const nonJsonErr = new OverpassError(
           `Overpass risposta non-JSON da ${url}${busy ? " (server busy)" : ""}`,
           busy ? 503 : 502,
           true
         );
+        failures.push(nonJsonErr.message);
         continue;
       }
       try {
         const j = JSON.parse(text) as { elements?: unknown[]; remark?: string };
         if (j.remark && /timed? out|too busy|runtime error/i.test(j.remark)) {
-          lastErr = new OverpassError(
+          const remarkErr = new OverpassError(
             `Overpass remark da ${url}: ${j.remark}`,
             503,
             true
           );
+          failures.push(remarkErr.message);
           continue;
         }
         mirrorOffset = (startIdx + k) % mirrors.length;
         return j.elements ?? [];
       } catch (e) {
-        lastErr = new OverpassError(
+        const jsonErr = new OverpassError(
           `Overpass JSON invalido (${url}): ${(e as Error).message}`,
           502,
           true
         );
+        failures.push(jsonErr.message);
         continue;
       }
     } catch (e) {
       if (e instanceof OverpassError) {
-        lastErr = e;
+        failures.push(e.message);
         if (!e.transient) throw e;
       } else {
         const msg = e instanceof Error ? e.message : String(e);
-        lastErr = new OverpassError(`Overpass fetch error (${url}): ${msg}`, 0, true);
+        const net = isLikelyNetworkError(msg);
+        failures.push(`Overpass fetch error (${url}): ${msg}`);
+        if (!net) throw new OverpassError(failures[failures.length - 1]!, 0, false);
       }
     }
   }
   mirrorOffset = (mirrorOffset + 1) % mirrors.length;
-  throw lastErr ?? new OverpassError("Overpass: tutti i mirror hanno fallito", 0, true);
+  const hint =
+    "Prova più tardi o imposta HMR_OVERPASS_MIRROR in .env.local (es. https://overpass.kumi.systems/api/interpreter).";
+  const detail = failures.length > 0 ? failures.join(" · ") : "nessun dettaglio";
+  throw new OverpassError(`Overpass: tutti i mirror hanno fallito. ${hint} Dettaglio: ${detail}`, 0, true);
 }
 
 type RawOsmElement = {

@@ -18,6 +18,7 @@ export type TrackPickerItem = {
 type Props = {
   tracks: TrackPickerItem[];
   credits: IngestCreditsInfo;
+  isAdmin?: boolean;
 };
 
 function formatDate(ts: number): string {
@@ -34,17 +35,45 @@ function creditsLabel(credits: IngestCreditsInfo): string {
   return n === 1 ? "1 credito ingest" : `${n} crediti ingest`;
 }
 
-export default function TrackPicker({ tracks, credits }: Props) {
+export default function TrackPicker({ tracks, credits, isAdmin = false }: Props) {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState("");
   const [hmrOfficial, setHmrOfficial] = useState(false);
   const [busy, setBusy] = useState(false);
   const [busyPhase, setBusyPhase] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [trackList, setTrackList] = useState(tracks);
   const [err, setErr] = useState<string | null>(null);
   const [cliOpen, setCliOpen] = useState(false);
   const [creditsState, setCreditsState] = useState(credits);
   const canUpload = creditsState.canIngest;
+
+  const onDeleteTrack = async (trackId: string, trackName: string) => {
+    if (
+      !window.confirm(
+        `Eliminare "${trackName}" (${trackId})?\n\nVerranno rimossi POI, piani gara e tutti i dati collegati.`
+      )
+    ) {
+      return;
+    }
+    setDeletingId(trackId);
+    setErr(null);
+    try {
+      const res = await fetch(`/api/tracks/${encodeURIComponent(trackId)}`, {
+        method: "DELETE",
+        credentials: "same-origin",
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Eliminazione non riuscita");
+      setTrackList((list) => list.filter((t) => t.id !== trackId));
+      router.refresh();
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : String(error));
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   const onUpload = async (e: FormEvent) => {
     e.preventDefault();
@@ -75,11 +104,18 @@ export default function TrackPicker({ tracks, credits }: Props) {
         error?: string;
         trackId?: string;
         credits?: IngestCreditsInfo;
+        snapshotComplete?: boolean;
+        snapshotWarning?: string;
       };
       if (!res.ok || !data.trackId) {
         throw new Error(data.error ?? "Import non riuscito");
       }
       if (data.credits) setCreditsState(data.credits);
+      if (data.snapshotWarning) {
+        setErr(
+          `Traccia salvata, ma POI/superficie OSM non completati: ${data.snapshotWarning}`
+        );
+      }
       router.push(`/track/${encodeURIComponent(data.trackId)}`);
       router.refresh();
     } catch (error) {
@@ -95,7 +131,8 @@ export default function TrackPicker({ tracks, credits }: Props) {
       <header className="shrink-0 border-b border-[color:var(--hmr-border)]/60 px-4 py-4">
         <h1 className="text-xl font-semibold">HMR Companion</h1>
         <p className="mt-1 text-sm text-[color:var(--hmr-muted)]">
-          Scegli una gara o importa un nuovo percorso GPX (ingest completo automatico).
+          Scegli una gara o carica un GPX: traccia, POI OpenStreetMap e superficie vengono creati in
+          automatico (non serve terminale).
         </p>
         <p className="mt-2 text-xs text-[color:var(--hmr-faint)]">
           {creditsLabel(creditsState)}
@@ -106,13 +143,13 @@ export default function TrackPicker({ tracks, credits }: Props) {
       </header>
 
       <div className="flex flex-1 flex-col gap-6 p-4">
-        {tracks.length > 0 ? (
+        {trackList.length > 0 ? (
           <section>
             <h2 className="mb-3 text-xs font-medium uppercase tracking-wide text-[color:var(--hmr-muted)]">
               Gare nel database
             </h2>
             <ul className="grid gap-3 sm:grid-cols-2">
-              {tracks.map((t) => (
+              {trackList.map((t) => (
                 <li
                   key={t.id}
                   className="hmr-panel flex flex-col gap-3 rounded-2xl border border-[color:var(--hmr-border)]/80 p-4"
@@ -150,6 +187,16 @@ export default function TrackPicker({ tracks, credits }: Props) {
                     >
                       Scarica GPX
                     </a>
+                    {isAdmin ? (
+                      <button
+                        type="button"
+                        disabled={deletingId === t.id || busy}
+                        onClick={() => void onDeleteTrack(t.id, t.name)}
+                        className="rounded-lg border border-red-500/40 px-3 py-2 text-xs text-red-400 hover:bg-red-500/10 disabled:opacity-50"
+                      >
+                        {deletingId === t.id ? "Elimino…" : "Elimina"}
+                      </button>
+                    ) : null}
                   </div>
                 </li>
               ))}
@@ -164,8 +211,9 @@ export default function TrackPicker({ tracks, credits }: Props) {
         <section className="hmr-panel rounded-2xl border border-[color:var(--hmr-border)]/80 p-4">
           <h2 className="text-sm font-medium">Carica GPX</h2>
           <p className="mt-1 text-xs text-[color:var(--hmr-muted)]">
-            Importa la traccia e avvia subito snapshot POI OpenStreetMap e classificazione superficie
-            (richiede rete, circa 5–15 minuti). Non chiudere la pagina durante l&apos;upload.
+            L&apos;app scarica da sola i POI da OpenStreetMap e la superficie del percorso (come{" "}
+            <code className="rounded bg-[color:var(--hmr-elev)] px-1">npm run snapshot</code>).
+            Serve rete e circa 5–15 minuti: non chiudere la pagina.
           </p>
           {!canUpload ? (
             <p className="mt-2 text-xs text-amber-400/90">
@@ -225,10 +273,11 @@ export default function TrackPicker({ tracks, credits }: Props) {
           </button>
           {cliOpen ? (
             <pre className="hmr-panel mt-2 whitespace-pre-wrap rounded-xl p-3 text-left">
-              {`cd hmr-companion
+              {`# Opzionale: solo da terminale (stesso risultato dell'upload web)
+cd hmr-companion
 npm run ingest
-TRACK_ID=hmr-2026 npm run snapshot
-TRACK_ID=hmr-2026 npm run snapshot:surface`}
+TRACK_ID=mia-gara npm run snapshot
+TRACK_ID=mia-gara npm run snapshot:surface`}
             </pre>
           ) : null}
         </section>

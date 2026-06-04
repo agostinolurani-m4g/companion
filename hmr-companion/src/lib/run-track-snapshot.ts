@@ -18,8 +18,8 @@ export async function runFullTrackSnapshot(
     ? {
         gridCols: 3,
         gridRows: 4,
-        concurrency: 2,
-        pauseMs: 500,
+        concurrency: 1,
+        pauseMs: 800,
       }
     : undefined);
   await runSurfaceSnapshotForTrack(trackId, fast
