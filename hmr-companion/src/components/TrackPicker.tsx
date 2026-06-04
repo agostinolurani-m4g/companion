@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRef, useState, type FormEvent } from "react";
+import { IngestProgressOverlay, type IngestOverlayDone } from "@/components/IngestProgressOverlay";
 import type { IngestCreditsInfo } from "@/lib/ingest-credits";
 
 export type TrackPickerItem = {
@@ -40,9 +41,10 @@ export default function TrackPicker({ tracks, credits, isAdmin = false }: Props)
   const fileRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState("");
   const [hmrOfficial, setHmrOfficial] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [busyPhase, setBusyPhase] = useState<string | null>(null);
+  const [ingestStartedAt, setIngestStartedAt] = useState<number | null>(null);
+  const [ingestDone, setIngestDone] = useState<IngestOverlayDone | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const busy = ingestStartedAt != null && ingestDone == null;
   const [trackList, setTrackList] = useState(tracks);
   const [err, setErr] = useState<string | null>(null);
   const [cliOpen, setCliOpen] = useState(false);
@@ -86,8 +88,8 @@ export default function TrackPicker({ tracks, credits, isAdmin = false }: Props)
       setErr("Credito ingest esaurito.");
       return;
     }
-    setBusy(true);
-    setBusyPhase("GPX, POI OSM e superficie… (5–15 min)");
+    setIngestDone(null);
+    setIngestStartedAt(Date.now());
     setErr(null);
     try {
       const fd = new FormData();
@@ -103,31 +105,47 @@ export default function TrackPicker({ tracks, credits, isAdmin = false }: Props)
       const data = (await res.json().catch(() => ({}))) as {
         error?: string;
         trackId?: string;
+        name?: string;
         credits?: IngestCreditsInfo;
         snapshotComplete?: boolean;
         snapshotWarning?: string;
+        poiCount?: number;
       };
       if (!res.ok || !data.trackId) {
         throw new Error(data.error ?? "Import non riuscito");
       }
       if (data.credits) setCreditsState(data.credits);
-      if (data.snapshotWarning) {
-        setErr(
-          `Traccia salvata, ma POI/superficie OSM non completati: ${data.snapshotWarning}`
-        );
-      }
-      router.push(`/track/${encodeURIComponent(data.trackId)}`);
-      router.refresh();
+      setIngestStartedAt(null);
+      setIngestDone({
+        trackId: data.trackId,
+        trackName: data.name ?? name.trim() || file.name,
+        poiCount: data.poiCount,
+        partial: !data.snapshotComplete,
+        warning: data.snapshotWarning,
+      });
     } catch (error) {
       setErr(error instanceof Error ? error.message : String(error));
-    } finally {
-      setBusy(false);
-      setBusyPhase(null);
+      setIngestStartedAt(null);
+      setIngestDone(null);
     }
   };
 
+  const openIngestedTrack = () => {
+    if (!ingestDone) return;
+    const id = ingestDone.trackId;
+    setIngestDone(null);
+    router.push(`/track/${encodeURIComponent(id)}`);
+    router.refresh();
+  };
+
   return (
-    <main className="flex h-full min-h-0 flex-col overflow-y-auto">
+    <main className="relative flex h-full min-h-0 flex-col overflow-y-auto">
+      {ingestStartedAt != null ? (
+        <IngestProgressOverlay mode="running" startedAt={ingestStartedAt} />
+      ) : null}
+      {ingestDone ? (
+        <IngestProgressOverlay mode="done" result={ingestDone} onOpen={openIngestedTrack} />
+      ) : null}
       <header className="shrink-0 border-b border-[color:var(--hmr-border)]/60 px-4 py-4">
         <h1 className="text-xl font-semibold">HMR Companion</h1>
         <p className="mt-1 text-sm text-[color:var(--hmr-muted)]">
@@ -258,7 +276,7 @@ export default function TrackPicker({ tracks, credits, isAdmin = false }: Props)
               disabled={busy || !canUpload}
               className="rounded-lg bg-[color:var(--hmr-accent)] px-4 py-2.5 text-sm font-medium text-[color:var(--hmr-bg)] disabled:opacity-50"
             >
-              {busy ? (busyPhase ?? "Ingest in corso…") : "Ingest completo e apri"}
+              {busy ? "Ingestione in corso…" : "Ingest completo e apri"}
             </button>
           </form>
         </section>

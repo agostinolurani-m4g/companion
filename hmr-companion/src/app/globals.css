@@ -107,6 +107,33 @@ body {
     border-color: rgba(56, 189, 248, 0.5);
     color: var(--hmr-accent);
   }
+  .hmr-ingest-spinner {
+    width: 2.5rem;
+    height: 2.5rem;
+    border: 3px solid color-mix(in srgb, var(--hmr-accent) 25%, transparent);
+    border-top-color: var(--hmr-accent);
+    border-radius: 50%;
+    animation: hmr-ingest-spin 0.85s linear infinite;
+  }
+  .hmr-ingest-bar {
+    width: 40%;
+    animation: hmr-ingest-indeterminate 1.6s ease-in-out infinite;
+  }
+}
+
+@keyframes hmr-ingest-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes hmr-ingest-indeterminate {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
 }
 
 /* Drag handle */
