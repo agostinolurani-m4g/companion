@@ -56,6 +56,25 @@ npm run dev         # http://localhost:3002
 
 `npm run seed` è lo shortcut di `ingest` + `snapshot`.
 
+### Selezione gara e upload GPX (web)
+
+Dopo il login, la home (`/`) elenca le gare nel database SQLite. Puoi:
+
+- **Apri** una gara → `/track/{id}` (mappa, profilo, POI).
+- **Caricare un GPX** dall’interfaccia (`POST /api/tracks/import`, max 50 MB): traccia + snapshot POI + superficie in un’unica operazione (5–15 min, non chiudere la pagina).
+  - Spunta *Aggiorna HMR 2026* per sovrascrivere `hmr-2026` con checkpoint/resupply ufficiali.
+  - Altre gare vengono salvate in `data/uploads/{id}.gpx` con id slug dal nome.
+  - **Crediti ingest:** 1 upload per utente (`ago` illimitato). Utenti: `ago`, `ale`, `gala`, `babbo`, `marti`.
+
+Per rifare solo snapshot da terminale (senza consumare credito web):
+
+```bash
+TRACK_ID=hmr-2026 npm run snapshot
+TRACK_ID=hmr-2026 npm run snapshot:surface
+```
+
+La route `/race` reindirizza a `/track/hmr-2026/race` (modalità gara mobile).
+
 Lo snapshot fa una query Overpass per **cella bbox** (default 4×5 = 20 celle)
 × 7 categorie = ~140 round-trip totali, invece che centinaia di `around:`.
 Ogni cella è cachata in `.ingest-cache/<categoria>/<lat_lng__lat_lng>.json`,
@@ -88,6 +107,7 @@ preserva e le celle mancanti verranno ri-richieste).
 | `HMR_AUTH_FROM_EMAIL` | no | `HMR Companion <onboarding@resend.dev>` | mittente email magic link |
 | `HMR_DB_PATH` | no | `data/hmr.db` | path del file SQLite |
 | `HMR_GPX_FILENAME` | no | `Hellenic_Mountain_Race_2026.gpx` | nome del GPX da ingest |
+| `TRACK_ID` | no | prima traccia in DB | traccia target per `snapshot` / `snapshot:surface` |
 | `HMR_OVERPASS_UA` | no | `hmr-companion/0.1` | User-Agent per Overpass |
 | `HMR_OVERPASS_MIRROR` | no | lista default | mirror Overpass, separati da virgola |
 | `HMR_OVERPASS_TIMEOUT_MS` | no | `55000` | timeout per singola call a un mirror |
@@ -101,7 +121,8 @@ preserva e le celle mancanti verranno ri-richieste).
 
 ## API interne
 
-- `GET /api/track/default` — metadata + bbox della traccia principale.
+- `GET /api/track/default` — metadata della traccia più recente (legacy / offline).
+- `POST /api/tracks/import` — upload GPX autenticato (multipart: `file`, opz. `name`, `hmrOfficial=1`).
 - `GET /api/track/:id` — metadata completi + coords compatte `[lng,lat,elev|null,cumKm]`.
 - `GET /api/track/:id/pois?categories=water,shop&fromKm=200&toKm=260&maxDetourM=1500` — POI filtrati.
 - `GET /api/track/:id/ahead?atKm=210&windowKm=60` — prossimo POI per ogni categoria + next CP + next resupply.

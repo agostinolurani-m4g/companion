@@ -9,7 +9,7 @@
  */
 
 import crypto from "node:crypto";
-import { getDbPath, getFirstTrack, replaceTrackSurfaceSegments } from "../src/lib/db";
+import { getDbPath, getFirstTrack, getTrack, replaceTrackSurfaceSegments } from "../src/lib/db";
 import { fetchHighwayWaysGeomInBbox, type Bbox, type OsmWayGeom } from "../src/lib/overpass";
 import type { StoredCoord } from "../src/lib/track-coords";
 import {
@@ -119,12 +119,26 @@ function sampleAlongTrack(coords: StoredCoord[], lengthKm: number): { lng: numbe
   return out;
 }
 
-async function main() {
+function resolveSurfaceTrack() {
+  const envId = process.env.TRACK_ID?.trim();
+  if (envId) {
+    const t = getTrack(envId);
+    if (!t) {
+      console.error(`[surface] TRACK_ID=${envId} non trovato in DB.`);
+      process.exit(1);
+    }
+    return t;
+  }
   const track = getFirstTrack();
   if (!track) {
     console.error("[surface] Nessuna traccia nel DB. Esegui prima npm run ingest.");
     process.exit(1);
   }
+  return track;
+}
+
+async function main() {
+  const track = resolveSurfaceTrack();
   console.log(`[surface] DB: ${getDbPath()} · track=${track.id}`);
 
   const bbox = JSON.parse(track.bbox_json) as {

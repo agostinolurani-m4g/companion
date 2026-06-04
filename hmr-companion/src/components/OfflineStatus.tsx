@@ -114,7 +114,6 @@ export default function OfflineStatus({ trackId, bbox }: Props) {
   const warmApis = useCallback(async () => {
     const base = `/api/track/${encodeURIComponent(trackId)}`;
     const urls = [
-      "/api/track/default",
       `${base}`,
       `${base}/checkpoints`,
       `${base}/resupply`,

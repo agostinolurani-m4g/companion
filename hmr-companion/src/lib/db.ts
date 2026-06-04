@@ -221,6 +221,11 @@ function initSchema(db: Database.Database): void {
       created_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_auth_sessions_email ON auth_sessions(email, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS user_ingest_credits (
+      username TEXT PRIMARY KEY,
+      credits_remaining INTEGER NOT NULL DEFAULT 1
+    );
   `);
   migrateTracksElevProfileScales(db);
   migrateNotableSectionsDescriptionEn(db);

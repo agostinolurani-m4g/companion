@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
 import type {
@@ -254,6 +255,13 @@ function MapChromeControls({
             <div
               className={`flex shrink-0 flex-wrap items-center gap-1 ${variant === "rail" ? "" : "max-sm:basis-full max-sm:justify-end sm:ml-auto"}`}
             >
+              <Link
+                href="/"
+                className="hmr-chip hmr-chip-off max-sm:!min-h-[26px] max-sm:!px-1.5 max-sm:!py-0 max-sm:!text-[8px] sm:min-h-0 sm:px-2 sm:py-0.5 sm:text-[9px]"
+                title="Torna alla selezione gare"
+              >
+                Gare
+              </Link>
               <span className="max-w-[7rem] truncate text-[8px] text-[color:var(--hmr-faint)] sm:max-w-[11rem] sm:text-[9px]">
                 {sessionEmail}
               </span>

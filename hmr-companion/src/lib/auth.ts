@@ -16,6 +16,7 @@ const SESSION_TTL_MS = 14 * 24 * 60 * 60 * 1000;
  */
 const FIXED_LOGIN: Readonly<Record<string, string>> = {
   ago: "hellenicago26",
+  ale: "hellenicale26",
   gala: "hellenicgala26",
   babbo: "hellenicbabbo26",
   marti: "helenicmarti2026",

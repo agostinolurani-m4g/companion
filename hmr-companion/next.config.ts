@@ -6,6 +6,9 @@ const appDir = path.dirname(fileURLToPath(import.meta.url));
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  experimental: {
+    proxyClientMaxBodySize: "50mb",
+  },
   serverExternalPackages: ["better-sqlite3"],
   outputFileTracingIncludes: {
     "/api/**/*": ["./node_modules/better-sqlite3/**/*"],

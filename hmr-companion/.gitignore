@@ -34,6 +34,7 @@ yarn-error.log*
 # large source assets kept locally (GPX + PDF are committed)
 !/data/*.gpx
 !/data/*.pdf
+/data/uploads/
 
 # vitest
 /.test/

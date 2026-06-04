@@ -23,7 +23,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { v5 as uuidv5 } from "uuid";
 import type { Position } from "geojson";
-import { getDb, getFirstTrack, type PoiCategory } from "../src/lib/db";
+import { getDb, getFirstTrack, getTrack, type PoiCategory } from "../src/lib/db";
 import { OSM_POI_UUID_NAMESPACE } from "../src/lib/poi-osm-insert";
 import {
   cumulativeKmAlong,
@@ -267,12 +267,26 @@ function trackBbox(coords: Position[], pad: number): Bbox {
   return [minLat - pad, minLng - pad, maxLat + pad, maxLng + pad];
 }
 
-async function main() {
+function resolveSnapshotTrack() {
+  const envId = process.env.TRACK_ID?.trim();
+  if (envId) {
+    const t = getTrack(envId);
+    if (!t) {
+      console.error(`[snapshot] TRACK_ID=${envId} non trovato in DB.`);
+      process.exit(1);
+    }
+    return t;
+  }
   const track = getFirstTrack();
   if (!track) {
     console.error(`[snapshot] Nessuna traccia in DB. Esegui prima \`npm run ingest\`.`);
     process.exit(1);
   }
+  return track;
+}
+
+async function main() {
+  const track = resolveSnapshotTrack();
   const coords = (JSON.parse(track.coords_json) as [number, number, number | null, number][]).map(
     (c) => {
       const p: Position = [c[0], c[1]];

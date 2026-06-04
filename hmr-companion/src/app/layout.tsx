@@ -3,9 +3,9 @@ import "./globals.css";
 import ServiceWorkerRegister from "@/components/ServiceWorkerRegister";
 
 export const metadata: Metadata = {
-  title: "HMR Companion · Hellenic Mountain Race 2026",
+  title: "HMR Companion",
   description:
-    "Mappa statica offline-friendly per la HMR 2026: traccia, checkpoint con cutoff, resupply, POI lungo il percorso.",
+    "Mappa offline-friendly per gare trail/bikepacking: traccia GPX, checkpoint, resupply e POI lungo il percorso.",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     title: "HMR 2026",
