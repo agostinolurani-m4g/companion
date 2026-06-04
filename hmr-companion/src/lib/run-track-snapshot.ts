@@ -1,67 +1,33 @@
-import { spawn } from "node:child_process";
-import path from "node:path";
+import { runPoiSnapshotForTrack } from "@/lib/snapshot-pois-run";
+import { runSurfaceSnapshotForTrack } from "@/lib/snapshot-surface-run";
 
 export type RunSnapshotOptions = {
-  /** Griglia più piccola per upload web (più veloce, meno POI ai bordi). */
+  /** Griglia più piccola per upload web (più veloce). */
   webFast?: boolean;
 };
 
-function runTsxScript(
-  scriptRel: string,
-  trackId: string,
-  extraEnv: Record<string, string>
-): Promise<string> {
-  const cwd = process.cwd();
-  const scriptPath = path.join(cwd, scriptRel);
-  const env = { ...process.env, TRACK_ID: trackId, ...extraEnv };
-
-  return new Promise((resolve, reject) => {
-    const cmd = process.platform === "win32" ? "npx.cmd" : "npx";
-    const child = spawn(cmd, ["tsx", scriptPath], {
-      cwd,
-      env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let out = "";
-    let err = "";
-    child.stdout?.on("data", (d: Buffer) => {
-      out += d.toString();
-    });
-    child.stderr?.on("data", (d: Buffer) => {
-      err += d.toString();
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code === 0) resolve(out);
-      else reject(new Error(err.trim() || out.trim() || `${scriptRel} exit ${code}`));
-    });
-  });
-}
-
 /**
- * Esegue snapshot POI Overpass + superficie OSM per la traccia (come `npm run snapshot` + `snapshot:surface`).
+ * Snapshot POI Overpass + superficie OSM in-process (nessun npx/tsx esterno).
  */
 export async function runFullTrackSnapshot(
   trackId: string,
   opts?: RunSnapshotOptions
-): Promise<void> {
+): Promise<{ poiCount: number }> {
   const fast = opts?.webFast !== false;
-  const snapshotEnv: Record<string, string> = fast
+  const poiCount = await runPoiSnapshotForTrack(trackId, fast
     ? {
-        HMR_SNAPSHOT_GRID_COLS: "3",
-        HMR_SNAPSHOT_GRID_ROWS: "4",
-        HMR_SNAPSHOT_CONCURRENCY: "2",
-        HMR_SNAPSHOT_PAUSE_MS: "500",
+        gridCols: 3,
+        gridRows: 4,
+        concurrency: 2,
+        pauseMs: 500,
       }
-    : {};
-  const surfaceEnv: Record<string, string> = fast
+    : undefined);
+  await runSurfaceSnapshotForTrack(trackId, fast
     ? {
-        HMR_SURFACE_GRID_COLS: "2",
-        HMR_SURFACE_GRID_ROWS: "3",
-        HMR_SURFACE_PAUSE_MS: "700",
+        gridCols: 2,
+        gridRows: 3,
+        pauseMs: 700,
       }
-    : {};
-
-  await runTsxScript("scripts/snapshot-pois.ts", trackId, snapshotEnv);
-  await runTsxScript("scripts/snapshot-surface.ts", trackId, surfaceEnv);
+    : undefined);
+  return { poiCount };
 }

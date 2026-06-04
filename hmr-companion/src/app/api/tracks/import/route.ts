@@ -93,11 +93,13 @@ export async function POST(req: Request) {
       persistGpxFile: true,
     });
 
-    await runFullTrackSnapshot(trackId, { webFast: true });
+    const { poiCount: snapshotPoiCount } = await runFullTrackSnapshot(trackId, {
+      webFast: true,
+    });
 
     consumeIngestCredit(auth.email);
     const creditsAfter = getIngestCreditsInfo(auth.email);
-    const poiCount = countPois(trackId);
+    const poiCount = snapshotPoiCount || countPois(trackId);
 
     return NextResponse.json({
       trackId: result.trackId,
