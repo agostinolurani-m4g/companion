@@ -18,7 +18,7 @@ export type IngestOverlayDone = {
 };
 
 type Props =
-  | { mode: "running"; startedAt: number }
+  | { mode: "running"; startedAt: number; phaseLabel?: string }
   | { mode: "done"; result: IngestOverlayDone; onOpen: () => void };
 
 function formatElapsed(sec: number): string {
@@ -103,7 +103,10 @@ export function IngestProgressOverlay(props: Props) {
     );
   }
 
-  const phase = RUNNING_PHASES[phaseIdx];
+  const phase =
+    props.mode === "running" && props.phaseLabel
+      ? props.phaseLabel
+      : RUNNING_PHASES[phaseIdx];
 
   return (
     <div

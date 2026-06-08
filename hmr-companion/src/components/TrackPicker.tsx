@@ -42,6 +42,7 @@ export default function TrackPicker({ tracks, credits, isAdmin = false }: Props)
   const [name, setName] = useState("");
   const [hmrOfficial, setHmrOfficial] = useState(false);
   const [ingestStartedAt, setIngestStartedAt] = useState<number | null>(null);
+  const [ingestPhaseLabel, setIngestPhaseLabel] = useState<string | undefined>();
   const [ingestDone, setIngestDone] = useState<IngestOverlayDone | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const busy = ingestStartedAt != null && ingestDone == null;
@@ -90,42 +91,104 @@ export default function TrackPicker({ tracks, credits, isAdmin = false }: Props)
     }
     setIngestDone(null);
     setIngestStartedAt(Date.now());
+    setIngestPhaseLabel("Caricamento e analisi GPX…");
     setErr(null);
+
+    const trackNameFallback = name.trim() || file.name;
+
     try {
       const fd = new FormData();
       fd.append("file", file);
       if (name.trim()) fd.append("name", name.trim());
       if (hmrOfficial) fd.append("hmrOfficial", "1");
 
-      const res = await fetch("/api/tracks/import", {
-        method: "POST",
-        body: fd,
-        credentials: "same-origin",
-      });
-      const data = (await res.json().catch(() => ({}))) as {
+      let importRes: Response;
+      try {
+        importRes = await fetch("/api/tracks/import", {
+          method: "POST",
+          body: fd,
+          credentials: "same-origin",
+        });
+      } catch {
+        throw new Error(
+          "Connessione interrotta durante il caricamento GPX. Verifica la rete e riprova."
+        );
+      }
+
+      const importData = (await importRes.json().catch(() => ({}))) as {
         error?: string;
         trackId?: string;
         name?: string;
         credits?: IngestCreditsInfo;
-        snapshotComplete?: boolean;
-        snapshotWarning?: string;
-        poiCount?: number;
       };
-      if (!res.ok || !data.trackId) {
-        throw new Error(data.error ?? "Import non riuscito");
+      if (!importRes.ok || !importData.trackId) {
+        throw new Error(importData.error ?? "Import GPX non riuscito");
       }
-      if (data.credits) setCreditsState(data.credits);
+
+      const trackId = importData.trackId;
+      const trackName = importData.name ?? trackNameFallback;
+
+      setIngestPhaseLabel(
+        "Download POI da OpenStreetMap e superficie… (5–15 min, non chiudere)"
+      );
+
+      let snapRes: Response;
+      try {
+        snapRes = await fetch(`/api/tracks/${encodeURIComponent(trackId)}/snapshot`, {
+          method: "POST",
+          credentials: "same-origin",
+        });
+      } catch {
+        setIngestStartedAt(null);
+        setIngestPhaseLabel(undefined);
+        setIngestDone({
+          trackId,
+          trackName,
+          partial: true,
+          warning:
+            "Traccia salvata, ma la connessione si è interrotta durante lo snapshot OSM. " +
+            "Ricarica la home e apri la gara, oppure da terminale: " +
+            `TRACK_ID=${trackId} npm run snapshot`,
+        });
+        return;
+      }
+
+      const snapData = (await snapRes.json().catch(() => ({}))) as {
+        error?: string;
+        poiCount?: number;
+        snapshotComplete?: boolean;
+        credits?: IngestCreditsInfo;
+      };
+
+      if (snapData.credits) setCreditsState(snapData.credits);
+
       setIngestStartedAt(null);
+      setIngestPhaseLabel(undefined);
+
+      if (!snapRes.ok || !snapData.snapshotComplete) {
+        setIngestDone({
+          trackId,
+          trackName,
+          poiCount: snapData.poiCount,
+          partial: true,
+          warning:
+            snapData.error ??
+            "Snapshot OpenStreetMap non completato. La traccia è nel database.",
+        });
+        return;
+      }
+
       setIngestDone({
-        trackId: data.trackId,
-        trackName: data.name ?? (name.trim() || file.name),
-        poiCount: data.poiCount,
-        partial: !data.snapshotComplete,
-        warning: data.snapshotWarning,
+        trackId,
+        trackName,
+        poiCount: snapData.poiCount,
+        partial: false,
       });
     } catch (error) {
-      setErr(error instanceof Error ? error.message : String(error));
+      const msg = error instanceof Error ? error.message : String(error);
+      setErr(msg);
       setIngestStartedAt(null);
+      setIngestPhaseLabel(undefined);
       setIngestDone(null);
     }
   };
@@ -141,7 +204,11 @@ export default function TrackPicker({ tracks, credits, isAdmin = false }: Props)
   return (
     <main className="relative flex h-full min-h-0 flex-col overflow-y-auto">
       {ingestStartedAt != null ? (
-        <IngestProgressOverlay mode="running" startedAt={ingestStartedAt} />
+        <IngestProgressOverlay
+          mode="running"
+          startedAt={ingestStartedAt}
+          phaseLabel={ingestPhaseLabel}
+        />
       ) : null}
       {ingestDone ? (
         <IngestProgressOverlay mode="done" result={ingestDone} onOpen={openIngestedTrack} />

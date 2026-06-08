@@ -1,13 +1,7 @@
 import { NextResponse } from "next/server";
 import path from "node:path";
 import { requireAuthenticated } from "@/lib/auth";
-import {
-  assertCanIngest,
-  consumeIngestCredit,
-  getIngestCreditsInfo,
-} from "@/lib/ingest-credits";
-import { runFullTrackSnapshot } from "@/lib/run-track-snapshot";
-import { countPois } from "@/lib/db";
+import { assertCanIngest, getIngestCreditsInfo } from "@/lib/ingest-credits";
 import {
   displayNameFromGpxFilename,
   HMR_OFFICIAL_TRACK_ID,
@@ -17,7 +11,7 @@ import {
 } from "@/lib/track-ingest";
 
 export const runtime = "nodejs";
-export const maxDuration = 900;
+export const maxDuration = 300;
 
 const MAX_BYTES = 50 * 1024 * 1024;
 
@@ -93,26 +87,6 @@ export async function POST(req: Request) {
       persistGpxFile: true,
     });
 
-    let snapshotComplete = false;
-    let snapshotWarning: string | undefined;
-    let poiCount = 0;
-    try {
-      const snap = await runFullTrackSnapshot(trackId, { webFast: true });
-      snapshotComplete = true;
-      poiCount = snap.poiCount;
-    } catch (snapErr) {
-      snapshotWarning =
-        snapErr instanceof Error
-          ? snapErr.message
-          : "Snapshot OpenStreetMap non riuscito. La traccia è salvata: riprova con TRACK_ID=… npm run snapshot.";
-      poiCount = countPois(trackId);
-    }
-
-    if (snapshotComplete) {
-      consumeIngestCredit(auth.email);
-    }
-    const creditsAfter = getIngestCreditsInfo(auth.email);
-
     return NextResponse.json({
       trackId: result.trackId,
       name: result.name,
@@ -120,10 +94,8 @@ export async function POST(req: Request) {
       elev_gain_m: result.elev_gain_m,
       elev_loss_m: result.elev_loss_m,
       updated: result.updated,
-      snapshotComplete,
-      snapshotWarning,
-      poiCount,
-      credits: creditsAfter,
+      gpxOnly: true,
+      credits: getIngestCreditsInfo(auth.email),
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Errore import GPX";
