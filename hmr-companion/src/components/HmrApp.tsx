@@ -211,6 +211,17 @@ function MapChromeControls({
             </button>
             <button
               type="button"
+              onClick={onToggleFieldProgram}
+              className={`hmr-chip max-sm:!min-h-[26px] max-sm:!px-1.5 max-sm:!py-0 max-sm:!text-[8px] sm:min-h-0 sm:px-2 sm:py-0.5 sm:text-[9px] ${
+                fieldProgramMode ? "hmr-chip-on" : "hmr-chip-off"
+              }`}
+              aria-pressed={fieldProgramMode}
+              title="Programma sul campo: tocca POI per arrivo/commento/foto, tocca mappa per nuovo POI"
+            >
+              Campo
+            </button>
+            <button
+              type="button"
               onClick={onOpenAddSheet}
               className="hmr-chip hmr-chip-off max-sm:!min-h-[26px] max-sm:!px-1.5 max-sm:!py-0 max-sm:!text-[8px] sm:min-h-0 sm:px-2 sm:py-0.5 sm:text-[9px]"
               aria-label="Aggiungi POI da link Google Maps"
@@ -411,6 +422,11 @@ export default function HmrApp({
         localStorage.setItem("hmr_field_program", next ? "1" : "0");
       } catch {
         /* ignore */
+      }
+      if (next) {
+        setPoiHarvestMode(false);
+        setAddPoiMapPick(false);
+        setRacePlanMapPick(false);
       }
       return next;
     });
@@ -739,7 +755,7 @@ export default function HmrApp({
 
   const handleSelectPoiFromMap = useCallback(
     (p: PoiRow) => {
-      if (isRaceLayout && fieldProgramMode) {
+      if (fieldProgramMode) {
         setFieldPoiTarget(p);
         setFieldAddLatLng(null);
         return;
@@ -1075,18 +1091,22 @@ export default function HmrApp({
     onShowStreetViewChange: setShowStreetViewLayer,
     windyActive,
     onWindyToggle: () => setWindyActive((v) => !v),
+    fieldProgramMode,
+    onToggleFieldProgram: toggleFieldProgram,
     ...(isRaceLayout
       ? {
           layout: "race" as const,
           onExitRaceLayout: endRace,
           raceFilterRow: raceFilterChips,
-          fieldProgramMode,
-          onToggleFieldProgram: toggleFieldProgram,
         }
       : { layout: "full" as const }),
   };
 
-  const fieldMapPickActive = isRaceLayout && fieldProgramMode;
+  const fieldMapPickActive =
+    fieldProgramMode &&
+    !addPoiMapPick &&
+    !poiHarvestMode &&
+    !(tab === "racePlan" && racePlanMapPick);
 
   return (
     <main
@@ -1560,8 +1580,8 @@ export default function HmrApp({
 
       {fieldMapPickActive && !fieldPoiTarget && !fieldAddLatLng && (
         <div className="pointer-events-none absolute inset-x-0 top-[calc(var(--safe-top)+3.25rem)] z-20 flex justify-center px-3">
-          <p className="rounded-md border border-emerald-500/40 bg-[color:var(--hmr-panel-bg)]/95 px-3 py-1.5 text-center text-[10px] text-emerald-300 shadow-md backdrop-blur-sm">
-            Programma sul campo: tocca un POI per confermare arrivo · tocca la mappa per nuovo POI
+          <p className="rounded-md border border-emerald-500/40 bg-[color:var(--hmr-panel-bg)]/95 px-3 py-1.5 text-center text-[10px] font-medium text-emerald-300 shadow-md backdrop-blur-sm sm:text-xs">
+            Campo attivo — tocca un POI per confermare arrivo · tocca la mappa per aggiungere un POI
           </p>
         </div>
       )}
