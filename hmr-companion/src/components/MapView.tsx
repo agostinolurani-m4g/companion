@@ -38,9 +38,11 @@ export type MapViewProps = {
   onHoverKm?: (km: number | null) => void;
   onPin?: (km: number) => void;
   onSelectPoi?: (poi: PoiRow) => void;
+  /** POI confermati in programma sul campo (bordo verde). */
+  visitedPoiIds?: Set<string>;
   /** Annotazioni piano gara (solo layer; click gestito da trackClickMode). */
   racePlanItems?: RacePlanItemRow[];
-  trackClickMode?: "measure" | "racePlan" | "poiHarvest" | "addPoi";
+  trackClickMode?: "measure" | "racePlan" | "poiHarvest" | "addPoi" | "fieldAddPoi";
   onTrackKmPick?: (km: number) => void;
   /** Modalità “cerca POI OSM”: clic ovunque sulla mappa (non solo sulla traccia). */
   onPoiHarvestClick?: (lat: number, lng: number) => void;
@@ -167,7 +169,9 @@ export default function MapView(props: MapViewProps) {
     if (!map) return;
     try {
       map.getCanvas().style.cursor =
-        props.trackClickMode === "poiHarvest" || props.trackClickMode === "addPoi"
+        props.trackClickMode === "poiHarvest" ||
+        props.trackClickMode === "addPoi" ||
+        props.trackClickMode === "fieldAddPoi"
           ? "crosshair"
           : "";
     } catch {
@@ -340,7 +344,8 @@ export default function MapView(props: MapViewProps) {
       tryFit();
       map.getCanvas().style.cursor =
         trackClickModeRef.current === "poiHarvest" ||
-        trackClickModeRef.current === "addPoi"
+        trackClickModeRef.current === "addPoi" ||
+        trackClickModeRef.current === "fieldAddPoi"
           ? "crosshair"
           : "";
       map.addSource("track", {
@@ -511,8 +516,18 @@ export default function MapView(props: MapViewProps) {
             CATEGORY_META.bus.color,
             "#94a3b8",
           ],
-          "circle-stroke-color": "#0b1221",
-          "circle-stroke-width": 1.3,
+          "circle-stroke-color": [
+            "case",
+            ["==", ["get", "visited"], 1],
+            "#34d399",
+            "#0b1221",
+          ],
+          "circle-stroke-width": [
+            "case",
+            ["==", ["get", "visited"], 1],
+            2.4,
+            1.3,
+          ],
           "circle-opacity": 0.95,
         },
       });
@@ -923,7 +938,10 @@ export default function MapView(props: MapViewProps) {
           onPoiHarvestClickRef.current?.(e.lngLat.lat, e.lngLat.lng);
           return;
         }
-        if (trackClickModeRef.current === "addPoi") {
+        if (
+          trackClickModeRef.current === "addPoi" ||
+          trackClickModeRef.current === "fieldAddPoi"
+        ) {
           onAddPoiMapClickRef.current?.(e.lngLat.lat, e.lngLat.lng);
           return;
         }
@@ -1113,16 +1131,22 @@ export default function MapView(props: MapViewProps) {
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
+    const visited = props.visitedPoiIds;
     const features = props.pois
       .filter((p) => props.visibleCategories.has(p.category))
       .map((p) => ({
         type: "Feature" as const,
-        properties: { id: p.id, category: p.category, name: p.name ?? "" },
+        properties: {
+          id: p.id,
+          category: p.category,
+          name: p.name ?? "",
+          visited: visited?.has(p.id) ? 1 : 0,
+        },
         geometry: { type: "Point" as const, coordinates: [p.lng, p.lat] },
       }));
     const src = map.getSource("pois") as maplibregl.GeoJSONSource | undefined;
     src?.setData({ type: "FeatureCollection", features });
-  }, [props.pois, props.visibleCategories, mapReady]);
+  }, [props.pois, props.visibleCategories, props.visitedPoiIds, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;

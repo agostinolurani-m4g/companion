@@ -148,6 +148,14 @@ function initSchema(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_notes_poi ON notes(poi_id);
 
+    CREATE TABLE IF NOT EXISTS poi_field_photos (
+      id TEXT PRIMARY KEY,
+      note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+      photo_path TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_poi_field_photos_note ON poi_field_photos(note_id);
+
     CREATE TABLE IF NOT EXISTS race_plans (
       id TEXT PRIMARY KEY,
       track_id TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
@@ -404,6 +412,26 @@ export type CourseBridgeRow = {
   along_km: number;
   description_en: string;
 };
+
+export type PoiNoteStatus = "planned" | "visited" | "avoid" | "info";
+
+export type PoiNoteRow = {
+  id: string;
+  poi_id: string;
+  status: PoiNoteStatus;
+  body: string;
+  created_at: number;
+  updated_at: number;
+};
+
+export type PoiFieldPhotoRow = {
+  id: string;
+  note_id: string;
+  photo_path: string;
+  created_at: number;
+};
+
+export type PoiNoteWithPhotos = PoiNoteRow & { photos: PoiFieldPhotoRow[] };
 
 export type PoiRow = {
   id: string;
@@ -714,6 +742,96 @@ export function countPois(trackId: string): number {
     .prepare(`SELECT COUNT(*) AS n FROM pois WHERE track_id = ?`)
     .get(trackId) as { n: number };
   return r.n;
+}
+
+export function getPoiNoteByPoiId(poiId: string): PoiNoteRow | undefined {
+  return getDb()
+    .prepare(`SELECT * FROM notes WHERE poi_id = ? ORDER BY updated_at DESC LIMIT 1`)
+    .get(poiId) as PoiNoteRow | undefined;
+}
+
+export function listPoiNotesForTrack(trackId: string): PoiNoteWithPhotos[] {
+  const notes = getDb()
+    .prepare(
+      `SELECT n.* FROM notes n
+       INNER JOIN pois p ON p.id = n.poi_id
+       WHERE p.track_id = ?
+       ORDER BY n.updated_at DESC`
+    )
+    .all(trackId) as PoiNoteRow[];
+  const photoStmt = getDb().prepare(
+    `SELECT * FROM poi_field_photos WHERE note_id = ? ORDER BY created_at ASC`
+  );
+  return notes.map((n) => ({
+    ...n,
+    photos: photoStmt.all(n.id) as PoiFieldPhotoRow[],
+  }));
+}
+
+export function listVisitedPoiIdsForTrack(trackId: string): string[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT DISTINCT n.poi_id FROM notes n
+       INNER JOIN pois p ON p.id = n.poi_id
+       WHERE p.track_id = ? AND n.status = 'visited'`
+    )
+    .all(trackId) as { poi_id: string }[];
+  return rows.map((r) => r.poi_id);
+}
+
+export function upsertPoiNote(input: {
+  id: string;
+  poi_id: string;
+  status: PoiNoteStatus;
+  body: string;
+  created_at: number;
+  updated_at: number;
+}): PoiNoteRow {
+  const db = getDb();
+  const existing = db
+    .prepare(`SELECT id FROM notes WHERE poi_id = ?`)
+    .get(input.poi_id) as { id: string } | undefined;
+  if (existing) {
+    db.prepare(
+      `UPDATE notes SET status = ?, body = ?, updated_at = ? WHERE id = ?`
+    ).run(input.status, input.body, input.updated_at, existing.id);
+    return db.prepare(`SELECT * FROM notes WHERE id = ?`).get(existing.id) as PoiNoteRow;
+  }
+  db.prepare(
+    `INSERT INTO notes (id, poi_id, status, body, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(
+    input.id,
+    input.poi_id,
+    input.status,
+    input.body,
+    input.created_at,
+    input.updated_at
+  );
+  return db.prepare(`SELECT * FROM notes WHERE id = ?`).get(input.id) as PoiNoteRow;
+}
+
+export function insertPoiFieldPhoto(input: {
+  id: string;
+  note_id: string;
+  photo_path: string;
+  created_at: number;
+}): PoiFieldPhotoRow {
+  getDb()
+    .prepare(
+      `INSERT INTO poi_field_photos (id, note_id, photo_path, created_at)
+       VALUES (?, ?, ?, ?)`
+    )
+    .run(input.id, input.note_id, input.photo_path, input.created_at);
+  return getDb()
+    .prepare(`SELECT * FROM poi_field_photos WHERE id = ?`)
+    .get(input.id) as PoiFieldPhotoRow;
+}
+
+export function listPhotosForNote(noteId: string): PoiFieldPhotoRow[] {
+  return getDb()
+    .prepare(`SELECT * FROM poi_field_photos WHERE note_id = ? ORDER BY created_at ASC`)
+    .all(noteId) as PoiFieldPhotoRow[];
 }
 
 export type TrackStreetViewPointRow = {
