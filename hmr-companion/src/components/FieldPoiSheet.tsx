@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import type { PoiFieldPhotoRow, PoiNoteWithPhotos, PoiRow } from "@/lib/db";
+import type { PoiFieldPhotoRow, PoiNoteStatus, PoiNoteWithPhotos, PoiRow } from "@/lib/db";
+import { isPoiSurveyVerified, normalizeSurveyStatus } from "@/lib/poi-survey";
 import { CATEGORY_META } from "@/lib/categories";
 
 type Props = {
@@ -16,6 +17,14 @@ function photoUrl(path: string): string {
   return `/api/field-photo?path=${encodeURIComponent(path)}`;
 }
 
+function surveyLabel(status: PoiNoteStatus | undefined): string | null {
+  if (!status) return null;
+  const s = normalizeSurveyStatus(status);
+  if (s === "info") return "Verificato";
+  if (s === "avoid") return "Da evitare";
+  return null;
+}
+
 export default function FieldPoiSheet({
   trackId,
   poi,
@@ -23,8 +32,9 @@ export default function FieldPoiSheet({
   onClose,
   onSaved,
 }: Props) {
+  const initialStatus = initialNote ? normalizeSurveyStatus(initialNote.status) : null;
   const [body, setBody] = useState(initialNote?.body ?? "");
-  const [visited, setVisited] = useState(initialNote?.status === "visited");
+  const [surveyStatus, setSurveyStatus] = useState<PoiNoteStatus | null>(initialStatus);
   const [photos, setPhotos] = useState(initialNote?.photos ?? []);
   const [noteId, setNoteId] = useState(initialNote?.id ?? null);
   const [pending, setPending] = useState(false);
@@ -33,7 +43,7 @@ export default function FieldPoiSheet({
   const fileRef = useRef<HTMLInputElement>(null);
 
   const saveNote = useCallback(
-    async (markVisited: boolean) => {
+    async (status: PoiNoteStatus) => {
       setPending(true);
       setError(null);
       try {
@@ -42,7 +52,7 @@ export default function FieldPoiSheet({
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             poi_id: poi.id,
-            status: markVisited ? "visited" : visited ? "visited" : "info",
+            status,
             body: body.trim(),
           }),
         });
@@ -52,7 +62,7 @@ export default function FieldPoiSheet({
           return null;
         }
         setNoteId(data.note.id);
-        if (markVisited) setVisited(true);
+        setSurveyStatus(normalizeSurveyStatus(data.note.status));
         const merged = { ...data.note, photos };
         onSaved(merged);
         return data.note;
@@ -63,11 +73,16 @@ export default function FieldPoiSheet({
         setPending(false);
       }
     },
-    [trackId, poi.id, body, visited, photos, onSaved]
+    [trackId, poi.id, body, photos, onSaved]
   );
 
-  const handleConfirm = async () => {
-    const note = await saveNote(true);
+  const handleConfirmExists = async () => {
+    const note = await saveNote("info");
+    if (note) onClose();
+  };
+
+  const handleMarkAvoid = async () => {
+    const note = await saveNote("avoid");
     if (note) onClose();
   };
 
@@ -98,10 +113,12 @@ export default function FieldPoiSheet({
       const nextPhotos: PoiFieldPhotoRow[] = data.photos ?? [...photos, data.photo];
       setPhotos(nextPhotos);
       if (data.note) {
+        const st = normalizeSurveyStatus(data.note.status as PoiNoteStatus);
+        setSurveyStatus(st);
         onSaved({
           id: data.note.id,
           poi_id: poi.id,
-          status: (data.note.status as PoiNoteWithPhotos["status"]) ?? "visited",
+          status: st,
           body: data.note.body ?? body,
           created_at: initialNote?.created_at ?? Date.now(),
           updated_at: Date.now(),
@@ -119,6 +136,7 @@ export default function FieldPoiSheet({
     "w-full rounded-lg border border-[color:var(--hmr-border)] bg-[color:var(--hmr-elev)] px-2.5 py-2 text-sm text-[color:var(--hmr-text)] outline-none placeholder:text-[color:var(--hmr-faint)] focus:border-[color:var(--hmr-accent)]";
 
   const catLabel = CATEGORY_META[poi.category]?.label ?? poi.category;
+  const badge = surveyLabel(surveyStatus ?? undefined);
 
   return (
     <div
@@ -134,9 +152,14 @@ export default function FieldPoiSheet({
             <h4 className="text-base font-semibold">{poi.name ?? poi.sub_kind ?? "POI"}</h4>
             <p className="text-xs text-[color:var(--hmr-muted)]">
               {catLabel} · km {poi.along_km.toFixed(1)}
-              {visited && (
+              {badge === "Verificato" && (
                 <span className="ml-2 rounded border border-emerald-500/50 bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-400">
-                  Arrivato
+                  {badge}
+                </span>
+              )}
+              {badge === "Da evitare" && (
+                <span className="ml-2 rounded border border-red-500/50 bg-red-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-red-400">
+                  {badge}
                 </span>
               )}
             </p>
@@ -146,13 +169,17 @@ export default function FieldPoiSheet({
           </button>
         </div>
 
+        <p className="mb-3 text-[10px] text-[color:var(--hmr-muted)]">
+          Sopralluogo: verifica se il posto esiste davvero sul campo.
+        </p>
+
         <label className="mb-3 flex flex-col gap-1 text-xs text-[color:var(--hmr-muted)]">
           Commento
           <textarea
             value={body}
             onChange={(e) => setBody(e.target.value)}
             rows={3}
-            placeholder="Orari, prezzo, stato locale…"
+            placeholder="Orari, prezzo, stato locale, indicazioni…"
             className={inputCls}
           />
         </label>
@@ -197,21 +224,23 @@ export default function FieldPoiSheet({
             type="button"
             className="hmr-btn hmr-btn-accent hmr-tap w-full text-sm font-semibold"
             disabled={pending}
-            onClick={() => void handleConfirm()}
+            onClick={() => void handleConfirmExists()}
           >
-            {pending ? "Salvo…" : visited ? "Aggiorna arrivo" : "Confermo arrivo"}
+            {pending ? "Salvo…" : isPoiSurveyVerified(surveyStatus ?? "planned") ? "Aggiorna verifica" : "Confermo che c'è"}
           </button>
 
-          {!visited && (
-            <button
-              type="button"
-              className="hmr-btn hmr-tap w-full text-xs"
-              disabled={pending}
-              onClick={() => void saveNote(false)}
-            >
-              Salva solo commento
-            </button>
-          )}
+          <button
+            type="button"
+            className="hmr-btn hmr-tap w-full text-xs"
+            disabled={pending}
+            style={{
+              borderColor: "rgba(248,113,113,0.5)",
+              color: "var(--hmr-danger)",
+            }}
+            onClick={() => void handleMarkAvoid()}
+          >
+            {pending ? "Salvo…" : "Non c'è / da evitare"}
+          </button>
         </div>
 
         {error && <p className="mt-2 text-xs text-[color:var(--hmr-danger)]">{error}</p>}

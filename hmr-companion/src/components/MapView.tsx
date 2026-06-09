@@ -38,8 +38,10 @@ export type MapViewProps = {
   onHoverKm?: (km: number | null) => void;
   onPin?: (km: number) => void;
   onSelectPoi?: (poi: PoiRow) => void;
-  /** POI confermati in programma sul campo (bordo verde). */
-  visitedPoiIds?: Set<string>;
+  /** POI verificati sul campo (bordo verde). */
+  verifiedPoiIds?: Set<string>;
+  /** POI segnati da evitare (bordo rosso). */
+  avoidPoiIds?: Set<string>;
   /** Annotazioni piano gara (solo layer; click gestito da trackClickMode). */
   racePlanItems?: RacePlanItemRow[];
   trackClickMode?: "measure" | "racePlan" | "poiHarvest" | "addPoi" | "fieldAddPoi";
@@ -518,13 +520,15 @@ export default function MapView(props: MapViewProps) {
           ],
           "circle-stroke-color": [
             "case",
-            ["==", ["get", "visited"], 1],
+            ["==", ["get", "survey"], "verified"],
             "#34d399",
+            ["==", ["get", "survey"], "avoid"],
+            "#f87171",
             "#0b1221",
           ],
           "circle-stroke-width": [
             "case",
-            ["==", ["get", "visited"], 1],
+            ["any", ["==", ["get", "survey"], "verified"], ["==", ["get", "survey"], "avoid"]],
             2.4,
             1.3,
           ],
@@ -1131,22 +1135,28 @@ export default function MapView(props: MapViewProps) {
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
-    const visited = props.visitedPoiIds;
+    const verified = props.verifiedPoiIds;
+    const avoid = props.avoidPoiIds;
     const features = props.pois
       .filter((p) => props.visibleCategories.has(p.category))
-      .map((p) => ({
-        type: "Feature" as const,
-        properties: {
-          id: p.id,
-          category: p.category,
-          name: p.name ?? "",
-          visited: visited?.has(p.id) ? 1 : 0,
-        },
-        geometry: { type: "Point" as const, coordinates: [p.lng, p.lat] },
-      }));
+      .map((p) => {
+        let survey = "none";
+        if (verified?.has(p.id)) survey = "verified";
+        else if (avoid?.has(p.id)) survey = "avoid";
+        return {
+          type: "Feature" as const,
+          properties: {
+            id: p.id,
+            category: p.category,
+            name: p.name ?? "",
+            survey,
+          },
+          geometry: { type: "Point" as const, coordinates: [p.lng, p.lat] },
+        };
+      });
     const src = map.getSource("pois") as maplibregl.GeoJSONSource | undefined;
     src?.setData({ type: "FeatureCollection", features });
-  }, [props.pois, props.visibleCategories, props.visitedPoiIds, mapReady]);
+  }, [props.pois, props.visibleCategories, props.verifiedPoiIds, props.avoidPoiIds, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;

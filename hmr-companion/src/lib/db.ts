@@ -768,15 +768,28 @@ export function listPoiNotesForTrack(trackId: string): PoiNoteWithPhotos[] {
   }));
 }
 
-export function listVisitedPoiIdsForTrack(trackId: string): string[] {
+import { normalizeSurveyStatus } from "./poi-survey";
+export { normalizeSurveyStatus, isPoiSurveyVerified } from "./poi-survey";
+
+export function listSurveyPoiIdsByStatus(trackId: string): {
+  verified: string[];
+  avoid: string[];
+} {
   const rows = getDb()
     .prepare(
-      `SELECT DISTINCT n.poi_id FROM notes n
+      `SELECT DISTINCT n.poi_id, n.status FROM notes n
        INNER JOIN pois p ON p.id = n.poi_id
-       WHERE p.track_id = ? AND n.status = 'visited'`
+       WHERE p.track_id = ? AND n.status IN ('info', 'visited', 'avoid')`
     )
-    .all(trackId) as { poi_id: string }[];
-  return rows.map((r) => r.poi_id);
+    .all(trackId) as { poi_id: string; status: PoiNoteStatus }[];
+  const verified: string[] = [];
+  const avoid: string[] = [];
+  for (const r of rows) {
+    const s = normalizeSurveyStatus(r.status);
+    if (s === "info") verified.push(r.poi_id);
+    else if (s === "avoid") avoid.push(r.poi_id);
+  }
+  return { verified, avoid };
 }
 
 export function upsertPoiNote(input: {

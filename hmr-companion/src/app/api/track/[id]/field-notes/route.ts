@@ -57,7 +57,7 @@ export async function POST(req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "POI non trovato" }, { status: 404 });
   }
 
-  const status = (body.status ?? "visited") as PoiNoteStatus;
+  const status = (body.status ?? "info") as PoiNoteStatus;
   if (!VALID_STATUS.includes(status)) {
     return NextResponse.json({ error: "status non valido" }, { status: 400 });
   }

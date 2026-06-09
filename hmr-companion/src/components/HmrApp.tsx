@@ -42,6 +42,7 @@ import PoiEditSheet from "./PoiEditSheet";
 import FieldPoiSheet from "./FieldPoiSheet";
 import FieldAddPoiSheet from "./FieldAddPoiSheet";
 import { categoriesForRacePreset, type RacePoiFilterPreset } from "@/lib/poi-race-filter";
+import { normalizeSurveyStatus } from "@/lib/poi-survey";
 
 export type HmrTab = "dashboard" | "nextPoi" | "race" | "roadbook" | "list" | "checkpoints" | "racePlan";
 type Tab = HmrTab;
@@ -116,8 +117,9 @@ function MapChromeControls({
   layout = "full",
   onExitRaceLayout,
   raceFilterRow,
-  fieldProgramMode = false,
-  onToggleFieldProgram,
+  isPlanMobile = false,
+  fieldSurveyMode = false,
+  onToggleFieldSurvey,
 }: {
   variant: "overlay" | "rail";
   lengthKm: number;
@@ -146,8 +148,9 @@ function MapChromeControls({
   layout?: "full" | "race";
   onExitRaceLayout?: () => void;
   raceFilterRow?: ReactNode;
-  fieldProgramMode?: boolean;
-  onToggleFieldProgram?: () => void;
+  isPlanMobile?: boolean;
+  fieldSurveyMode?: boolean;
+  onToggleFieldSurvey?: () => void;
 }) {
   const popMenuLeft =
     variant === "rail" ? "left-0 right-auto" : "left-0 right-auto max-sm:max-w-[min(11rem,calc(100vw-1.5rem))]";
@@ -168,17 +171,6 @@ function MapChromeControls({
                   title="Mappa meteo Windy (satellite / pioggia GFS)"
                 >
                   Meteo
-                </button>
-                <button
-                  type="button"
-                  onClick={onToggleFieldProgram}
-                  className={`hmr-chip max-sm:!min-h-[26px] max-sm:!px-1.5 max-sm:!py-0 max-sm:!text-[8px] sm:min-h-0 sm:px-2 sm:py-0.5 sm:text-[9px] ${
-                    fieldProgramMode ? "hmr-chip-on" : "hmr-chip-off"
-                  }`}
-                  aria-pressed={fieldProgramMode}
-                  title="Tocca POI per confermare arrivo, commento e foto; tocca mappa per nuovo POI"
-                >
-                  Campo
                 </button>
                 <button
                   type="button"
@@ -209,17 +201,19 @@ function MapChromeControls({
             >
               Resupply
             </button>
-            <button
-              type="button"
-              onClick={onToggleFieldProgram}
-              className={`hmr-chip max-sm:!min-h-[26px] max-sm:!px-1.5 max-sm:!py-0 max-sm:!text-[8px] sm:min-h-0 sm:px-2 sm:py-0.5 sm:text-[9px] ${
-                fieldProgramMode ? "hmr-chip-on" : "hmr-chip-off"
-              }`}
-              aria-pressed={fieldProgramMode}
-              title="Programma sul campo: tocca POI per arrivo/commento/foto, tocca mappa per nuovo POI"
-            >
-              Campo
-            </button>
+            {isPlanMobile && onToggleFieldSurvey && (
+              <button
+                type="button"
+                onClick={onToggleFieldSurvey}
+                className={`hmr-chip max-sm:!min-h-[26px] max-sm:!px-1.5 max-sm:!py-0 max-sm:!text-[8px] sm:min-h-0 sm:px-2 sm:py-0.5 sm:text-[9px] ${
+                  fieldSurveyMode ? "hmr-chip-on" : "hmr-chip-off"
+                }`}
+                aria-pressed={fieldSurveyMode}
+                title="Sopralluogo: verifica POI sul campo, commento e foto"
+              >
+                Sopralluogo
+              </button>
+            )}
             <button
               type="button"
               onClick={onOpenAddSheet}
@@ -379,7 +373,7 @@ export default function HmrApp({
     null
   );
   const [raceActive, setRaceActive] = useState(false);
-  const [fieldProgramMode, setFieldProgramMode] = useState(true);
+  const [fieldSurveyMode, setFieldSurveyMode] = useState(false);
   const [fieldNotes, setFieldNotes] = useState<Map<string, PoiNoteWithPhotos>>(() => new Map());
   const [fieldPoiTarget, setFieldPoiTarget] = useState<PoiRow | null>(null);
   const [fieldAddLatLng, setFieldAddLatLng] = useState<{ lat: number; lng: number } | null>(null);
@@ -387,9 +381,10 @@ export default function HmrApp({
   useEffect(() => {
     try {
       setRaceActive(localStorage.getItem("hmr_race_active") === "1");
-      const fp = localStorage.getItem("hmr_field_program");
-      if (fp === "0") setFieldProgramMode(false);
-      else if (fp === "1") setFieldProgramMode(true);
+      const fs =
+        localStorage.getItem("hmr_field_survey") ?? localStorage.getItem("hmr_field_program");
+      if (fs === "1") setFieldSurveyMode(true);
+      else if (fs === "0") setFieldSurveyMode(false);
     } catch {
       setRaceActive(false);
     }
@@ -415,11 +410,11 @@ export default function HmrApp({
     };
   }, [initial.id]);
 
-  const toggleFieldProgram = useCallback(() => {
-    setFieldProgramMode((v) => {
+  const toggleFieldSurvey = useCallback(() => {
+    setFieldSurveyMode((v) => {
       const next = !v;
       try {
-        localStorage.setItem("hmr_field_program", next ? "1" : "0");
+        localStorage.setItem("hmr_field_survey", next ? "1" : "0");
       } catch {
         /* ignore */
       }
@@ -434,10 +429,18 @@ export default function HmrApp({
     setFieldPoiTarget(null);
   }, []);
 
-  const visitedPoiIds = useMemo(() => {
+  const verifiedPoiIds = useMemo(() => {
     const ids = new Set<string>();
     for (const [poiId, note] of fieldNotes) {
-      if (note.status === "visited") ids.add(poiId);
+      if (normalizeSurveyStatus(note.status) === "info") ids.add(poiId);
+    }
+    return ids;
+  }, [fieldNotes]);
+
+  const avoidPoiIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const [poiId, note] of fieldNotes) {
+      if (normalizeSurveyStatus(note.status) === "avoid") ids.add(poiId);
     }
     return ids;
   }, [fieldNotes]);
@@ -485,6 +488,9 @@ export default function HmrApp({
     } catch {
       /* ignore */
     }
+    setFieldSurveyMode(false);
+    setFieldPoiTarget(null);
+    setFieldAddLatLng(null);
     setRaceActive(true);
   }, []);
 
@@ -540,6 +546,7 @@ export default function HmrApp({
   const atKmIsManual = myAlongKm == null && manualKm != null;
 
   const isRaceLayout = raceActive && isNarrow;
+  const isPlanMobile = isNarrow && !raceActive;
 
   const categoriesForMap = useMemo(
     () => (isRaceLayout ? categoriesForRacePreset(racePoiFilter) : visibleCategories),
@@ -651,6 +658,13 @@ export default function HmrApp({
 
   const showPlanOnMap = !isRaceLayout && (tab === "racePlan" || showRacePlanOverlay);
 
+  const fieldSurveyActive =
+    fieldSurveyMode &&
+    isPlanMobile &&
+    !addPoiMapPick &&
+    !poiHarvestMode &&
+    !(tab === "racePlan" && racePlanMapPick);
+
   const overlayRacePlanItems = useMemo(
     () => (showPlanOnMap ? itemsForSelectedPlan : []),
     [showPlanOnMap, itemsForSelectedPlan]
@@ -755,7 +769,7 @@ export default function HmrApp({
 
   const handleSelectPoiFromMap = useCallback(
     (p: PoiRow) => {
-      if (fieldProgramMode) {
+      if (fieldSurveyActive) {
         setFieldPoiTarget(p);
         setFieldAddLatLng(null);
         return;
@@ -767,7 +781,7 @@ export default function HmrApp({
       }
       setSelectedPoi(p);
     },
-    [isRaceLayout, fieldProgramMode, atKm]
+    [isRaceLayout, fieldSurveyActive, atKm]
   );
 
   const onFieldAddPoiMapClick = useCallback((lat: number, lng: number) => {
@@ -1091,8 +1105,9 @@ export default function HmrApp({
     onShowStreetViewChange: setShowStreetViewLayer,
     windyActive,
     onWindyToggle: () => setWindyActive((v) => !v),
-    fieldProgramMode,
-    onToggleFieldProgram: toggleFieldProgram,
+    isPlanMobile,
+    fieldSurveyMode,
+    onToggleFieldSurvey: toggleFieldSurvey,
     ...(isRaceLayout
       ? {
           layout: "race" as const,
@@ -1101,12 +1116,6 @@ export default function HmrApp({
         }
       : { layout: "full" as const }),
   };
-
-  const fieldMapPickActive =
-    fieldProgramMode &&
-    !addPoiMapPick &&
-    !poiHarvestMode &&
-    !(tab === "racePlan" && racePlanMapPick);
 
   return (
     <main
@@ -1133,12 +1142,13 @@ export default function HmrApp({
           onHoverKm={setHoverKm}
           onPin={handleMapPin}
           onSelectPoi={handleSelectPoiFromMap}
-          visitedPoiIds={visitedPoiIds}
+          verifiedPoiIds={verifiedPoiIds}
+          avoidPoiIds={avoidPoiIds}
           racePlanItems={overlayRacePlanItems}
           trackClickMode={
             addPoiMapPick
               ? "addPoi"
-              : fieldMapPickActive
+              : fieldSurveyActive
                 ? "fieldAddPoi"
                 : poiHarvestMode
                   ? "poiHarvest"
@@ -1151,7 +1161,7 @@ export default function HmrApp({
           onAddPoiMapClick={
             addPoiMapPick
               ? onAddPoiMapClick
-              : fieldMapPickActive
+              : fieldSurveyActive
                 ? onFieldAddPoiMapClick
                 : undefined
           }
@@ -1388,14 +1398,21 @@ export default function HmrApp({
       >
         {tab === "dashboard" && (
           <>
-            {isNarrow && !raceActive && (
+            {isPlanMobile && (
               <div className="flex flex-wrap gap-2 border-b border-[color:var(--hmr-border)]/50 px-3 py-2">
                 <button
                   type="button"
-                  className="hmr-btn hmr-btn-accent hmr-tap text-xs font-semibold"
+                  className={`hmr-btn hmr-tap text-xs font-semibold ${fieldSurveyMode ? "hmr-btn-accent" : ""}`}
+                  onClick={toggleFieldSurvey}
+                >
+                  {fieldSurveyMode ? "Sopralluogo attivo" : "Sopralluogo sul campo"}
+                </button>
+                <button
+                  type="button"
+                  className="hmr-btn hmr-tap text-xs"
                   onClick={startRace}
                 >
-                  Inizia gara (Race mobile)
+                  Inizia gara
                 </button>
               </div>
             )}
@@ -1578,10 +1595,10 @@ export default function HmrApp({
         />
       )}
 
-      {fieldMapPickActive && !fieldPoiTarget && !fieldAddLatLng && (
+      {fieldSurveyActive && !fieldPoiTarget && !fieldAddLatLng && (
         <div className="pointer-events-none absolute inset-x-0 top-[calc(var(--safe-top)+3.25rem)] z-20 flex justify-center px-3">
-          <p className="rounded-md border border-emerald-500/40 bg-[color:var(--hmr-panel-bg)]/95 px-3 py-1.5 text-center text-[10px] font-medium text-emerald-300 shadow-md backdrop-blur-sm sm:text-xs">
-            Campo attivo — tocca un POI per confermare arrivo · tocca la mappa per aggiungere un POI
+          <p className="rounded-md border border-emerald-500/40 bg-[color:var(--hmr-panel-bg)]/95 px-3 py-1.5 text-center text-[10px] font-medium text-emerald-300 shadow-md backdrop-blur-sm">
+            Sopralluogo — tocca un POI per verificarlo · tocca la mappa per aggiungerne uno
           </p>
         </div>
       )}

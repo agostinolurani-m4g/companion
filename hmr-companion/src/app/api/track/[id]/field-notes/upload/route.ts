@@ -49,7 +49,7 @@ export async function POST(req: Request, ctx: Ctx) {
     const note = upsertPoiNote({
       id: existing?.id ?? crypto.randomUUID(),
       poi_id: poiId,
-      status: existing?.status ?? "visited",
+      status: existing?.status ?? "info",
       body: existing?.body ?? "",
       created_at: existing?.created_at ?? now,
       updated_at: now,

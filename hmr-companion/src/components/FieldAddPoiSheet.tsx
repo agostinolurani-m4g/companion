@@ -66,7 +66,7 @@ export default function FieldAddPoiSheet({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           poi_id: data.poi.id,
-          status: "visited",
+          status: "info",
           body: body.trim(),
         }),
       });
@@ -117,7 +117,7 @@ export default function FieldAddPoiSheet({
       >
         <div className="flex items-start justify-between gap-2">
           <div>
-            <h4 className="text-base font-semibold">Nuovo POI sul campo</h4>
+            <h4 className="text-base font-semibold">Nuovo POI — sopralluogo</h4>
             <p className="text-[10px] text-[color:var(--hmr-muted)]">
               {lat.toFixed(5)}, {lng.toFixed(5)}
               {preview && ` · ~km ${preview.alongKm.toFixed(1)} · ${preview.detourM} m`}
@@ -154,7 +154,7 @@ export default function FieldAddPoiSheet({
             value={body}
             onChange={(e) => setBody(e.target.value)}
             rows={2}
-            placeholder="Note rapide…"
+            placeholder="Note dal sopralluogo…"
             className={inputCls}
           />
         </label>
@@ -182,7 +182,7 @@ export default function FieldAddPoiSheet({
         {error && <p className="text-xs text-[color:var(--hmr-danger)]">{error}</p>}
 
         <button type="submit" disabled={pending} className="hmr-btn hmr-btn-accent hmr-tap w-full">
-          {pending ? "Salvo…" : "Salva e confermo arrivo"}
+          {pending ? "Salvo…" : "Salva e verifica sul campo"}
         </button>
       </form>
     </div>
