@@ -1,0 +1,10 @@
+node_modules/
+.next/
+.ingest-cache/
+data/personal.db
+data/personal.db-wal
+data/personal.db-shm
+data/uploads/*
+!.gitkeep
+.env.local
+.env

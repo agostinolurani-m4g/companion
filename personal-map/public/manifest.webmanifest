@@ -1,0 +1,31 @@
+{
+  "name": "Personal Map",
+  "short_name": "Personal Map",
+  "description": "Mappa outdoor privata: le tue tracce GPX senza distrazioni social.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b1221",
+  "theme_color": "#0b1221",
+  "lang": "it",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
