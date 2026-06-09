@@ -48,3 +48,6 @@ next-env.d.ts
 trail-planner/data/
 trail-planner/.next/
 trail-planner/node_modules/
+
+# Personal Map — sviluppo su branch feature/personal-map
+personal-map/
