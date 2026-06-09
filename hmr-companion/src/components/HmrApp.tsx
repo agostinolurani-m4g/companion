@@ -8,6 +8,7 @@ import type {
   CourseBridgeRow,
   NotableSectionRow,
   PoiCategory,
+  PoiNoteWithPhotos,
   PoiRow,
   RacePlanItemRow,
   RacePlanWithItems,
@@ -38,6 +39,8 @@ import RoadbookPanel from "./RoadbookPanel";
 import RaceBriefPanel from "./RaceBriefPanel";
 import NextPoiList from "./NextPoiList";
 import PoiEditSheet from "./PoiEditSheet";
+import FieldPoiSheet from "./FieldPoiSheet";
+import FieldAddPoiSheet from "./FieldAddPoiSheet";
 import { categoriesForRacePreset, type RacePoiFilterPreset } from "@/lib/poi-race-filter";
 
 export type HmrTab = "dashboard" | "nextPoi" | "race" | "roadbook" | "list" | "checkpoints" | "racePlan";
@@ -113,6 +116,8 @@ function MapChromeControls({
   layout = "full",
   onExitRaceLayout,
   raceFilterRow,
+  fieldProgramMode = false,
+  onToggleFieldProgram,
 }: {
   variant: "overlay" | "rail";
   lengthKm: number;
@@ -141,6 +146,8 @@ function MapChromeControls({
   layout?: "full" | "race";
   onExitRaceLayout?: () => void;
   raceFilterRow?: ReactNode;
+  fieldProgramMode?: boolean;
+  onToggleFieldProgram?: () => void;
 }) {
   const popMenuLeft =
     variant === "rail" ? "left-0 right-auto" : "left-0 right-auto max-sm:max-w-[min(11rem,calc(100vw-1.5rem))]";
@@ -161,6 +168,17 @@ function MapChromeControls({
                   title="Mappa meteo Windy (satellite / pioggia GFS)"
                 >
                   Meteo
+                </button>
+                <button
+                  type="button"
+                  onClick={onToggleFieldProgram}
+                  className={`hmr-chip max-sm:!min-h-[26px] max-sm:!px-1.5 max-sm:!py-0 max-sm:!text-[8px] sm:min-h-0 sm:px-2 sm:py-0.5 sm:text-[9px] ${
+                    fieldProgramMode ? "hmr-chip-on" : "hmr-chip-off"
+                  }`}
+                  aria-pressed={fieldProgramMode}
+                  title="Tocca POI per confermare arrivo, commento e foto; tocca mappa per nuovo POI"
+                >
+                  Campo
                 </button>
                 <button
                   type="button"
@@ -350,13 +368,70 @@ export default function HmrApp({
     null
   );
   const [raceActive, setRaceActive] = useState(false);
+  const [fieldProgramMode, setFieldProgramMode] = useState(true);
+  const [fieldNotes, setFieldNotes] = useState<Map<string, PoiNoteWithPhotos>>(() => new Map());
+  const [fieldPoiTarget, setFieldPoiTarget] = useState<PoiRow | null>(null);
+  const [fieldAddLatLng, setFieldAddLatLng] = useState<{ lat: number; lng: number } | null>(null);
 
   useEffect(() => {
     try {
       setRaceActive(localStorage.getItem("hmr_race_active") === "1");
+      const fp = localStorage.getItem("hmr_field_program");
+      if (fp === "0") setFieldProgramMode(false);
+      else if (fp === "1") setFieldProgramMode(true);
     } catch {
       setRaceActive(false);
     }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/track/${initial.id}/field-notes`);
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as { notes?: PoiNoteWithPhotos[] };
+        if (cancelled || !data.notes) return;
+        const map = new Map<string, PoiNoteWithPhotos>();
+        for (const n of data.notes) map.set(n.poi_id, n);
+        setFieldNotes(map);
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [initial.id]);
+
+  const toggleFieldProgram = useCallback(() => {
+    setFieldProgramMode((v) => {
+      const next = !v;
+      try {
+        localStorage.setItem("hmr_field_program", next ? "1" : "0");
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+    setFieldAddLatLng(null);
+    setFieldPoiTarget(null);
+  }, []);
+
+  const visitedPoiIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const [poiId, note] of fieldNotes) {
+      if (note.status === "visited") ids.add(poiId);
+    }
+    return ids;
+  }, [fieldNotes]);
+
+  const onFieldNoteSaved = useCallback((note: PoiNoteWithPhotos) => {
+    setFieldNotes((prev) => {
+      const next = new Map(prev);
+      next.set(note.poi_id, note);
+      return next;
+    });
   }, []);
 
   useEffect(() => {
@@ -664,6 +739,11 @@ export default function HmrApp({
 
   const handleSelectPoiFromMap = useCallback(
     (p: PoiRow) => {
+      if (isRaceLayout && fieldProgramMode) {
+        setFieldPoiTarget(p);
+        setFieldAddLatLng(null);
+        return;
+      }
       if (isRaceLayout) {
         if (atKm != null) setPins({ a: atKm, b: p.along_km });
         else setPins({ a: p.along_km, b: null });
@@ -671,8 +751,13 @@ export default function HmrApp({
       }
       setSelectedPoi(p);
     },
-    [isRaceLayout, atKm]
+    [isRaceLayout, fieldProgramMode, atKm]
   );
+
+  const onFieldAddPoiMapClick = useCallback((lat: number, lng: number) => {
+    setFieldAddLatLng({ lat, lng });
+    setFieldPoiTarget(null);
+  }, []);
 
   const onPoiPatched = useCallback((row: PoiRow) => {
     setPois((prev) => prev.map((x) => (x.id === row.id ? normalizePoiRow(row) : x)));
@@ -821,6 +906,14 @@ export default function HmrApp({
       return next;
     });
   }, []);
+
+  const onFieldPoiAdded = useCallback(
+    (poi: PoiRow, note?: PoiNoteWithPhotos) => {
+      onPoiAdded(poi);
+      if (note) onFieldNoteSaved(note);
+    },
+    [onPoiAdded, onFieldNoteSaved]
+  );
 
   const onPoiDeleted = useCallback((poiId: string) => {
     setPois((prev) => prev.filter((p) => p.id !== poiId));
@@ -987,9 +1080,13 @@ export default function HmrApp({
           layout: "race" as const,
           onExitRaceLayout: endRace,
           raceFilterRow: raceFilterChips,
+          fieldProgramMode,
+          onToggleFieldProgram: toggleFieldProgram,
         }
       : { layout: "full" as const }),
   };
+
+  const fieldMapPickActive = isRaceLayout && fieldProgramMode;
 
   return (
     <main
@@ -1016,19 +1113,28 @@ export default function HmrApp({
           onHoverKm={setHoverKm}
           onPin={handleMapPin}
           onSelectPoi={handleSelectPoiFromMap}
+          visitedPoiIds={visitedPoiIds}
           racePlanItems={overlayRacePlanItems}
           trackClickMode={
             addPoiMapPick
               ? "addPoi"
-              : poiHarvestMode
-                ? "poiHarvest"
-                : tab === "racePlan" && racePlanMapPick
-                  ? "racePlan"
-                  : "measure"
+              : fieldMapPickActive
+                ? "fieldAddPoi"
+                : poiHarvestMode
+                  ? "poiHarvest"
+                  : tab === "racePlan" && racePlanMapPick
+                    ? "racePlan"
+                    : "measure"
           }
           onTrackKmPick={onTrackKmPick}
           onPoiHarvestClick={poiHarvestMode && !isRaceLayout ? onPoiHarvestClick : undefined}
-          onAddPoiMapClick={addPoiMapPick ? onAddPoiMapClick : undefined}
+          onAddPoiMapClick={
+            addPoiMapPick
+              ? onAddPoiMapClick
+              : fieldMapPickActive
+                ? onFieldAddPoiMapClick
+                : undefined
+          }
           surfaceSegments={surfaceBands}
           streetViewPoints={streetViewPoints}
           showStreetViewLayer={!isRaceLayout && showStreetViewLayer}
@@ -1429,6 +1535,35 @@ export default function HmrApp({
           pickedLngLat={addPoiPickedLatLng}
           onClearPick={clearAddPoiPick}
         />
+      )}
+
+      {fieldPoiTarget && (
+        <FieldPoiSheet
+          trackId={initial.id}
+          poi={fieldPoiTarget}
+          initialNote={fieldNotes.get(fieldPoiTarget.id) ?? null}
+          onClose={() => setFieldPoiTarget(null)}
+          onSaved={onFieldNoteSaved}
+        />
+      )}
+
+      {fieldAddLatLng && (
+        <FieldAddPoiSheet
+          trackId={initial.id}
+          coords={initial.coords}
+          lat={fieldAddLatLng.lat}
+          lng={fieldAddLatLng.lng}
+          onClose={() => setFieldAddLatLng(null)}
+          onAdded={onFieldPoiAdded}
+        />
+      )}
+
+      {fieldMapPickActive && !fieldPoiTarget && !fieldAddLatLng && (
+        <div className="pointer-events-none absolute inset-x-0 top-[calc(var(--safe-top)+3.25rem)] z-20 flex justify-center px-3">
+          <p className="rounded-md border border-emerald-500/40 bg-[color:var(--hmr-panel-bg)]/95 px-3 py-1.5 text-center text-[10px] text-emerald-300 shadow-md backdrop-blur-sm">
+            Programma sul campo: tocca un POI per confermare arrivo · tocca la mappa per nuovo POI
+          </p>
+        </div>
       )}
     </main>
   );
