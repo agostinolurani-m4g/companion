@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Map as MaplibreMap, StyleSpecification } from "maplibre-gl";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import type { PoiCategory, PoiRow } from "@/lib/db";
+import type { PoiCategory, PoiRow, TrackDifficultySegmentRow } from "@/lib/db";
 import type { StoredCoord } from "@/lib/track-coords";
 import { CATEGORY_META } from "@/lib/categories";
 import { coordAtKm, projectLngLatToTrack } from "@/lib/track-measure";
@@ -19,6 +19,15 @@ export type MapViewProps = {
   hoverKm: number | null;
   onHoverKm?: (km: number | null) => void;
   onSelectPoi?: (poi: PoiRow) => void;
+  difficultySegments?: TrackDifficultySegmentRow[];
+  hazardCells?: Array<{ lat: number; lng: number; report_kind: string; confirmed_at: number | null }>;
+};
+
+const SEVERITY_LINE_COLORS: Record<string, string> = {
+  info: "#94a3b8",
+  caution: "#fbbf24",
+  hard: "#f87171",
+  extreme: "#a855f7",
 };
 
 const OSM_STYLE: StyleSpecification = {
@@ -159,6 +168,38 @@ export default function MapView(props: MapViewProps) {
         },
       });
 
+      map.addSource("difficulty", {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
+      map.addLayer({
+        id: "difficulty-line",
+        type: "line",
+        source: "difficulty",
+        paint: {
+          "line-color": ["get", "color"],
+          "line-width": 6,
+          "line-opacity": 0.85,
+        },
+      });
+
+      map.addSource("hazards", {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
+      map.addLayer({
+        id: "hazards-circle",
+        type: "circle",
+        source: "hazards",
+        paint: {
+          "circle-radius": 10,
+          "circle-color": "#a855f7",
+          "circle-stroke-width": 2,
+          "circle-stroke-color": "#fef08a",
+          "circle-opacity": 0.9,
+        },
+      });
+
       map.fitBounds(
         [
           [props.bbox.minLng, props.bbox.minLat],
@@ -210,6 +251,43 @@ export default function MapView(props: MapViewProps) {
     const src = map.getSource("pois") as maplibregl.GeoJSONSource | undefined;
     src?.setData({ type: "FeatureCollection", features: poiFeatures });
   }, [poiFeatures, mapReady]);
+
+  const difficultyFeatures = useMemo(() => {
+    if (!props.difficultySegments?.length || !props.coords.length) return [];
+    return props.difficultySegments.map((seg) => {
+      const segCoords = props.coords
+        .filter((c) => c[3] >= seg.km_start - 0.01 && c[3] <= seg.km_end + 0.01)
+        .map((c) => [c[0], c[1]] as [number, number]);
+      if (segCoords.length < 2) return null;
+      return {
+        type: "Feature" as const,
+        properties: { color: SEVERITY_LINE_COLORS[seg.severity] ?? "#f87171" },
+        geometry: { type: "LineString" as const, coordinates: segCoords },
+      };
+    }).filter(Boolean);
+  }, [props.difficultySegments, props.coords]);
+
+  const hazardFeatures = useMemo(() => {
+    return (props.hazardCells ?? []).map((h) => ({
+      type: "Feature" as const,
+      properties: { kind: h.report_kind },
+      geometry: { type: "Point" as const, coordinates: [h.lng, h.lat] },
+    }));
+  }, [props.hazardCells]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    const src = map.getSource("difficulty") as maplibregl.GeoJSONSource | undefined;
+    src?.setData({ type: "FeatureCollection", features: difficultyFeatures as GeoJSON.Feature[] });
+  }, [difficultyFeatures, mapReady]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    const src = map.getSource("hazards") as maplibregl.GeoJSONSource | undefined;
+    src?.setData({ type: "FeatureCollection", features: hazardFeatures });
+  }, [hazardFeatures, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;

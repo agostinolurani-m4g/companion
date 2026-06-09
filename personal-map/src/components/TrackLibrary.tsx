@@ -14,6 +14,7 @@ export type TrackLibraryItem = {
   elev_loss_m: number;
   point_count: number;
   activity_type: string | null;
+  source: string;
   created_at: number;
 };
 
@@ -179,9 +180,14 @@ export default function TrackLibrary({ tracks, credits }: Props) {
             </p>
             <p className="mt-2 text-xs text-[color:var(--hmr-faint)]">{creditsLabel(creditsState)}</p>
           </div>
-          <Link href="/map" className="hmr-btn hmr-btn-accent hmr-tap shrink-0 px-3 text-xs">
-            Mappa overview
-          </Link>
+          <div className="flex shrink-0 gap-2">
+            <Link href="/record" className="hmr-btn hmr-tap px-3 text-xs">
+              Registra
+            </Link>
+            <Link href="/map" className="hmr-btn hmr-btn-accent hmr-tap px-3 text-xs">
+              Mappa overview
+            </Link>
+          </div>
         </div>
       </header>
 
@@ -202,6 +208,7 @@ export default function TrackLibrary({ tracks, credits }: Props) {
                     <p className="mt-0.5 text-[10px] text-[color:var(--hmr-faint)]">
                       {t.id} · {formatDate(t.created_at)}
                       {t.activity_type ? ` · ${t.activity_type}` : ""}
+                      {t.source === "gps_record" ? " · GPS" : ""}
                     </p>
                   </div>
                   <dl className="grid grid-cols-3 gap-2 text-center text-xs">

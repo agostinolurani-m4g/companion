@@ -38,6 +38,16 @@ export type IngestGpxOptions = {
   persistGpxFile?: boolean;
 };
 
+export type IngestPositionsOptions = {
+  positions: Position[];
+  trackId: string;
+  name: string;
+  ownerId: string;
+  gpxRelPath?: string | null;
+  activityType?: string | null;
+  source?: "gpx_upload" | "gps_record";
+};
+
 function profileElevScale(official: number, measured: number): number {
   if (measured <= 0.5 || official <= 0) return 1;
   const r = official / measured;
@@ -106,8 +116,30 @@ export function ingestGpxToDb(opts: IngestGpxOptions): IngestGpxResult {
     return c;
   });
 
-  const rawElevations = pts.map((p) =>
-    p.eleM != null && Number.isFinite(p.eleM) ? p.eleM : null
+  return ingestPositionsToDb({
+    positions: raw,
+    trackId,
+    name,
+    ownerId,
+    gpxRelPath: opts.gpxRelPath,
+    activityType: opts.activityType,
+    source: "gpx_upload",
+  });
+}
+
+export function ingestPositionsToDb(opts: IngestPositionsOptions): IngestGpxResult {
+  const trackId = opts.trackId.trim();
+  const name = opts.name.trim();
+  const ownerId = opts.ownerId.trim();
+  const source = opts.source ?? "gpx_upload";
+  if (!trackId) throw new Error("ID traccia richiesto");
+  if (!name) throw new Error("Nome percorso richiesto");
+  if (!ownerId) throw new Error("Owner richiesto");
+  if (opts.positions.length < 2) throw new Error("Servono almeno due punti");
+
+  const raw = opts.positions;
+  const rawElevations = raw.map((c) =>
+    typeof c[2] === "number" && Number.isFinite(c[2]) ? c[2] : null
   );
   const { gain, loss } = elevationGainLossSmoothed(rawElevations, {
     windowPts: ELEV_GAIN_DEFAULT_WINDOW_PTS,
@@ -158,12 +190,12 @@ export function ingestGpxToDb(opts: IngestGpxOptions): IngestGpxResult {
         `UPDATE tracks SET
            owner_id = ?, name = ?, gpx_path = ?, coords_json = ?, length_km = ?, elev_gain_m = ?, elev_loss_m = ?,
            elev_profile_gain_scale = ?, elev_profile_loss_scale = ?, bbox_json = ?, point_count = ?,
-           activity_type = COALESCE(?, activity_type)
+           activity_type = COALESCE(?, activity_type), source = ?
          WHERE id = ?`
       ).run(
         ownerId,
         name,
-        opts.gpxRelPath,
+        opts.gpxRelPath ?? null,
         JSON.stringify(coordsJson),
         Number(totalKm.toFixed(3)),
         Math.round(gain),
@@ -173,6 +205,7 @@ export function ingestGpxToDb(opts: IngestGpxOptions): IngestGpxResult {
         JSON.stringify(bbox),
         simplified.length,
         opts.activityType ?? null,
+        source,
         trackId
       );
     } else {
@@ -181,12 +214,12 @@ export function ingestGpxToDb(opts: IngestGpxOptions): IngestGpxResult {
            id, owner_id, name, gpx_path, coords_json, length_km, elev_gain_m, elev_loss_m,
            elev_profile_gain_scale, elev_profile_loss_scale, bbox_json, point_count,
            activity_type, source, visibility, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'gpx_upload', 'private', ?)`
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'private', ?)`
       ).run(
         trackId,
         ownerId,
         name,
-        opts.gpxRelPath,
+        opts.gpxRelPath ?? null,
         JSON.stringify(coordsJson),
         Number(totalKm.toFixed(3)),
         Math.round(gain),
@@ -196,6 +229,7 @@ export function ingestGpxToDb(opts: IngestGpxOptions): IngestGpxResult {
         JSON.stringify(bbox),
         simplified.length,
         opts.activityType ?? null,
+        source,
         createdAt
       );
     }
@@ -212,7 +246,7 @@ export function ingestGpxToDb(opts: IngestGpxOptions): IngestGpxResult {
     point_count: simplified.length,
     bbox,
     updated: !!existingTrack,
-    rawPointCount: pts.length,
+    rawPointCount: raw.length,
   };
 }
 

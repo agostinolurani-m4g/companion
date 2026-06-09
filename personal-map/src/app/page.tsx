@@ -19,6 +19,7 @@ export default async function HomePage() {
     elev_loss_m: t.elev_loss_m,
     point_count: t.point_count,
     activity_type: t.activity_type,
+    source: t.source,
     created_at: t.created_at,
   }));
 

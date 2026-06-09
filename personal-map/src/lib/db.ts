@@ -37,6 +37,7 @@ export function getDb(): Database.Database {
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   initSchema(db);
+  migrateSchema(db);
   dbInstance = db;
   dbOpenedPath = target;
   return db;
@@ -131,7 +132,84 @@ function initSchema(db: Database.Database): void {
       username TEXT PRIMARY KEY,
       credits_remaining INTEGER NOT NULL DEFAULT 1
     );
+
+    CREATE TABLE IF NOT EXISTS track_journal_entries (
+      id TEXT PRIMARY KEY,
+      track_id TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+      along_km REAL NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('note','photo','condition','milestone')),
+      title TEXT,
+      body TEXT,
+      photo_path TEXT,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_journal_track ON track_journal_entries(track_id, along_km);
+
+    CREATE TABLE IF NOT EXISTS track_difficulty_segments (
+      id TEXT PRIMARY KEY,
+      track_id TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+      km_start REAL NOT NULL,
+      km_end REAL NOT NULL,
+      source TEXT NOT NULL CHECK (source IN ('auto_steep','auto_osm','user_report','geo_consensus')),
+      severity TEXT NOT NULL CHECK (severity IN ('info','caution','hard','extreme')),
+      label TEXT NOT NULL,
+      metadata_json TEXT,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_difficulty_track ON track_difficulty_segments(track_id, km_start);
+
+    CREATE TABLE IF NOT EXISTS geo_hazard_cells (
+      cell_id TEXT PRIMARY KEY,
+      report_kind TEXT NOT NULL,
+      report_count INTEGER NOT NULL DEFAULT 0,
+      lat REAL NOT NULL,
+      lng REAL NOT NULL,
+      last_body TEXT,
+      confirmed_at INTEGER,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_hazard_cells_kind ON geo_hazard_cells(report_kind);
+
+    CREATE TABLE IF NOT EXISTS geo_hazard_reports (
+      id TEXT PRIMARY KEY,
+      cell_id TEXT NOT NULL REFERENCES geo_hazard_cells(cell_id) ON DELETE CASCADE,
+      reporter_id TEXT NOT NULL,
+      lat REAL NOT NULL,
+      lng REAL NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('landslide','avalanche','technical_trail','snow_condition','other')),
+      body TEXT,
+      track_id TEXT REFERENCES tracks(id) ON DELETE SET NULL,
+      along_km REAL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_hazard_report_unique
+      ON geo_hazard_reports(cell_id, reporter_id);
+
+    CREATE TABLE IF NOT EXISTS activities (
+      id TEXT PRIMARY KEY,
+      owner_id TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('recording','completed','discarded')),
+      name TEXT,
+      activity_type TEXT,
+      points_json TEXT NOT NULL DEFAULT '[]',
+      track_id TEXT REFERENCES tracks(id) ON DELETE SET NULL,
+      started_at INTEGER NOT NULL,
+      ended_at INTEGER,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_activities_owner ON activities(owner_id, started_at DESC);
   `);
+}
+
+function migrateSchema(db: Database.Database): void {
+  const trackCols = db.prepare(`PRAGMA table_info(tracks)`).all() as { name: string }[];
+  const names = new Set(trackCols.map((c) => c.name));
+  if (!names.has("sport_mode")) {
+    db.exec(`ALTER TABLE tracks ADD COLUMN sport_mode TEXT`);
+  }
+  if (!names.has("journal_summary")) {
+    db.exec(`ALTER TABLE tracks ADD COLUMN journal_summary TEXT`);
+  }
 }
 
 export type PoiCategory =
@@ -159,8 +237,79 @@ export type TrackRow = {
   bbox_json: string;
   point_count: number;
   activity_type: string | null;
+  sport_mode?: string | null;
+  journal_summary?: string | null;
   source: string;
   visibility: string;
+  created_at: number;
+};
+
+export type JournalEntryKind = "note" | "photo" | "condition" | "milestone";
+
+export type TrackJournalEntryRow = {
+  id: string;
+  track_id: string;
+  along_km: number;
+  kind: JournalEntryKind;
+  title: string | null;
+  body: string | null;
+  photo_path: string | null;
+  created_at: number;
+};
+
+export type DifficultySource = "auto_steep" | "auto_osm" | "user_report" | "geo_consensus";
+export type DifficultySeverity = "info" | "caution" | "hard" | "extreme";
+
+export type TrackDifficultySegmentRow = {
+  id: string;
+  track_id: string;
+  km_start: number;
+  km_end: number;
+  source: DifficultySource;
+  severity: DifficultySeverity;
+  label: string;
+  metadata_json: string | null;
+  created_at: number;
+};
+
+export type HazardKind = "landslide" | "avalanche" | "technical_trail" | "snow_condition" | "other";
+
+export type GeoHazardCellRow = {
+  cell_id: string;
+  report_kind: string;
+  report_count: number;
+  lat: number;
+  lng: number;
+  last_body: string | null;
+  confirmed_at: number | null;
+  updated_at: number;
+};
+
+export type GeoHazardReportRow = {
+  id: string;
+  cell_id: string;
+  reporter_id: string;
+  lat: number;
+  lng: number;
+  kind: HazardKind;
+  body: string | null;
+  track_id: string | null;
+  along_km: number | null;
+  created_at: number;
+};
+
+export type ActivityStatus = "recording" | "completed" | "discarded";
+
+export type ActivityRow = {
+  id: string;
+  owner_id: string;
+  status: ActivityStatus;
+  name: string | null;
+  activity_type: string | null;
+  points_json: string;
+  track_id: string | null;
+  started_at: number;
+  ended_at: number | null;
   created_at: number;
 };
 
@@ -381,4 +530,322 @@ export function deleteAuthSessionById(id: string): void {
 
 export function pruneAuthSessions(now: number): void {
   getDb().prepare(`DELETE FROM auth_sessions WHERE expires_at <= ?`).run(now);
+}
+
+export function updateTrackJournalMeta(
+  trackId: string,
+  ownerId: string,
+  patch: { journal_summary?: string | null; sport_mode?: string | null }
+): boolean {
+  const sets: string[] = [];
+  const params: unknown[] = [];
+  if ("journal_summary" in patch) {
+    sets.push("journal_summary = ?");
+    params.push(patch.journal_summary ?? null);
+  }
+  if ("sport_mode" in patch) {
+    sets.push("sport_mode = ?");
+    params.push(patch.sport_mode ?? null);
+  }
+  if (sets.length === 0) return false;
+  params.push(trackId, ownerId);
+  const res = getDb()
+    .prepare(`UPDATE tracks SET ${sets.join(", ")} WHERE id = ? AND owner_id = ?`)
+    .run(...params);
+  return res.changes > 0;
+}
+
+export function listJournalEntries(trackId: string): TrackJournalEntryRow[] {
+  return getDb()
+    .prepare(`SELECT * FROM track_journal_entries WHERE track_id = ? ORDER BY along_km ASC, created_at ASC`)
+    .all(trackId) as TrackJournalEntryRow[];
+}
+
+export function getJournalEntry(id: string): TrackJournalEntryRow | undefined {
+  return getDb()
+    .prepare(`SELECT * FROM track_journal_entries WHERE id = ?`)
+    .get(id) as TrackJournalEntryRow | undefined;
+}
+
+export function insertJournalEntry(input: {
+  id: string;
+  track_id: string;
+  along_km: number;
+  kind: JournalEntryKind;
+  title?: string | null;
+  body?: string | null;
+  photo_path?: string | null;
+  created_at: number;
+}): void {
+  getDb()
+    .prepare(
+      `INSERT INTO track_journal_entries (id, track_id, along_km, kind, title, body, photo_path, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      input.id,
+      input.track_id,
+      input.along_km,
+      input.kind,
+      input.title ?? null,
+      input.body ?? null,
+      input.photo_path ?? null,
+      input.created_at
+    );
+}
+
+export function updateJournalEntry(
+  id: string,
+  patch: { title?: string | null; body?: string | null; along_km?: number }
+): boolean {
+  const sets: string[] = [];
+  const params: unknown[] = [];
+  if ("title" in patch) {
+    sets.push("title = ?");
+    params.push(patch.title ?? null);
+  }
+  if ("body" in patch) {
+    sets.push("body = ?");
+    params.push(patch.body ?? null);
+  }
+  if ("along_km" in patch && typeof patch.along_km === "number") {
+    sets.push("along_km = ?");
+    params.push(patch.along_km);
+  }
+  if (sets.length === 0) return false;
+  params.push(id);
+  const res = getDb()
+    .prepare(`UPDATE track_journal_entries SET ${sets.join(", ")} WHERE id = ?`)
+    .run(...params);
+  return res.changes > 0;
+}
+
+export function deleteJournalEntry(id: string): boolean {
+  const res = getDb().prepare(`DELETE FROM track_journal_entries WHERE id = ?`).run(id);
+  return res.changes > 0;
+}
+
+export function listTrackDifficultySegments(trackId: string): TrackDifficultySegmentRow[] {
+  return getDb()
+    .prepare(`SELECT * FROM track_difficulty_segments WHERE track_id = ? ORDER BY km_start ASC`)
+    .all(trackId) as TrackDifficultySegmentRow[];
+}
+
+export function replaceTrackDifficultySegments(
+  trackId: string,
+  segments: Array<{
+    km_start: number;
+    km_end: number;
+    source: DifficultySource;
+    severity: DifficultySeverity;
+    label: string;
+    metadata_json?: string | null;
+  }>
+): void {
+  const db = getDb();
+  const now = Date.now();
+  const tx = db.transaction(() => {
+    db.prepare(`DELETE FROM track_difficulty_segments WHERE track_id = ?`).run(trackId);
+    const ins = db.prepare(
+      `INSERT INTO track_difficulty_segments
+       (id, track_id, km_start, km_end, source, severity, label, metadata_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    for (const s of segments) {
+      ins.run(
+        crypto.randomUUID(),
+        trackId,
+        s.km_start,
+        s.km_end,
+        s.source,
+        s.severity,
+        s.label,
+        s.metadata_json ?? null,
+        now
+      );
+    }
+  });
+  tx();
+}
+
+export function listGeoHazardCellsInBbox(
+  minLat: number,
+  minLng: number,
+  maxLat: number,
+  maxLng: number
+): GeoHazardCellRow[] {
+  return getDb()
+    .prepare(
+      `SELECT * FROM geo_hazard_cells
+       WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?`
+    )
+    .all(minLat, maxLat, minLng, maxLng) as GeoHazardCellRow[];
+}
+
+export function getGeoHazardCell(cellId: string): GeoHazardCellRow | undefined {
+  return getDb()
+    .prepare(`SELECT * FROM geo_hazard_cells WHERE cell_id = ?`)
+    .get(cellId) as GeoHazardCellRow | undefined;
+}
+
+export function insertGeoHazardReport(input: {
+  id: string;
+  cell_id: string;
+  reporter_id: string;
+  lat: number;
+  lng: number;
+  kind: HazardKind;
+  body?: string | null;
+  track_id?: string | null;
+  along_km?: number | null;
+  created_at: number;
+  consensusThreshold: number;
+}): GeoHazardCellRow {
+  const db = getDb();
+  const tx = db.transaction(() => {
+    const existing = db
+      .prepare(`SELECT id FROM geo_hazard_reports WHERE cell_id = ? AND reporter_id = ?`)
+      .get(input.cell_id, input.reporter_id);
+    if (existing) {
+      const cell = db
+        .prepare(`SELECT * FROM geo_hazard_cells WHERE cell_id = ?`)
+        .get(input.cell_id) as GeoHazardCellRow;
+      return cell;
+    }
+
+    db.prepare(
+      `INSERT INTO geo_hazard_reports
+       (id, cell_id, reporter_id, lat, lng, kind, body, track_id, along_km, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      input.id,
+      input.cell_id,
+      input.reporter_id,
+      input.lat,
+      input.lng,
+      input.kind,
+      input.body ?? null,
+      input.track_id ?? null,
+      input.along_km ?? null,
+      input.created_at
+    );
+
+    const countRow = db
+      .prepare(`SELECT COUNT(DISTINCT reporter_id) AS n FROM geo_hazard_reports WHERE cell_id = ?`)
+      .get(input.cell_id) as { n: number };
+
+    const now = input.created_at;
+    const confirmed =
+      countRow.n >= input.consensusThreshold ? (now as number) : null;
+
+    db.prepare(
+      `INSERT INTO geo_hazard_cells (cell_id, report_kind, report_count, lat, lng, last_body, confirmed_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(cell_id) DO UPDATE SET
+         report_count = excluded.report_count,
+         last_body = COALESCE(excluded.last_body, geo_hazard_cells.last_body),
+         confirmed_at = CASE
+           WHEN excluded.report_count >= ? THEN COALESCE(geo_hazard_cells.confirmed_at, excluded.confirmed_at)
+           ELSE geo_hazard_cells.confirmed_at
+         END,
+         updated_at = excluded.updated_at`
+    ).run(
+      input.cell_id,
+      input.kind,
+      countRow.n,
+      input.lat,
+      input.lng,
+      input.body ?? null,
+      confirmed,
+      now,
+      input.consensusThreshold
+    );
+
+    return db
+      .prepare(`SELECT * FROM geo_hazard_cells WHERE cell_id = ?`)
+      .get(input.cell_id) as GeoHazardCellRow;
+  });
+  return tx();
+}
+
+export function createActivity(input: {
+  id: string;
+  owner_id: string;
+  name?: string | null;
+  activity_type?: string | null;
+  started_at: number;
+  created_at: number;
+}): void {
+  getDb()
+    .prepare(
+      `INSERT INTO activities (id, owner_id, status, name, activity_type, points_json, started_at, created_at)
+       VALUES (?, ?, 'recording', ?, ?, '[]', ?, ?)`
+    )
+    .run(
+      input.id,
+      input.owner_id,
+      input.name ?? null,
+      input.activity_type ?? null,
+      input.started_at,
+      input.created_at
+    );
+}
+
+export function getActivityForOwner(id: string, ownerId: string): ActivityRow | undefined {
+  return getDb()
+    .prepare(`SELECT * FROM activities WHERE id = ? AND owner_id = ?`)
+    .get(id, ownerId) as ActivityRow | undefined;
+}
+
+export function getActiveRecordingForOwner(ownerId: string): ActivityRow | undefined {
+  return getDb()
+    .prepare(
+      `SELECT * FROM activities WHERE owner_id = ? AND status = 'recording' ORDER BY started_at DESC LIMIT 1`
+    )
+    .get(ownerId) as ActivityRow | undefined;
+}
+
+export function listActivities(ownerId: string, limit = 50): ActivityRow[] {
+  return getDb()
+    .prepare(`SELECT * FROM activities WHERE owner_id = ? ORDER BY started_at DESC LIMIT ?`)
+    .all(ownerId, limit) as ActivityRow[];
+}
+
+export function appendActivityPoints(activityId: string, ownerId: string, newPoints: unknown[]): boolean {
+  const row = getActivityForOwner(activityId, ownerId);
+  if (!row || row.status !== "recording") return false;
+  let existing: unknown[] = [];
+  try {
+    existing = JSON.parse(row.points_json) as unknown[];
+  } catch {
+    existing = [];
+  }
+  const merged = [...existing, ...newPoints];
+  const res = getDb()
+    .prepare(`UPDATE activities SET points_json = ? WHERE id = ? AND owner_id = ?`)
+    .run(JSON.stringify(merged), activityId, ownerId);
+  return res.changes > 0;
+}
+
+export function completeActivity(
+  activityId: string,
+  ownerId: string,
+  trackId: string,
+  endedAt: number
+): boolean {
+  const res = getDb()
+    .prepare(
+      `UPDATE activities SET status = 'completed', track_id = ?, ended_at = ? WHERE id = ? AND owner_id = ? AND status = 'recording'`
+    )
+    .run(trackId, endedAt, activityId, ownerId);
+  return res.changes > 0;
+}
+
+export function discardActivity(activityId: string, ownerId: string): boolean {
+  const res = getDb()
+    .prepare(
+      `UPDATE activities SET status = 'discarded', ended_at = ? WHERE id = ? AND owner_id = ? AND status = 'recording'`
+    )
+    .run(Date.now(), activityId, ownerId);
+  return res.changes > 0;
 }

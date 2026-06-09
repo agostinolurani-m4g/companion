@@ -107,6 +107,9 @@ body {
     border-color: rgba(56, 189, 248, 0.5);
     color: var(--hmr-accent);
   }
+  .hmr-input {
+    @apply rounded-lg border border-[color:var(--hmr-border)] bg-[color:var(--hmr-elev)] px-3 py-2 text-sm text-[color:var(--hmr-text)];
+  }
   .hmr-ingest-spinner {
     width: 2.5rem;
     height: 2.5rem;

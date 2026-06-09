@@ -1,14 +1,26 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { PoiCategory, PoiRow, TrackSurfaceSegmentRow } from "@/lib/db";
+import type {
+  NotableSectionRow,
+  PoiCategory,
+  PoiRow,
+  TrackDifficultySegmentRow,
+  TrackJournalEntryRow,
+  TrackSurfaceSegmentRow,
+} from "@/lib/db";
 import type { StoredCoord } from "@/lib/track-coords";
+import type { SportMode } from "@/lib/sport-modes";
 import { CATEGORY_META, CATEGORY_ORDER } from "@/lib/categories";
 import { formatTerrainIt, surfaceKindAtKm } from "@/lib/surface-osm";
 import { projectLngLatToTrack } from "@/lib/track-measure";
+import AvalancheInfoBar from "./AvalancheInfoBar";
 import BottomSheet, { type SheetSnap } from "./BottomSheet";
+import DifficultyList from "./DifficultyList";
 import ElevationChart from "./ElevationChart";
+import JournalPanel from "./JournalPanel";
 import MapView from "./MapView";
 import PoiList from "./PoiList";
 
@@ -21,13 +33,20 @@ export type TrackPayload = {
   elev_profile_gain_scale: number;
   elev_profile_loss_scale: number;
   activity_type: string | null;
+  sport_mode: SportMode;
+  journal_summary: string | null;
+  source: string;
+  grade: string | null;
   bbox: { minLng: number; maxLng: number; minLat: number; maxLat: number };
   coords: StoredCoord[];
   pois: PoiRow[];
   surfaceSegments?: TrackSurfaceSegmentRow[];
+  difficultySegments: TrackDifficultySegmentRow[];
+  journalEntries: TrackJournalEntryRow[];
+  notableSections: NotableSectionRow[];
 };
 
-type Tab = "map" | "pois";
+type Tab = "map" | "pois" | "journal" | "attention";
 
 type Props = {
   sessionEmail: string;
@@ -35,19 +54,32 @@ type Props = {
 };
 
 export default function PersonalApp({ sessionEmail, initial }: Props) {
-  const [payload] = useState(initial);
-  const [tab, setTab] = useState<Tab>("map");
+  const searchParams = useSearchParams();
+  const [payload, setPayload] = useState(initial);
+  const [tab, setTab] = useState<Tab>(
+    searchParams.get("diario") === "1" ? "journal" : "map"
+  );
   const [sheetSnap, setSheetSnap] = useState<SheetSnap>("peek");
   const [hoverKm, setHoverKm] = useState<number | null>(null);
+  const [focusKm, setFocusKm] = useState<number | null>(null);
   const [myAlongKm, setMyAlongKm] = useState<number | null>(null);
   const [myPosition, setMyPosition] = useState<{ lat: number; lng: number } | null>(null);
   const [gpsOn, setGpsOn] = useState(false);
   const [selectedPoi, setSelectedPoi] = useState<PoiRow | null>(null);
+  const [journalSummary, setJournalSummary] = useState(initial.journal_summary);
+  const [sportMode, setSportMode] = useState<SportMode>(initial.sport_mode);
+  const [journalEntries, setJournalEntries] = useState(initial.journalEntries);
+  const [difficultySegments, setDifficultySegments] = useState(initial.difficultySegments);
+  const [grade, setGrade] = useState<string | null>(initial.grade);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [hazardCells, setHazardCells] = useState<
+    Array<{ lat: number; lng: number; report_kind: string; confirmed_at: number | null }>
+  >([]);
   const [visibleCategories, setVisibleCategories] = useState<Set<PoiCategory>>(
     () => new Set(CATEGORY_ORDER)
   );
 
-  const atKm = hoverKm ?? myAlongKm;
+  const atKm = focusKm ?? hoverKm ?? myAlongKm;
 
   const toggleCategory = useCallback((c: PoiCategory) => {
     setVisibleCategories((prev) => {
@@ -75,6 +107,64 @@ export default function PersonalApp({ sessionEmail, initial }: Props) {
     return () => navigator.geolocation.clearWatch(id);
   }, [gpsOn, payload.coords]);
 
+  useEffect(() => {
+    const { bbox } = payload;
+    void (async () => {
+      const res = await fetch(
+        `/api/hazards/cells?minLat=${bbox.minLat}&minLng=${bbox.minLng}&maxLat=${bbox.maxLat}&maxLng=${bbox.maxLng}`,
+        { credentials: "same-origin" }
+      );
+      if (!res.ok) return;
+      const data = (await res.json()) as {
+        cells: Array<{
+          lat: number;
+          lng: number;
+          report_kind: string;
+          confirmed_at: number | null;
+        }>;
+      };
+      setHazardCells(data.cells.filter((c) => c.confirmed_at));
+    })();
+  }, [payload.bbox]);
+
+  const analyzeDifficulty = useCallback(async () => {
+    setAnalyzing(true);
+    try {
+      const res = await fetch(`/api/track/${encodeURIComponent(payload.id)}/difficulty`, {
+        method: "POST",
+        credentials: "same-origin",
+      });
+      const data = (await res.json()) as {
+        segments?: TrackDifficultySegmentRow[];
+        grade?: string;
+        error?: string;
+      };
+      if (res.ok && data.segments) {
+        setDifficultySegments(data.segments);
+        setGrade(data.grade ?? null);
+        setPayload((p) => ({
+          ...p,
+          difficultySegments: data.segments!,
+          notableSections: data.segments!.map((s) => ({
+            id: s.id,
+            label: s.label,
+            km_start: s.km_start,
+            km_end: s.km_end,
+            severity:
+              s.severity === "extreme" || s.severity === "hard"
+                ? "hard"
+                : s.severity === "caution"
+                  ? "warn"
+                  : "info",
+            description: s.label,
+          })),
+        }));
+      }
+    } finally {
+      setAnalyzing(false);
+    }
+  }, [payload.id]);
+
   const hoverTerrainLabel = useMemo(() => {
     if (atKm == null || !payload.surfaceSegments?.length) return null;
     const kind = surfaceKindAtKm(payload.surfaceSegments, atKm);
@@ -91,6 +181,8 @@ export default function PersonalApp({ sessionEmail, initial }: Props) {
     [payload.surfaceSegments]
   );
 
+  const midCoord = payload.coords[Math.floor(payload.coords.length / 2)];
+
   return (
     <div className="relative flex h-full min-h-0 flex-col">
       <header className="pointer-events-auto absolute left-0 right-0 top-0 z-30 flex items-center justify-between gap-2 bg-[color:var(--hmr-bg)]/80 px-3 py-2 backdrop-blur-sm">
@@ -98,7 +190,8 @@ export default function PersonalApp({ sessionEmail, initial }: Props) {
           <h1 className="truncate text-sm font-semibold">{payload.name}</h1>
           <p className="text-[10px] text-[color:var(--hmr-muted)]">
             {payload.length_km.toFixed(1)} km · D+ {Math.round(payload.elev_gain_m)} m
-            {payload.activity_type ? ` · ${payload.activity_type}` : ""}
+            {grade ? ` · ${grade}` : ""}
+            {payload.source === "gps_record" ? " · GPS" : ""}
           </p>
         </div>
         <div className="flex shrink-0 gap-1">
@@ -107,8 +200,11 @@ export default function PersonalApp({ sessionEmail, initial }: Props) {
             onClick={() => setGpsOn((v) => !v)}
             className={`hmr-chip hmr-tap text-[10px] ${gpsOn ? "hmr-chip-on" : "hmr-chip-off"}`}
           >
-            GPS
+            Posizione
           </button>
+          <Link href="/record" className="hmr-btn hmr-tap px-2 text-[10px]">
+            Registra
+          </Link>
           <Link href="/map" className="hmr-btn hmr-tap px-2 text-[10px]">
             Overview
           </Link>
@@ -118,7 +214,10 @@ export default function PersonalApp({ sessionEmail, initial }: Props) {
         </div>
       </header>
 
-      <div className="relative min-h-0 flex-1 pt-12">
+      <div
+        className="relative min-h-0 flex-1 pt-12"
+        style={{ paddingBottom: "calc(var(--hmr-profile-strip) + var(--safe-bottom))" }}
+      >
         <MapView
           coords={payload.coords}
           bbox={payload.bbox}
@@ -126,20 +225,25 @@ export default function PersonalApp({ sessionEmail, initial }: Props) {
           visibleCategories={visibleCategories}
           myAlongKm={myAlongKm}
           myPosition={myPosition}
-          hoverKm={hoverKm}
+          hoverKm={atKm}
           onHoverKm={setHoverKm}
           onSelectPoi={setSelectedPoi}
+          difficultySegments={difficultySegments}
+          hazardCells={hazardCells}
         />
       </div>
 
       <div
-        className="pointer-events-none absolute inset-x-0 bottom-0 z-10"
-        style={{ height: "var(--hmr-profile-strip)" }}
+        className="pointer-events-none absolute inset-x-0 z-10"
+        style={{
+          bottom: "var(--safe-bottom)",
+          height: "var(--hmr-profile-strip)",
+        }}
       >
-        <div className="pointer-events-auto h-full border-t border-[color:var(--hmr-border)] bg-[color:var(--hmr-surface)]/95">
+        <div className="pointer-events-auto h-full border-t border-[color:var(--hmr-border)] bg-[color:var(--hmr-surface)]/95 backdrop-blur-sm">
           <ElevationChart
             coords={payload.coords}
-            sections={[]}
+            sections={payload.notableSections}
             checkpoints={[]}
             atKm={atKm}
             hoverKm={hoverKm}
@@ -159,27 +263,29 @@ export default function PersonalApp({ sessionEmail, initial }: Props) {
         reserveProfileStrip
         header={
           <div className="flex gap-1 p-2">
-            <button
-              type="button"
-              onClick={() => setTab("map")}
-              className={`hmr-chip flex-1 justify-center text-xs ${tab === "map" ? "hmr-chip-on" : "hmr-chip-off"}`}
-            >
-              Info
-            </button>
-            <button
-              type="button"
-              onClick={() => setTab("pois")}
-              className={`hmr-chip flex-1 justify-center text-xs ${tab === "pois" ? "hmr-chip-on" : "hmr-chip-off"}`}
-            >
-              POI
-            </button>
+            {(["map", "pois", "journal", "attention"] as Tab[]).map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => {
+                  setTab(t);
+                  if (sheetSnap === "peek") setSheetSnap("half");
+                }}
+                className={`hmr-chip flex-1 justify-center text-[10px] ${tab === t ? "hmr-chip-on" : "hmr-chip-off"}`}
+              >
+                {t === "map" ? "Info" : t === "pois" ? "POI" : t === "journal" ? "Diario" : "Attenzione"}
+              </button>
+            ))}
           </div>
         }
       >
         {tab === "map" ? (
           <div className="space-y-3 p-3 text-sm">
+            {sportMode === "ski_mountaineering" && midCoord ? (
+              <AvalancheInfoBar lat={midCoord[1]} lng={midCoord[0]} />
+            ) : null}
             <p className="text-xs text-[color:var(--hmr-muted)]">
-              Utente: {sessionEmail}. Posizione GPS libera (pulsante in alto) + proiezione sulla traccia.
+              Utente: {sessionEmail}. GPS per posizione e segnalazioni.
             </p>
             {atKm != null ? (
               <p className="text-xs">
@@ -223,7 +329,7 @@ export default function PersonalApp({ sessionEmail, initial }: Props) {
               </div>
             ) : null}
           </div>
-        ) : (
+        ) : tab === "pois" ? (
           <PoiList
             pois={payload.pois}
             atKm={atKm}
@@ -231,6 +337,28 @@ export default function PersonalApp({ sessionEmail, initial }: Props) {
             visibleCategories={visibleCategories}
             onToggleCategory={toggleCategory}
             onSelectPoi={setSelectedPoi}
+          />
+        ) : tab === "journal" ? (
+          <JournalPanel
+            trackId={payload.id}
+            lengthKm={payload.length_km}
+            journalSummary={journalSummary}
+            sportMode={sportMode}
+            entries={journalEntries}
+            atKm={atKm}
+            myPosition={myPosition}
+            grade={grade}
+            onSummaryChange={setJournalSummary}
+            onSportModeChange={setSportMode}
+            onEntriesChange={setJournalEntries}
+            onSelectKm={setFocusKm}
+            onAnalyzeDifficulty={() => void analyzeDifficulty()}
+            analyzing={analyzing}
+          />
+        ) : (
+          <DifficultyList
+            segments={difficultySegments}
+            onSelectKm={setFocusKm}
           />
         )}
       </BottomSheet>

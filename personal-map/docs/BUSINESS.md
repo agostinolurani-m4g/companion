@@ -18,53 +18,35 @@ Personal Map è uno strumento privato: importi GPX, vedi tutto su una mappa, apr
 
 ## Principi prodotto (anti-social)
 
-| Principio | Implementazione v1 |
+| Principio | Implementazione |
 |-----------|-------------------|
 | Privato by default | `visibility=private`, nessuna route pubblica |
 | Nessun feed | Solo le *tue* tracce su `/map` |
 | Nessun follow graph | Nessuna tabella friendships/follows |
-| Nessuna gamification | No badge, streak, kudos, classifiche |
-| Condivisione minima (futuro) | Solo link read-only per singolo percorso (fase 4) |
-
-## Confronto competitivo (funzionale)
-
-| | Personal Map v1 | Strava | Komoot | AllTrails |
-|--|-----------------|--------|--------|-----------|
-| Mappa tracce personali | Sì | Sì | Sì | Sì |
-| Overview multi-traccia | Sì | Limitato | Sì | Sì |
-| POI lungo traccia (OSM) | Sì (snapshot) | No | Sì | Parziale |
-| Profilo altimetrico | Sì | Sì | Sì | Sì |
-| Offline / PWA | Base | App | App | App |
-| Social / feed | **No** | Core | Medio | Medio |
-| Pianificazione routing | Fase 3 | No | Core | Sì |
-| Prezzo | Self-host / freemium ipotetico | Abbonamento | Abbonamento | Abbonamento |
-
-## Modello di revenue (ipotesi)
-
-- **Gratis:** fino a N tracce, 1 snapshot POI
-- **Pro:** snapshot illimitati, export GPX, hosting gestito
-- **No ads**, no vendita dati posizione
-- **Self-hosted:** pacchetto Docker per utenti che vogliono i propri dati in casa
-
-## Metriche di successo — fase 1
-
-| Metrica | Target |
-|---------|--------|
-| Uso settimanale dal founder | Sì, come strumento personale |
-| Upload GPX → traccia visibile | < 2 min (senza snapshot) |
-| Overview `/map` con 20 tracce | Carica < 3 s |
-| Snapshot POI completato | < 15 min con `webFast` |
+| Gamification solo personale | Completezza diario (%), no leaderboard/kudos |
+| Segnalazioni funzionali | Consensus per cella geo (frana/valanga/tecnico), no profili pubblici |
+| Condivisione minima (futuro) | Solo link read-only per singolo percorso (fase 5) |
 
 ## Roadmap prodotto
 
-1. **Fase 1 (attuale):** libreria GPX, overview map, dettaglio, POI snapshot
-2. **Fase 2:** registrazione GPS live (start/stop → `activities`)
-3. **Fase 3:** pianificazione percorso (routing OSRM foot/bike)
-4. **Fase 4:** share link read-only, export GPX/FIT
+1. **Fase 1 ✓:** libreria GPX, overview map, dettaglio, POI snapshot
+2. **Fase 2 ✓:** diario outdoor (Gulliver-style), auto-difficoltà, segnalazioni geo, sport modes
+3. **Fase 3 ✓:** registrazione GPS live (`/record` → `activities` → traccia `gps_record`)
+4. **Fase 4:** pianificazione percorso (routing OSRM foot/bike)
+5. **Fase 5:** share link read-only, export GPX/FIT
+
+## Metriche di successo — fase 2
+
+| Metrica | Target |
+|---------|--------|
+| Aggiungere foto+nota al km | < 10 s |
+| Segnalazione frana/valanga | < 15 s |
+| Upload → segmenti difficoltà | < 30 s |
+| Completezza diario post-uscita | Founder usa ≥1 traccia/settimana |
 
 ## Cosa NON costruiamo
 
 - Feed amici / gruppi / following (già POC in `trail-planner`, fuori scope)
 - Marketplace percorsi
-- Integrazione wearables in tempo reale (fase 2+)
+- Integrazione wearables in tempo reale
 - AI roadbook / race brief (specifico gara HMR)

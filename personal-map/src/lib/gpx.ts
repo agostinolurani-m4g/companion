@@ -68,6 +68,27 @@ export function parseGpxTrackpoints(xml: string): ParsedTrkpt[] {
   return pts;
 }
 
+export function recordedPointsToGpx(
+  name: string,
+  points: Array<{ lat: number; lng: number; eleM?: number | null; ts: number }>
+): string {
+  const pts = points
+    .map((p) => {
+      const z =
+        p.eleM != null && Number.isFinite(p.eleM) ? `<ele>${p.eleM}</ele>` : "";
+      const t = `<time>${new Date(p.ts).toISOString()}</time>`;
+      return `      <trkpt lat="${p.lat}" lon="${p.lng}">${z}${t}</trkpt>`;
+    })
+    .join("\n");
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Personal Map" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><name>${escapeXml(name)}</name></metadata>
+  <trk><name>${escapeXml(name)}</name><trkseg>
+${pts}
+  </trkseg></trk>
+</gpx>`;
+}
+
 export function parseGpxToLineString(xml: string): Feature<LineString> | null {
   const pts = parseGpxTrackpoints(xml);
   if (pts.length < 2) return null;

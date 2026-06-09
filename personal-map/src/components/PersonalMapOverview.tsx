@@ -165,9 +165,14 @@ export default function PersonalMapOverview() {
             {loading ? "Caricamento…" : `${data?.features.length ?? 0} tracce — clicca una linea per aprire`}
           </p>
         </div>
-        <a href="/" className="hmr-btn hmr-tap px-3 text-xs">
-          Libreria
-        </a>
+        <div className="flex gap-2">
+          <a href="/record" className="hmr-btn hmr-tap px-3 text-xs">
+            Registra
+          </a>
+          <a href="/" className="hmr-btn hmr-tap px-3 text-xs">
+            Libreria
+          </a>
+        </div>
       </header>
       {err && (
         <p className="shrink-0 px-3 py-2 text-xs text-[color:var(--hmr-danger)]">{err}</p>

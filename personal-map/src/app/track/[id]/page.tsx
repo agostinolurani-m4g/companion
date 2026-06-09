@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import PersonalApp from "@/components/PersonalApp";
 import LoginGate from "@/components/LoginGate";
@@ -17,5 +18,9 @@ export default async function TrackPage({ params }: Props) {
   const initial = loadTrackPayload(id, sessionEmail);
   if (!initial) notFound();
 
-  return <PersonalApp sessionEmail={sessionEmail} initial={initial} />;
+  return (
+    <Suspense fallback={null}>
+      <PersonalApp sessionEmail={sessionEmail} initial={initial} />
+    </Suspense>
+  );
 }

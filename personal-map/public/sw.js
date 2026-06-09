@@ -1,5 +1,5 @@
-/* Personal Map — Service Worker (cache mappa + API + shell). v1 */
-const VERSION = "pm-sw-v1";
+/* Personal Map — Service Worker (cache mappa + API + shell). v2 */
+const VERSION = "pm-sw-v2";
 const SHELL = `${VERSION}-shell`;
 const API = `${VERSION}-api`;
 const TILES = `${VERSION}-tiles`;
@@ -40,7 +40,13 @@ self.addEventListener("activate", (event) => {
 });
 
 function isApiRequest(url) {
-  return url.pathname.startsWith("/api/track") || url.pathname.startsWith("/api/tracks");
+  return (
+    url.pathname.startsWith("/api/track") ||
+    url.pathname.startsWith("/api/tracks") ||
+    url.pathname.startsWith("/api/activities") ||
+    url.pathname.startsWith("/api/hazards") ||
+    url.pathname.startsWith("/api/journal-photo")
+  );
 }
 
 function isTileRequest(url) {
