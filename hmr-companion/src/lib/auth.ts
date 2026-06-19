@@ -2,7 +2,9 @@ import crypto from "node:crypto";
 import { cookies } from "next/headers";
 import {
   deleteAuthSessionById,
+  getAppUser,
   getAuthSessionByTokenHash,
+  hashAppPassword,
   insertAuthSession,
   pruneAuthSessions,
 } from "@/lib/db";
@@ -11,7 +13,7 @@ export const AUTH_COOKIE_NAME = "hmr_auth_session";
 const SESSION_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 
 /**
- * Account fissi (non configurabili da env). Password confrontate in modo
+ * Account fissi (fallback se DB non ha la riga). Password confrontate in modo
  * costante nel tempo rispetto alla lunghezza dell'input (hash SHA-256).
  */
 const FIXED_LOGIN: Readonly<Record<string, string>> = {
@@ -22,13 +24,18 @@ const FIXED_LOGIN: Readonly<Record<string, string>> = {
   marti: "helenicmarti2026",
 };
 
+/** Solo admin legacy (fallback se DB non ha la riga). */
+export const ADMIN_USERS = new Set(["ago"]);
+
+/** Utenti con accesso beta v2. */
+export const V2_BETA_USERS = new Set(["ago"]);
+
 export function normalizeUsername(username: string): string {
   return username.trim().toLowerCase();
 }
 
-export function isKnownHmrUser(identity: string): boolean {
-  const u = normalizeUsername(identity);
-  return u !== "" && u in FIXED_LOGIN;
+export function hashPassword(password: string): string {
+  return hashAppPassword(password);
 }
 
 function timingSafeEqualUtf8Strings(a: string, b: string): boolean {
@@ -37,8 +44,32 @@ function timingSafeEqualUtf8Strings(a: string, b: string): boolean {
   return crypto.timingSafeEqual(ha, hb);
 }
 
+function timingSafeEqualHex(a: string, b: string): boolean {
+  try {
+    const ha = Buffer.from(a, "hex");
+    const hb = Buffer.from(b, "hex");
+    if (ha.length !== hb.length) return false;
+    return crypto.timingSafeEqual(ha, hb);
+  } catch {
+    return false;
+  }
+}
+
+export function isKnownHmrUser(identity: string): boolean {
+  const u = normalizeUsername(identity);
+  if (u === "") return false;
+  const row = getAppUser(u);
+  if (row) return row.active === 1;
+  return u in FIXED_LOGIN;
+}
+
 export function verifyPasswordLogin(username: string, password: string): boolean {
   const u = normalizeUsername(username);
+  const row = getAppUser(u);
+  if (row) {
+    if (row.active !== 1) return false;
+    return timingSafeEqualHex(row.password_hash, hashPassword(password));
+  }
   const expected = FIXED_LOGIN[u];
   if (!expected) return false;
   return timingSafeEqualUtf8Strings(password, expected);
@@ -98,15 +129,27 @@ export async function requireAuthenticated(): Promise<{ email: string } | null> 
   return { email };
 }
 
-/** Solo admin: eliminazione tracce. */
-export const ADMIN_USERS = new Set(["ago"]);
-
 export function isAdminUser(username: string): boolean {
-  return ADMIN_USERS.has(normalizeUsername(username));
+  const u = normalizeUsername(username);
+  const row = getAppUser(u);
+  if (row) return row.active === 1 && row.role === "admin";
+  return ADMIN_USERS.has(u);
+}
+
+export function isV2BetaUser(username: string): boolean {
+  const u = normalizeUsername(username);
+  if (!isKnownHmrUser(u)) return false;
+  return V2_BETA_USERS.has(u);
 }
 
 export async function requireAdmin(): Promise<{ email: string } | null> {
   const auth = await requireAuthenticated();
   if (!auth || !isAdminUser(auth.email)) return null;
+  return auth;
+}
+
+export async function requireV2Beta(): Promise<{ email: string } | null> {
+  const auth = await requireAuthenticated();
+  if (!auth || !isV2BetaUser(auth.email)) return null;
   return auth;
 }

@@ -20,6 +20,7 @@ type Props = {
   tracks: TrackPickerItem[];
   credits: IngestCreditsInfo;
   isAdmin?: boolean;
+  showV2Beta?: boolean;
 };
 
 function formatDate(ts: number): string {
@@ -36,7 +37,7 @@ function creditsLabel(credits: IngestCreditsInfo): string {
   return n === 1 ? "1 credito ingest" : `${n} crediti ingest`;
 }
 
-export default function TrackPicker({ tracks, credits, isAdmin = false }: Props) {
+export default function TrackPicker({ tracks, credits, isAdmin = false, showV2Beta = false }: Props) {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState("");
@@ -158,6 +159,30 @@ export default function TrackPicker({ tracks, credits, isAdmin = false }: Props)
             <span className="text-[color:var(--hmr-muted)]"> · 1 upload = traccia + POI + superficie</span>
           )}
         </p>
+        {showV2Beta ? (
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Link
+              href="/v2/plan"
+              className="rounded-lg border border-[color:var(--hmr-accent)]/40 bg-[color:var(--hmr-accent)]/10 px-3 py-1.5 text-xs font-medium text-[color:var(--hmr-accent)]"
+            >
+              Beta v2 · Pianifica percorso
+            </Link>
+            <Link
+              href="/v2/me"
+              className="rounded-lg border border-[color:var(--hmr-border)] px-3 py-1.5 text-xs text-[color:var(--hmr-muted)] hover:text-[color:var(--hmr-text)]"
+            >
+              Area personale
+            </Link>
+            {isAdmin ? (
+              <Link
+                href="/v2/admin"
+                className="rounded-lg border border-amber-500/40 px-3 py-1.5 text-xs text-amber-400/90"
+              >
+                Admin utenti
+              </Link>
+            ) : null}
+          </div>
+        ) : null}
       </header>
 
       <div className="flex flex-1 flex-col gap-6 p-4">

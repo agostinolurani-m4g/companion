@@ -1,6 +1,6 @@
 import TrackPicker, { type TrackPickerItem } from "@/components/TrackPicker";
 import LoginGate from "@/components/LoginGate";
-import { getCurrentSessionEmail, isAdminUser } from "@/lib/auth";
+import { getCurrentSessionEmail, isAdminUser, isV2BetaUser } from "@/lib/auth";
 import { getIngestCreditsInfo } from "@/lib/ingest-credits";
 import { listTracks } from "@/lib/db";
 
@@ -24,6 +24,11 @@ export default async function HomePage() {
   const credits = getIngestCreditsInfo(sessionEmail);
 
   return (
-    <TrackPicker tracks={tracks} credits={credits} isAdmin={isAdminUser(sessionEmail)} />
+    <TrackPicker
+      tracks={tracks}
+      credits={credits}
+      isAdmin={isAdminUser(sessionEmail)}
+      showV2Beta={isV2BetaUser(sessionEmail)}
+    />
   );
 }

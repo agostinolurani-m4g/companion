@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { StreetViewAlongItem } from "./along-media-types";
@@ -234,11 +235,37 @@ function initSchema(db: Database.Database): void {
       username TEXT PRIMARY KEY,
       credits_remaining INTEGER NOT NULL DEFAULT 1
     );
+
+    CREATE TABLE IF NOT EXISTS app_users (
+      username TEXT PRIMARY KEY,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('user','admin')),
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS user_routes (
+      id TEXT PRIMARY KEY,
+      owner TEXT NOT NULL,
+      name TEXT NOT NULL,
+      activity TEXT NOT NULL CHECK(activity IN ('road','mtb','hike')),
+      geojson TEXT NOT NULL,
+      waypoints_json TEXT NOT NULL DEFAULT '[]',
+      length_km REAL NOT NULL DEFAULT 0,
+      elev_gain_m REAL NOT NULL DEFAULT 0,
+      elev_loss_m REAL NOT NULL DEFAULT 0,
+      visibility TEXT NOT NULL DEFAULT 'private' CHECK(visibility IN ('private','public')),
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_user_routes_owner ON user_routes(owner, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_user_routes_visibility ON user_routes(visibility, updated_at DESC);
   `);
   migrateTracksElevProfileScales(db);
   migrateNotableSectionsDescriptionEn(db);
   migratePoisRaceVisible(db);
   migratePoisCampsiteCategory(db);
+  seedAppUsers(db);
 }
 
 function migratePoisRaceVisible(db: Database.Database): void {
@@ -988,4 +1015,203 @@ export function deleteAuthSessionById(id: string): void {
 
 export function pruneAuthSessions(now: number): void {
   getDb().prepare(`DELETE FROM auth_sessions WHERE expires_at <= ?`).run(now);
+}
+
+/** SHA-256 hex per password utente (compatibile con auth.ts). */
+export function hashAppPassword(password: string): string {
+  return crypto.createHash("sha256").update(password, "utf8").digest("hex");
+}
+
+const SEED_APP_USERS: Readonly<
+  Record<string, { password: string; role: "user" | "admin" }>
+> = {
+  ago: { password: "hellenicago26", role: "admin" },
+  ale: { password: "hellenicale26", role: "user" },
+  gala: { password: "hellenicgala26", role: "user" },
+  babbo: { password: "hellenicbabbo26", role: "user" },
+  marti: { password: "helenicmarti2026", role: "user" },
+};
+
+function seedAppUsers(db: Database.Database): void {
+  const count = (db.prepare(`SELECT COUNT(*) AS n FROM app_users`).get() as { n: number }).n;
+  if (count > 0) return;
+  const now = Date.now();
+  const ins = db.prepare(
+    `INSERT INTO app_users (username, password_hash, role, active, created_at)
+     VALUES (?, ?, ?, 1, ?)`
+  );
+  for (const [username, { password, role }] of Object.entries(SEED_APP_USERS)) {
+    ins.run(username, hashAppPassword(password), role, now);
+  }
+}
+
+export type AppUserRole = "user" | "admin";
+
+export type AppUserRow = {
+  username: string;
+  password_hash: string;
+  role: AppUserRole;
+  active: number;
+  created_at: number;
+};
+
+export type UserRouteActivity = "road" | "mtb" | "hike";
+
+export type UserRouteVisibility = "private" | "public";
+
+export type UserRouteRow = {
+  id: string;
+  owner: string;
+  name: string;
+  activity: UserRouteActivity;
+  geojson: string;
+  waypoints_json: string;
+  length_km: number;
+  elev_gain_m: number;
+  elev_loss_m: number;
+  visibility: UserRouteVisibility;
+  created_at: number;
+  updated_at: number;
+};
+
+export function listAppUsers(): AppUserRow[] {
+  return getDb()
+    .prepare(`SELECT * FROM app_users ORDER BY username ASC`)
+    .all() as AppUserRow[];
+}
+
+export function getAppUser(username: string): AppUserRow | undefined {
+  return getDb()
+    .prepare(`SELECT * FROM app_users WHERE username = ?`)
+    .get(username.trim().toLowerCase()) as AppUserRow | undefined;
+}
+
+export function upsertAppUser(input: {
+  username: string;
+  password_hash: string;
+  role: AppUserRole;
+  active: 0 | 1;
+  created_at?: number;
+}): void {
+  const u = input.username.trim().toLowerCase();
+  const existing = getAppUser(u);
+  const now = input.created_at ?? Date.now();
+  if (existing) {
+    getDb()
+      .prepare(
+        `UPDATE app_users SET password_hash = ?, role = ?, active = ? WHERE username = ?`
+      )
+      .run(input.password_hash, input.role, input.active, u);
+    return;
+  }
+  getDb()
+    .prepare(
+      `INSERT INTO app_users (username, password_hash, role, active, created_at)
+       VALUES (?, ?, ?, ?, ?)`
+    )
+    .run(u, input.password_hash, input.role, input.active, now);
+}
+
+export function deleteAppUser(username: string): boolean {
+  const res = getDb().prepare(`DELETE FROM app_users WHERE username = ?`).run(username.trim().toLowerCase());
+  return res.changes > 0;
+}
+
+export function countAppUsersByRole(role: AppUserRole): number {
+  const r = getDb()
+    .prepare(`SELECT COUNT(*) AS n FROM app_users WHERE role = ? AND active = 1`)
+    .get(role) as { n: number };
+  return r.n;
+}
+
+export function listRoutesForOwner(owner: string): UserRouteRow[] {
+  return getDb()
+    .prepare(`SELECT * FROM user_routes WHERE owner = ? ORDER BY updated_at DESC`)
+    .all(owner.trim().toLowerCase()) as UserRouteRow[];
+}
+
+export function listPublicRoutes(): UserRouteRow[] {
+  return getDb()
+    .prepare(`SELECT * FROM user_routes WHERE visibility = 'public' ORDER BY updated_at DESC`)
+    .all() as UserRouteRow[];
+}
+
+export function getUserRoute(id: string): UserRouteRow | undefined {
+  return getDb().prepare(`SELECT * FROM user_routes WHERE id = ?`).get(id) as UserRouteRow | undefined;
+}
+
+export function insertUserRoute(input: {
+  id: string;
+  owner: string;
+  name: string;
+  activity: UserRouteActivity;
+  geojson: string;
+  waypoints_json: string;
+  length_km: number;
+  elev_gain_m: number;
+  elev_loss_m: number;
+  visibility: UserRouteVisibility;
+  created_at: number;
+  updated_at: number;
+}): void {
+  getDb()
+    .prepare(
+      `INSERT INTO user_routes (
+        id, owner, name, activity, geojson, waypoints_json,
+        length_km, elev_gain_m, elev_loss_m, visibility, created_at, updated_at
+      ) VALUES (
+        @id, @owner, @name, @activity, @geojson, @waypoints_json,
+        @length_km, @elev_gain_m, @elev_loss_m, @visibility, @created_at, @updated_at
+      )`
+    )
+    .run({ ...input, owner: input.owner.trim().toLowerCase() });
+}
+
+export function updateUserRoute(
+  id: string,
+  patch: {
+    name?: string;
+    activity?: UserRouteActivity;
+    geojson?: string;
+    waypoints_json?: string;
+    length_km?: number;
+    elev_gain_m?: number;
+    elev_loss_m?: number;
+    visibility?: UserRouteVisibility;
+    updated_at: number;
+  }
+): void {
+  const row = getUserRoute(id);
+  if (!row) return;
+  getDb()
+    .prepare(
+      `UPDATE user_routes SET
+        name = @name,
+        activity = @activity,
+        geojson = @geojson,
+        waypoints_json = @waypoints_json,
+        length_km = @length_km,
+        elev_gain_m = @elev_gain_m,
+        elev_loss_m = @elev_loss_m,
+        visibility = @visibility,
+        updated_at = @updated_at
+      WHERE id = @id`
+    )
+    .run({
+      id,
+      name: patch.name ?? row.name,
+      activity: patch.activity ?? row.activity,
+      geojson: patch.geojson ?? row.geojson,
+      waypoints_json: patch.waypoints_json ?? row.waypoints_json,
+      length_km: patch.length_km ?? row.length_km,
+      elev_gain_m: patch.elev_gain_m ?? row.elev_gain_m,
+      elev_loss_m: patch.elev_loss_m ?? row.elev_loss_m,
+      visibility: patch.visibility ?? row.visibility,
+      updated_at: patch.updated_at,
+    });
+}
+
+export function deleteUserRoute(id: string): boolean {
+  const res = getDb().prepare(`DELETE FROM user_routes WHERE id = ?`).run(id);
+  return res.changes > 0;
 }
