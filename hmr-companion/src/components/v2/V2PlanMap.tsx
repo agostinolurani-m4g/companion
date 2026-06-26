@@ -5,8 +5,9 @@ import type { GeoJSONSource, Map as MaplibreMap, StyleSpecification } from "mapl
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { PoiCategory } from "@/lib/db";
-import { CATEGORY_META } from "@/lib/categories";
+import { resolvePoiKind } from "@/lib/categories";
 import type { V2SearchPoi } from "@/app/api/v2/pois/search/route";
+import type { ViewBbox } from "@/lib/overpass";
 
 export type V2Waypoint = { lng: number; lat: number; label?: string };
 
@@ -20,9 +21,11 @@ type Props = {
   routeCoords: [number, number][] | null;
   pois: V2SearchPoi[];
   poiSearchCenter?: { lng: number; lat: number } | null;
+  poiSearchBbox?: ViewBbox | null;
   pendingPoint?: { lng: number; lat: number } | null;
   onMapInteraction: (target: V2MapClickTarget) => void;
   onWaypointMove?: (index: number, lng: number, lat: number) => void;
+  onViewportChange?: (bbox: ViewBbox) => void;
   initialCenter?: { lng: number; lat: number; zoom?: number };
   /** Volo mappa verso un punto (incrementare `key` per ripetere). */
   flyTo?: { lng: number; lat: number; zoom?: number; key?: number } | null;
@@ -55,9 +58,11 @@ export default function V2PlanMap({
   routeCoords,
   pois,
   poiSearchCenter,
+  poiSearchBbox,
   pendingPoint,
   onMapInteraction,
   onWaypointMove,
+  onViewportChange,
   initialCenter,
   flyTo,
 }: Props) {
@@ -67,6 +72,7 @@ export default function V2PlanMap({
   const [mapReady, setMapReady] = useState(false);
   const onInteractionRef = useRef(onMapInteraction);
   const onWaypointMoveRef = useRef(onWaypointMove);
+  const onViewportChangeRef = useRef(onViewportChange);
   const poisRef = useRef(pois);
   const waypointsRef = useRef(waypoints);
   const dragRef = useRef<{ index: number; startX: number; startY: number; moved: boolean } | null>(null);
@@ -78,6 +84,9 @@ export default function V2PlanMap({
   useEffect(() => {
     onWaypointMoveRef.current = onWaypointMove;
   }, [onWaypointMove]);
+  useEffect(() => {
+    onViewportChangeRef.current = onViewportChange;
+  }, [onViewportChange]);
   useEffect(() => {
     poisRef.current = pois;
   }, [pois]);
@@ -259,6 +268,22 @@ export default function V2PlanMap({
     map.on("load", () => {
       initOverlayLayers(map);
       setMapReady(true);
+      const b = map.getBounds();
+      onViewportChangeRef.current?.({
+        south: b.getSouth(),
+        west: b.getWest(),
+        north: b.getNorth(),
+        east: b.getEast(),
+      });
+    });
+    map.on("moveend", () => {
+      const b = map.getBounds();
+      onViewportChangeRef.current?.({
+        south: b.getSouth(),
+        west: b.getWest(),
+        north: b.getNorth(),
+        east: b.getEast(),
+      });
     });
     mapRef.current = map;
     return () => {
@@ -292,16 +317,20 @@ export default function V2PlanMap({
 
     const poiGeo: GeoJSON.FeatureCollection = {
       type: "FeatureCollection",
-      features: pois.map((p) => ({
-        type: "Feature",
-        properties: {
-          id: p.id,
-          name: p.name ?? CATEGORY_META[p.category as PoiCategory]?.label ?? p.category,
-          category: p.category,
-          color: CATEGORY_META[p.category as PoiCategory]?.color ?? "#38bdf8",
-        },
-        geometry: { type: "Point", coordinates: [p.lng, p.lat] },
-      })),
+      features: pois.map((p) => {
+        const kindMeta = resolvePoiKind(p.category as PoiCategory, p.sub_kind);
+        return {
+          type: "Feature",
+          properties: {
+            id: p.id,
+            name: p.name ?? kindMeta.label,
+            category: p.category,
+            kind: kindMeta.label,
+            color: kindMeta.color,
+          },
+          geometry: { type: "Point", coordinates: [p.lng, p.lat] },
+        };
+      }),
     };
 
     const pendingGeo: GeoJSON.FeatureCollection = {
@@ -312,7 +341,30 @@ export default function V2PlanMap({
     };
 
     let radiusGeo: GeoJSON.FeatureCollection = EMPTY_FC;
-    if (poiSearchCenter) {
+    if (poiSearchBbox) {
+      const { south, west, north, east } = poiSearchBbox;
+      radiusGeo = {
+        type: "FeatureCollection",
+        features: [
+          {
+            type: "Feature",
+            properties: {},
+            geometry: {
+              type: "Polygon",
+              coordinates: [
+                [
+                  [west, south],
+                  [east, south],
+                  [east, north],
+                  [west, north],
+                  [west, south],
+                ],
+              ],
+            },
+          },
+        ],
+      };
+    } else if (poiSearchCenter) {
       radiusGeo = {
         type: "FeatureCollection",
         features: [
@@ -333,13 +385,13 @@ export default function V2PlanMap({
     setGeoJson(map, "v2-pois", poiGeo);
     setGeoJson(map, "v2-pending", pendingGeo);
     setGeoJson(map, "v2-poi-radius", radiusGeo);
-  }, [routeCoords, waypoints, pois, pendingPoint, poiSearchCenter, mapReady]);
+  }, [routeCoords, waypoints, pois, pendingPoint, poiSearchCenter, poiSearchBbox, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !poiSearchCenter || pois.length === 0) return;
+    if (!map || !poiSearchCenter || poiSearchBbox || pois.length === 0) return;
     map.flyTo({ center: [poiSearchCenter.lng, poiSearchCenter.lat], zoom: Math.max(map.getZoom(), 13), duration: 800 });
-  }, [poiSearchCenter, pois.length]);
+  }, [poiSearchCenter, poiSearchBbox, pois.length]);
 
   useEffect(() => {
     const map = mapRef.current;

@@ -11,11 +11,6 @@
  * e ritorna l'URL finale (utile da salvare per riapertura one-tap).
  */
 
-/**
- * Apre Street View in Google Maps (web + app iOS/Android).
- * Evita `q=` vuoto + solo `layer=c` (su mobile spesso finisce nella ricerca).
- * @see https://developers.google.com/maps/documentation/urls/get-started
- */
 export function googleMapsStreetViewLayerUrl(
   lat: number,
   lng: number,
@@ -28,6 +23,19 @@ export function googleMapsStreetViewLayerUrl(
   base.searchParams.set("viewpoint", viewpoint);
   const pid = panoId?.trim();
   if (pid) base.searchParams.set("pano", pid);
+  return base.toString();
+}
+
+/** Apre un punto (o luogo nominato) in Google Maps search. */
+export function googleMapsSearchUrl(
+  lat: number,
+  lng: number,
+  name?: string | null
+): string {
+  const base = new URL("https://www.google.com/maps/search/");
+  base.searchParams.set("api", "1");
+  const label = name?.trim();
+  base.searchParams.set("query", label ? `${label} ${lat},${lng}` : `${lat},${lng}`);
   return base.toString();
 }
 

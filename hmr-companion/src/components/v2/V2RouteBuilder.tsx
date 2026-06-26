@@ -10,9 +10,19 @@ import V2PlaceSearch, { type PlaceSearchResult } from "@/components/v2/V2PlaceSe
 import ElevationChart from "@/components/ElevationChart";
 import type { PoiCategory } from "@/lib/db";
 import type { UserRouteActivity, UserRouteVisibility } from "@/lib/db";
-import { CATEGORY_META, CATEGORY_ORDER } from "@/lib/categories";
+import {
+  CATEGORY_ORDER,
+  poiMatchesAnyKind,
+  poiMatchesKind,
+  resolvePoiKind,
+  SEARCH_KINDS,
+  VIEWPORT_SEARCH_KINDS,
+  type PoiKind,
+  type PoiKindMeta,
+} from "@/lib/categories";
 import type { V2SearchPoi } from "@/app/api/v2/pois/search/route";
 import { geocodeToPoi, type PlaceSearchKind } from "@/lib/geocoding";
+import type { ViewBbox } from "@/lib/overpass";
 import { sampleElevationsForLine } from "@/lib/elevation";
 import type { StoredCoord } from "@/lib/track-coords";
 
@@ -31,13 +41,7 @@ const ACTIVITY_LABELS: Record<UserRouteActivity, string> = {
   hike: "Escursione",
 };
 
-const POI_PRESETS: { label: string; categories: PoiCategory[] }[] = [
-  { label: "Ristoranti", categories: ["restaurant"] },
-  { label: "Rifugi / bivacchi", categories: ["hut", "lodging", "campsite"] },
-  { label: "Acqua", categories: ["water"] },
-  { label: "Spesa", categories: ["shop"] },
-  { label: "Tutti", categories: [...CATEGORY_ORDER] },
-];
+const POI_RADIUS_PRESETS: PoiKindMeta[] = SEARCH_KINDS;
 
 const POI_SEARCH_RADIUS_M = 3000;
 
@@ -110,6 +114,8 @@ export default function V2RouteBuilder({ isAdmin = false }: Props) {
   const [lengthKm, setLengthKm] = useState(0);
   const [pois, setPois] = useState<V2SearchPoi[]>([]);
   const [poiSearchCenter, setPoiSearchCenter] = useState<{ lng: number; lat: number } | null>(null);
+  const [poiSearchBbox, setPoiSearchBbox] = useState<ViewBbox | null>(null);
+  const [mapViewport, setMapViewport] = useState<ViewBbox | null>(null);
   const [routing, setRouting] = useState(false);
   const [poiBusy, setPoiBusy] = useState(false);
   const [saveBusy, setSaveBusy] = useState(false);
@@ -123,6 +129,9 @@ export default function V2RouteBuilder({ isAdmin = false }: Props) {
   const [selectedWaypointIndex, setSelectedWaypointIndex] = useState<number | null>(null);
   const [flyTo, setFlyTo] = useState<{ lng: number; lat: number; zoom?: number; key: number } | null>(null);
   const flyKeyRef = useRef(0);
+  const [selectedViewportKinds, setSelectedViewportKinds] = useState<Set<PoiKind>>(
+    () => new Set(VIEWPORT_SEARCH_KINDS.map((k) => k.id))
+  );
 
   const routeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -289,9 +298,42 @@ export default function V2RouteBuilder({ isAdmin = false }: Props) {
     return mapCenter ? { lat: mapCenter.lat, lng: mapCenter.lng } : undefined;
   }, [waypoints, mapCenter]);
 
+  const searchPoisAtByKind = async (lng: number, lat: number, kind: PoiKindMeta) => {
+    setPoiBusy(true);
+    setErr(null);
+    setPoiSearchBbox(null);
+    setPoiSearchCenter({ lng, lat });
+    try {
+      const res = await fetch("/api/v2/pois/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lat,
+          lng,
+          radiusM: POI_SEARCH_RADIUS_M,
+          categories: [kind.category],
+          refresh: false,
+        }),
+      });
+      const data = (await res.json()) as { error?: string; pois?: V2SearchPoi[]; count?: number };
+      if (!res.ok) throw new Error(data.error ?? "Ricerca POI fallita");
+      const found = (data.pois ?? []).filter((p) => poiMatchesKind(p.category, p.sub_kind, kind));
+      setPois(found);
+      if (found.length === 0) {
+        setErr(`Nessun ${kind.label.toLowerCase()} in un raggio di 3 km. Prova un'altra zona.`);
+      }
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setPois([]);
+    } finally {
+      setPoiBusy(false);
+    }
+  };
+
   const searchPoisAt = async (lng: number, lat: number, categories: PoiCategory[]) => {
     setPoiBusy(true);
     setErr(null);
+    setPoiSearchBbox(null);
     setPoiSearchCenter({ lng, lat });
     try {
       const res = await fetch("/api/v2/pois/search", {
@@ -314,6 +356,60 @@ export default function V2RouteBuilder({ isAdmin = false }: Props) {
     }
   };
 
+  const searchPoisInViewportByKind = async (kind: PoiKindMeta) => {
+    await searchPoisInViewport([kind]);
+  };
+
+  const searchPoisInViewport = async (kinds: PoiKindMeta[]) => {
+    if (!mapViewport) {
+      setErr("Attendi il caricamento della mappa.");
+      return;
+    }
+    if (kinds.length === 0) {
+      setErr("Seleziona almeno una categoria.");
+      return;
+    }
+    setPoiBusy(true);
+    setErr(null);
+    setPoiSearchCenter(null);
+    setPoiSearchBbox(mapViewport);
+    const categories = [...new Set(kinds.map((k) => k.category))];
+    try {
+      const res = await fetch("/api/v2/pois/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bbox: mapViewport, categories, refresh: false }),
+      });
+      const data = (await res.json()) as { error?: string; pois?: V2SearchPoi[]; count?: number };
+      if (!res.ok) throw new Error(data.error ?? "Ricerca POI fallita");
+      const found = (data.pois ?? []).filter((p) => poiMatchesAnyKind(p.category, p.sub_kind, kinds));
+      setPois(found);
+      if (found.length === 0) {
+        const labels = kinds.map((k) => k.label.toLowerCase()).join(", ");
+        setErr(`Nessun risultato (${labels}) nell'area visibile. Prova ad ingrandire o spostare la mappa.`);
+      }
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setPois([]);
+    } finally {
+      setPoiBusy(false);
+    }
+  };
+
+  const toggleViewportKind = (id: PoiKind) => {
+    setSelectedViewportKinds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const runViewportSearch = () => {
+    const kinds = VIEWPORT_SEARCH_KINDS.filter((k) => selectedViewportKinds.has(k.id));
+    void searchPoisInViewport(kinds);
+  };
+
   const searchPoisNearby = async (lng: number, lat: number) => {
     dismissAction();
     await searchPoisAt(lng, lat, [...CATEGORY_ORDER]);
@@ -322,8 +418,13 @@ export default function V2RouteBuilder({ isAdmin = false }: Props) {
   const clearPois = () => {
     setPois([]);
     setPoiSearchCenter(null);
+    setPoiSearchBbox(null);
     if (mapAction?.kind === "poi") setMapAction(null);
   };
+
+  const onViewportChange = useCallback((bbox: ViewBbox) => {
+    setMapViewport(bbox);
+  }, []);
 
   const saveRoute = async () => {
     if (!routeCoords || routeCoords.length < 2) {
@@ -398,7 +499,13 @@ export default function V2RouteBuilder({ isAdmin = false }: Props) {
             </p>
           </div>
 
-          <V2PlaceSearch onSelect={onPlaceSelect} mapCenter={mapViewCenter} />
+          <V2PlaceSearch
+            onSelect={onPlaceSelect}
+            onCategorySearch={(kind) => void searchPoisInViewportByKind(kind)}
+            mapCenter={mapViewCenter}
+            viewportReady={!!mapViewport}
+            poiBusy={poiBusy}
+          />
 
           <section>
             <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-[color:var(--hmr-faint)]">
@@ -466,6 +573,7 @@ export default function V2RouteBuilder({ isAdmin = false }: Props) {
                 setLengthKm(0);
                 setPois([]);
                 setPoiSearchCenter(null);
+                setPoiSearchBbox(null);
                 setMapAction(null);
               }}
               disabled={waypoints.length === 0 && pois.length === 0}
@@ -478,9 +586,55 @@ export default function V2RouteBuilder({ isAdmin = false }: Props) {
           <div>
             <div className="mb-1 flex items-center justify-between gap-2">
               <p className="text-[10px] uppercase tracking-wide text-[color:var(--hmr-faint)]">
+                Nella mappa visibile
+              </p>
+              {poiBusy ? <span className="text-[10px] text-[color:var(--hmr-muted)]">Cerco…</span> : null}
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {VIEWPORT_SEARCH_KINDS.map((k) => {
+                const on = selectedViewportKinds.has(k.id);
+                return (
+                  <button
+                    key={k.id}
+                    type="button"
+                    disabled={poiBusy}
+                    onClick={() => toggleViewportKind(k.id)}
+                    className={
+                      on
+                        ? "rounded-lg border px-2 py-1 text-[11px] disabled:opacity-50"
+                        : "rounded-lg border border-[color:var(--hmr-border)] px-2 py-1 text-[11px] text-[color:var(--hmr-muted)] disabled:opacity-50"
+                    }
+                    style={
+                      on
+                        ? { borderColor: `${k.color}88`, background: `${k.color}22`, color: k.color }
+                        : undefined
+                    }
+                  >
+                    {k.label}
+                  </button>
+                );
+              })}
+            </div>
+            <button
+              type="button"
+              disabled={poiBusy || !mapViewport || selectedViewportKinds.size === 0}
+              onClick={runViewportSearch}
+              className="mt-1.5 w-full rounded-lg border border-orange-500/35 bg-orange-500/10 px-2 py-1.5 text-[11px] font-medium text-orange-200/90 hover:bg-orange-500/15 disabled:opacity-50"
+            >
+              Cerca nell&apos;area
+            </button>
+            <p className="mt-1 text-[10px] text-[color:var(--hmr-muted)]">
+              Sposta e ingrandisci la mappa, scegli le categorie, poi cerca (max ~22 km di lato)
+            </p>
+          </div>
+
+          <div>
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <p className="text-[10px] uppercase tracking-wide text-[color:var(--hmr-faint)]">
                 Categorie POI {actionCenter ? "(sul punto selezionato)" : "(ultima tappa o Atene)"}
               </p>
-              {pois.length > 0 || poiSearchCenter ? (
+              {poiBusy ? <span className="text-[10px] text-[color:var(--hmr-muted)]">Cerco…</span> : null}
+              {pois.length > 0 || poiSearchCenter || poiSearchBbox ? (
                 <button
                   type="button"
                   onClick={clearPois}
@@ -491,9 +645,9 @@ export default function V2RouteBuilder({ isAdmin = false }: Props) {
               ) : null}
             </div>
             <div className="flex flex-wrap gap-1">
-              {POI_PRESETS.map((p) => (
+              {POI_RADIUS_PRESETS.map((k) => (
                 <button
-                  key={p.label}
+                  key={k.id}
                   type="button"
                   disabled={poiBusy}
                   onClick={() => {
@@ -502,24 +656,53 @@ export default function V2RouteBuilder({ isAdmin = false }: Props) {
                       (waypoints.length > 0
                         ? waypoints[waypoints.length - 1]
                         : { lng: 23.7275, lat: 37.9838 });
-                    void searchPoisAt(center.lng, center.lat, p.categories);
+                    void searchPoisAtByKind(center.lng, center.lat, k);
                   }}
-                  className="rounded-lg border border-[color:var(--hmr-border)] px-2 py-1 text-[11px] text-[color:var(--hmr-muted)] hover:text-[color:var(--hmr-text)] disabled:opacity-50"
+                  className="rounded-lg border px-2 py-1 text-[11px] disabled:opacity-50"
+                  style={{
+                    borderColor: `${k.color}55`,
+                    color: k.color,
+                  }}
                 >
-                  {p.label}
+                  {k.label}
                 </button>
               ))}
+              <button
+                type="button"
+                disabled={poiBusy}
+                onClick={() => {
+                  const center =
+                    actionCenter ??
+                    (waypoints.length > 0
+                      ? waypoints[waypoints.length - 1]
+                      : { lng: 23.7275, lat: 37.9838 });
+                  void searchPoisAt(center.lng, center.lat, [...CATEGORY_ORDER]);
+                }}
+                className="rounded-lg border border-[color:var(--hmr-border)] px-2 py-1 text-[11px] text-[color:var(--hmr-muted)] hover:text-[color:var(--hmr-text)] disabled:opacity-50"
+              >
+                Tutti
+              </button>
             </div>
-            {poiSearchCenter ? (
+            {poiSearchBbox ? (
               <p className="mt-1 text-[10px] text-[color:var(--hmr-muted)]">
-                Cerchio arancione = raggio 3 km · {pois.length} POI · nuova ricerca sostituisce i risultati
+                Rettangolo arancione = area cercata · {pois.length} POI · nuova ricerca sostituisce i risultati
               </p>
-            ) : null}
+            ) : poiSearchCenter ? (
+              <p className="mt-1 text-[10px] text-[color:var(--hmr-muted)]">
+                Cerchio arancione = raggio 3 km · {pois.length} POI
+              </p>
+            ) : (
+              <p className="mt-1 text-[10px] text-[color:var(--hmr-muted)]">
+                Oppure scrivi nella barra (es. bivacco) e cerca nell&apos;area visibile
+              </p>
+            )}
           </div>
 
           {pois.length > 0 ? (
             <ul className="max-h-36 space-y-1 overflow-y-auto text-[11px]">
-              {pois.slice(0, 12).map((p) => (
+              {pois.slice(0, 12).map((p) => {
+                const kindMeta = resolvePoiKind(p.category, p.sub_kind);
+                return (
                 <li key={p.id}>
                   <button
                     type="button"
@@ -528,12 +711,14 @@ export default function V2RouteBuilder({ isAdmin = false }: Props) {
                   >
                     <span
                       className="mr-1.5 inline-block h-2 w-2 rounded-full"
-                      style={{ background: CATEGORY_META[p.category]?.color ?? "#38bdf8" }}
+                      style={{ background: kindMeta.color }}
                     />
+                    <span className="text-[color:var(--hmr-faint)]">{kindMeta.label} · </span>
                     {p.name ?? p.sub_kind}
                   </button>
                 </li>
-              ))}
+                );
+              })}
               {pois.length > 12 ? (
                 <li className="px-2 text-[color:var(--hmr-faint)]">+ altri {pois.length - 12} POI sulla mappa</li>
               ) : null}
@@ -577,9 +762,11 @@ export default function V2RouteBuilder({ isAdmin = false }: Props) {
               routeCoords={routeCoords}
               pois={pois}
               poiSearchCenter={poiSearchCenter}
+              poiSearchBbox={poiSearchBbox}
               pendingPoint={pendingPoint}
               onMapInteraction={onMapInteraction}
               onWaypointMove={moveWaypoint}
+              onViewportChange={onViewportChange}
               initialCenter={mapCenter}
               flyTo={flyTo}
             />

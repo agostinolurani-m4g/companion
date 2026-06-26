@@ -547,6 +547,30 @@ export function clampPoiHarvestRadiusM(radiusM: number): number {
   return Math.max(80, Math.min(5000, Math.round(radiusM)));
 }
 
+export type ViewBbox = { south: number; west: number; north: number; east: number };
+
+/** Lato max bbox per harvest POI (~22 km) — evita timeout Overpass. */
+const MAX_POI_BBOX_SPAN_DEG = 0.2;
+
+export function clampPoiHarvestBbox(
+  b: ViewBbox
+): { ok: true; bbox: Bbox } | { ok: false; error: string } {
+  const { south, west, north, east } = b;
+  if (![south, west, north, east].every(Number.isFinite)) {
+    return { ok: false, error: "Area mappa non valida" };
+  }
+  const latSpan = north - south;
+  const lngSpan = east - west;
+  if (latSpan <= 0 || lngSpan <= 0) {
+    return { ok: false, error: "Area mappa non valida" };
+  }
+  if (latSpan > MAX_POI_BBOX_SPAN_DEG || lngSpan > MAX_POI_BBOX_SPAN_DEG) {
+    const km = Math.round(MAX_POI_BBOX_SPAN_DEG * 111);
+    return { ok: false, error: `Area troppo ampia: ingrandisci la mappa (max ~${km} km)` };
+  }
+  return { ok: true, bbox: [south, west, north, east] };
+}
+
 /**
  * Interroga Overpass in un cerchio attorno a un punto.
  * `bboxKeys`: null o [] = tutte le categorie snapshot; altrimenti solo i gruppi indicati.
@@ -565,6 +589,22 @@ export async function fetchPoiTypesAround(
   const lines = overpassLinesForBboxKeys(keys);
   const body = lines.map((l) => `  ${l}(around:${r},${lat},${lon});`).join("\n");
   const q = `[out:json][timeout:90];\n(\n${body}\n);\nout center;`;
+  return fetchOverpass(q);
+}
+
+/**
+ * Interroga Overpass nel rettangolo visibile sulla mappa.
+ */
+export async function fetchPoiTypesInBbox(
+  bbox: Bbox,
+  bboxKeys: BboxCategoryKey[] | null
+): Promise<OsmNode[]> {
+  const keys =
+    bboxKeys && bboxKeys.length > 0
+      ? bboxKeys
+      : (Object.keys(BBOX_LINES) as BboxCategoryKey[]);
+  const lines = overpassLinesForBboxKeys(keys);
+  const q = bboxSection(bbox, lines);
   return fetchOverpass(q);
 }
 

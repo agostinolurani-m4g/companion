@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { V2SearchPoi } from "@/app/api/v2/pois/search/route";
-import { CATEGORY_META } from "@/lib/categories";
+import { resolvePoiKind } from "@/lib/categories";
+import { googleMapsSearchUrl } from "@/lib/gmaps-url";
 
 type Props = {
   poi: V2SearchPoi;
@@ -30,8 +31,10 @@ export default function V2PoiBanner({ poi, onClose, onInsertInRoute, onSetDestin
   const [error, setError] = useState<string | null>(null);
 
   const title = poi.name ?? poi.sub_kind ?? "POI";
-  const catLabel = CATEGORY_META[poi.category]?.label ?? poi.category;
-  const catColor = CATEGORY_META[poi.category]?.color ?? "#38bdf8";
+  const kindMeta = resolvePoiKind(poi.category, poi.sub_kind);
+  const catLabel = kindMeta.label;
+  const catColor = kindMeta.color;
+  const googleMapsUrl = googleMapsSearchUrl(poi.lat, poi.lng, poi.name);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -170,6 +173,14 @@ export default function V2PoiBanner({ poi, onClose, onInsertInRoute, onSetDestin
                 {poi.sub_kind}
                 {poi.lat && poi.lng ? ` · ${poi.lat.toFixed(5)}, ${poi.lng.toFixed(5)}` : null}
               </p>
+              <a
+                href={googleMapsUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-1 inline-block text-[11px] text-[color:var(--hmr-accent)] hover:underline"
+              >
+                Apri in Google Maps
+              </a>
             </div>
             <button
               type="button"

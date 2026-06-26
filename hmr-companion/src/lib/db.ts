@@ -260,6 +260,29 @@ function initSchema(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_user_routes_owner ON user_routes(owner, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_user_routes_visibility ON user_routes(visibility, updated_at DESC);
+
+    CREATE TABLE IF NOT EXISTS osm_poi (
+      osm_type TEXT NOT NULL,
+      osm_id INTEGER NOT NULL,
+      category TEXT NOT NULL,
+      sub_kind TEXT NOT NULL,
+      lat REAL NOT NULL,
+      lng REAL NOT NULL,
+      tags_json TEXT NOT NULL,
+      PRIMARY KEY (osm_type, osm_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_osm_poi_category ON osm_poi(category);
+
+    CREATE VIRTUAL TABLE IF NOT EXISTS osm_poi_rtree USING rtree(id, minLat, maxLat, minLng, maxLng);
+
+    CREATE TABLE IF NOT EXISTS osm_coverage (
+      region TEXT PRIMARY KEY,
+      south REAL NOT NULL,
+      west REAL NOT NULL,
+      north REAL NOT NULL,
+      east REAL NOT NULL,
+      imported_at INTEGER NOT NULL
+    );
   `);
   migrateTracksElevProfileScales(db);
   migrateNotableSectionsDescriptionEn(db);
@@ -1214,4 +1237,185 @@ export function updateUserRoute(
 export function deleteUserRoute(id: string): boolean {
   const res = getDb().prepare(`DELETE FROM user_routes WHERE id = ?`).run(id);
   return res.changes > 0;
+}
+
+/* ---------------- OSM POI locale (snapshot Italia) ---------------- */
+
+export type OsmPoiRow = {
+  osm_type: string;
+  osm_id: number;
+  category: PoiCategory;
+  sub_kind: string;
+  lat: number;
+  lng: number;
+  tags_json: string;
+};
+
+export type OsmCoverageRow = {
+  region: string;
+  south: number;
+  west: number;
+  north: number;
+  east: number;
+  imported_at: number;
+};
+
+export function localPoiCount(): number {
+  const r = getDb().prepare(`SELECT COUNT(*) AS n FROM osm_poi`).get() as { n: number };
+  return r.n;
+}
+
+export function getLocalCoverage(): OsmCoverageRow | undefined {
+  return getDb()
+    .prepare(`SELECT * FROM osm_coverage ORDER BY imported_at DESC LIMIT 1`)
+    .get() as OsmCoverageRow | undefined;
+}
+
+/** True se il bbox query e interamente dentro la copertura importata. */
+export function localCoverageContainsBbox(
+  south: number,
+  west: number,
+  north: number,
+  east: number
+): boolean {
+  const cov = getLocalCoverage();
+  if (!cov) return false;
+  return cov.south <= south && cov.west <= west && cov.north >= north && cov.east >= east;
+}
+
+export function localCoverageContainsAround(lat: number, lng: number, radiusM: number): boolean {
+  const deltaLat = radiusM / 111_320;
+  const cosLat = Math.cos((lat * Math.PI) / 180);
+  const deltaLng = radiusM / (111_320 * Math.max(0.2, Math.abs(cosLat)));
+  return localCoverageContainsBbox(
+    lat - deltaLat,
+    lng - deltaLng,
+    lat + deltaLat,
+    lng + deltaLng
+  );
+}
+
+export function resetLocalOsmStore(): void {
+  const db = getDb();
+  db.exec(`DELETE FROM osm_poi_rtree; DELETE FROM osm_poi; DELETE FROM osm_coverage;`);
+}
+
+export function setLocalOsmCoverage(input: {
+  region: string;
+  south: number;
+  west: number;
+  north: number;
+  east: number;
+  imported_at: number;
+}): void {
+  getDb()
+    .prepare(
+      `INSERT INTO osm_coverage (region, south, west, north, east, imported_at)
+       VALUES (@region, @south, @west, @north, @east, @imported_at)
+       ON CONFLICT(region) DO UPDATE SET
+         south = excluded.south,
+         west = excluded.west,
+         north = excluded.north,
+         east = excluded.east,
+         imported_at = excluded.imported_at`
+    )
+    .run(input);
+}
+
+export function insertLocalOsmPoiBatch(
+  rows: Array<{
+    osm_type: string;
+    osm_id: number;
+    category: PoiCategory;
+    sub_kind: string;
+    lat: number;
+    lng: number;
+    tags: Record<string, string>;
+  }>
+): void {
+  if (rows.length === 0) return;
+  const db = getDb();
+  const insPoi = db.prepare(
+    `INSERT INTO osm_poi (osm_type, osm_id, category, sub_kind, lat, lng, tags_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  );
+  const insRtree = db.prepare(
+    `INSERT OR REPLACE INTO osm_poi_rtree (id, minLat, maxLat, minLng, maxLng)
+     VALUES (?, ?, ?, ?, ?)`
+  );
+  const tx = db.transaction(() => {
+    for (const r of rows) {
+      const info = insPoi.run(
+        r.osm_type,
+        r.osm_id,
+        r.category,
+        r.sub_kind,
+        r.lat,
+        r.lng,
+        JSON.stringify(r.tags)
+      );
+      const rowid = Number(info.lastInsertRowid);
+      insRtree.run(rowid, r.lat, r.lat, r.lng, r.lng);
+    }
+  });
+  tx();
+}
+
+function localPoiCategoryClause(categories: PoiCategory[] | null): {
+  sql: string;
+  params: PoiCategory[];
+} {
+  if (!categories || categories.length === 0) return { sql: "", params: [] };
+  return {
+    sql: ` AND p.category IN (${categories.map(() => "?").join(",")})`,
+    params: categories,
+  };
+}
+
+export function queryLocalPoisInBbox(
+  south: number,
+  west: number,
+  north: number,
+  east: number,
+  categories: PoiCategory[] | null
+): OsmPoiRow[] {
+  const cat = localPoiCategoryClause(categories);
+  const sql = `SELECT p.osm_type, p.osm_id, p.category, p.sub_kind, p.lat, p.lng, p.tags_json
+    FROM osm_poi p
+    INNER JOIN osm_poi_rtree r ON r.id = p.rowid
+    WHERE r.maxLat >= ? AND r.minLat <= ?
+      AND r.maxLng >= ? AND r.minLng <= ?${cat.sql}`;
+  return getDb()
+    .prepare(sql)
+    .all(south, north, west, east, ...cat.params) as OsmPoiRow[];
+}
+
+export function queryLocalPoisAround(
+  lat: number,
+  lng: number,
+  radiusM: number,
+  categories: PoiCategory[] | null
+): OsmPoiRow[] {
+  const deltaLat = radiusM / 111_320;
+  const cosLat = Math.cos((lat * Math.PI) / 180);
+  const deltaLng = radiusM / (111_320 * Math.max(0.2, Math.abs(cosLat)));
+  const rows = queryLocalPoisInBbox(
+    lat - deltaLat,
+    lng - deltaLng,
+    lat + deltaLat,
+    lng + deltaLng,
+    categories
+  );
+  const r2 = radiusM * radiusM;
+  return rows.filter((p) => {
+    const dLat = (p.lat - lat) * 111_320;
+    const dLng = (p.lng - lng) * 111_320 * cosLat;
+    return dLat * dLat + dLng * dLng <= r2;
+  });
+}
+
+export function countLocalPoisByCategory(): Array<{ category: string; n: number }> {
+  return getDb()
+    .prepare(`SELECT category, COUNT(*) AS n FROM osm_poi GROUP BY category ORDER BY n DESC`)
+    .all() as Array<{ category: string; n: number }>;
 }

@@ -12,6 +12,7 @@
     "ingest:markers": "tsx scripts/ingest-markers.ts",
     "snapshot": "tsx scripts/snapshot-pois.ts",
     "snapshot:surface": "tsx scripts/snapshot-surface.ts",
+    "osm:import": "tsx scripts/import-osm-pois.ts",
     "seed": "npm run ingest && npm run snapshot",
     "icons:pwa": "node scripts/generate-pwa-icons.mjs"
   },
@@ -20,6 +21,7 @@
     "better-sqlite3": "^12.8.0",
     "maplibre-gl": "^5.22.0",
     "next": "16.2.3",
+    "osm-pbf-parser": "^2.3.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "uuid": "^14.0.0"

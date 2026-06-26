@@ -5,16 +5,18 @@ import type { PoiCategory } from "@/lib/db";
 import { geoCacheGet, geoCacheSet } from "@/lib/db";
 import {
   bboxKeysForPoiCategories,
+  clampPoiHarvestBbox,
   clampPoiHarvestRadiusM,
   classifyOsm,
-  fetchPoiTypesAround,
   osmDescriptionFromTags,
   osmImageFromTags,
   osmOpeningHoursFromTags,
   osmPhoneFromTags,
   osmWebsiteFromTags,
   OverpassError,
+  type ViewBbox,
 } from "@/lib/overpass";
+import { getPoiTypesAround, getPoiTypesInBbox } from "@/lib/poi-source";
 
 export const runtime = "nodejs";
 
@@ -24,75 +26,15 @@ type Body = {
   lat?: number;
   lng?: number;
   radiusM?: number;
+  bbox?: ViewBbox;
   refresh?: boolean;
   categories?: string[];
 };
 
-export type V2SearchPoi = {
-  id: string;
-  name: string | null;
-  category: PoiCategory;
-  sub_kind: string;
-  lat: number;
-  lng: number;
-  image?: string | null;
-  description?: string | null;
-  phone?: string | null;
-  website?: string | null;
-  opening_hours?: string | null;
-  wikidata?: string | null;
-  wikipedia?: string | null;
-};
-
-export async function POST(req: Request) {
-  const auth = await requireV2Beta();
-  if (!auth) return NextResponse.json({ error: "Non autorizzato" }, { status: 403 });
-
-  const body = (await req.json().catch(() => ({}))) as Body;
-  const lat = body.lat;
-  const lng = body.lng;
-  if (typeof lat !== "number" || typeof lng !== "number" || !Number.isFinite(lat) || !Number.isFinite(lng)) {
-    return NextResponse.json({ error: "Serve lat e lng numerici" }, { status: 400 });
-  }
-
-  const radiusM =
-    typeof body.radiusM === "number" && Number.isFinite(body.radiusM) ? body.radiusM : 2500;
-  const refresh = body.refresh === true;
-
-  let filterCategories: PoiCategory[] | null = null;
-  if (Array.isArray(body.categories) && body.categories.length > 0) {
-    const parsed = body.categories.filter(
-      (c): c is PoiCategory => typeof c === "string" && VALID_CATEGORY.has(c)
-    );
-    if (parsed.length > 0) filterCategories = parsed;
-  }
-
-  const bboxKeys = filterCategories ? bboxKeysForPoiCategories(filterCategories) : null;
-  const rEff = clampPoiHarvestRadiusM(radiusM);
-  const catKey = bboxKeys && bboxKeys.length > 0 ? [...bboxKeys].sort().join("-") : "all";
-  const cacheKey = `v2poi:${Math.round(lat * 1e4)}_${Math.round(lng * 1e4)}_${rEff}_${catKey}`;
-
-  let nodes;
-  let fromCache = false;
-  if (!refresh) {
-    const cached = geoCacheGet(cacheKey);
-    if (cached != null && Array.isArray(cached)) {
-      nodes = cached;
-      fromCache = true;
-    }
-  }
-
-  if (!nodes) {
-    try {
-      nodes = await fetchPoiTypesAround(lat, lng, radiusM, bboxKeys);
-      geoCacheSet(cacheKey, nodes);
-    } catch (e) {
-      const msg = e instanceof OverpassError ? e.message : (e as Error).message;
-      const status = e instanceof OverpassError && e.transient ? 503 : 502;
-      return NextResponse.json({ error: `Overpass: ${msg}` }, { status });
-    }
-  }
-
+function poisFromNodes(
+  nodes: Awaited<ReturnType<typeof getPoiTypesAround>>["nodes"],
+  filterCategories: PoiCategory[] | null
+): V2SearchPoi[] {
   const pois: V2SearchPoi[] = [];
   for (const n of nodes) {
     if (n.lat == null || n.lon == null) continue;
@@ -116,6 +58,144 @@ export async function POST(req: Request) {
       wikipedia: tags.wikipedia?.trim() || tags["wikipedia:en"]?.trim() || tags["wikipedia:it"]?.trim() || null,
     });
   }
+  return pois;
+}
 
-  return NextResponse.json({ ok: true, pois, fromCache, count: pois.length });
+export type V2SearchPoi = {
+  id: string;
+  name: string | null;
+  category: PoiCategory;
+  sub_kind: string;
+  lat: number;
+  lng: number;
+  image?: string | null;
+  description?: string | null;
+  phone?: string | null;
+  website?: string | null;
+  opening_hours?: string | null;
+  wikidata?: string | null;
+  wikipedia?: string | null;
+};
+
+export async function POST(req: Request) {
+  const auth = await requireV2Beta();
+  if (!auth) return NextResponse.json({ error: "Non autorizzato" }, { status: 403 });
+
+  const body = (await req.json().catch(() => ({}))) as Body;
+  const refresh = body.refresh === true;
+
+  let filterCategories: PoiCategory[] | null = null;
+  if (Array.isArray(body.categories) && body.categories.length > 0) {
+    const parsed = body.categories.filter(
+      (c): c is PoiCategory => typeof c === "string" && VALID_CATEGORY.has(c)
+    );
+    if (parsed.length > 0) filterCategories = parsed;
+  }
+
+  const bboxKeys = filterCategories ? bboxKeysForPoiCategories(filterCategories) : null;
+  const catKey = bboxKeys && bboxKeys.length > 0 ? [...bboxKeys].sort().join("-") : "all";
+
+  const rawBbox = body.bbox;
+  const useBbox =
+    rawBbox &&
+    typeof rawBbox.south === "number" &&
+    typeof rawBbox.west === "number" &&
+    typeof rawBbox.north === "number" &&
+    typeof rawBbox.east === "number";
+
+  if (useBbox) {
+    const clamped = clampPoiHarvestBbox(rawBbox);
+    if (!clamped.ok) {
+      return NextResponse.json({ error: clamped.error }, { status: 400 });
+    }
+    const [s, w, n, e] = clamped.bbox;
+    const cacheKey = `v2poi:bbox:${Math.round(s * 1e4)}_${Math.round(w * 1e4)}_${Math.round(n * 1e4)}_${Math.round(e * 1e4)}_${catKey}`;
+
+    let nodes;
+    let fromCache = false;
+    let source: "local" | "overpass" = "overpass";
+    if (!refresh) {
+      const cached = geoCacheGet(cacheKey);
+      if (cached != null) {
+        if (Array.isArray(cached)) {
+          nodes = cached;
+          fromCache = true;
+        } else if (
+          typeof cached === "object" &&
+          cached !== null &&
+          Array.isArray((cached as { nodes?: unknown }).nodes)
+        ) {
+          const hit = cached as { nodes: typeof nodes; source?: "local" | "overpass" };
+          nodes = hit.nodes;
+          source = hit.source ?? "overpass";
+          fromCache = true;
+        }
+      }
+    }
+
+    if (!nodes) {
+      try {
+        const result = await getPoiTypesInBbox(clamped.bbox, bboxKeys);
+        nodes = result.nodes;
+        source = result.source;
+        geoCacheSet(cacheKey, { nodes, source });
+      } catch (e) {
+        const msg = e instanceof OverpassError ? e.message : (e as Error).message;
+        const status = e instanceof OverpassError && e.transient ? 503 : 502;
+        return NextResponse.json({ error: `Overpass: ${msg}` }, { status });
+      }
+    }
+
+    const pois = poisFromNodes(nodes, filterCategories);
+    return NextResponse.json({ ok: true, pois, fromCache, source, count: pois.length, mode: "bbox" });
+  }
+
+  const lat = body.lat;
+  const lng = body.lng;
+  if (typeof lat !== "number" || typeof lng !== "number" || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return NextResponse.json({ error: "Serve lat e lng numerici, oppure bbox" }, { status: 400 });
+  }
+
+  const radiusM =
+    typeof body.radiusM === "number" && Number.isFinite(body.radiusM) ? body.radiusM : 2500;
+  const rEff = clampPoiHarvestRadiusM(radiusM);
+  const cacheKey = `v2poi:${Math.round(lat * 1e4)}_${Math.round(lng * 1e4)}_${rEff}_${catKey}`;
+
+  let nodes;
+  let fromCache = false;
+  let source: "local" | "overpass" = "overpass";
+  if (!refresh) {
+    const cached = geoCacheGet(cacheKey);
+    if (cached != null) {
+      if (Array.isArray(cached)) {
+        nodes = cached;
+        fromCache = true;
+      } else if (
+        typeof cached === "object" &&
+        cached !== null &&
+        Array.isArray((cached as { nodes?: unknown }).nodes)
+      ) {
+        const hit = cached as { nodes: typeof nodes; source?: "local" | "overpass" };
+        nodes = hit.nodes;
+        source = hit.source ?? "overpass";
+        fromCache = true;
+      }
+    }
+  }
+
+  if (!nodes) {
+    try {
+      const result = await getPoiTypesAround(lat, lng, radiusM, bboxKeys);
+      nodes = result.nodes;
+      source = result.source;
+      geoCacheSet(cacheKey, { nodes, source });
+    } catch (e) {
+      const msg = e instanceof OverpassError ? e.message : (e as Error).message;
+      const status = e instanceof OverpassError && e.transient ? 503 : 502;
+      return NextResponse.json({ error: `Overpass: ${msg}` }, { status });
+    }
+  }
+
+  const pois = poisFromNodes(nodes, filterCategories);
+  return NextResponse.json({ ok: true, pois, fromCache, source, count: pois.length, mode: "radius" });
 }

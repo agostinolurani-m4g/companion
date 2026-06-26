@@ -35,6 +35,7 @@ yarn-error.log*
 !/data/*.gpx
 !/data/*.pdf
 /data/uploads/
+/data/osm/
 
 # vitest
 /.test/

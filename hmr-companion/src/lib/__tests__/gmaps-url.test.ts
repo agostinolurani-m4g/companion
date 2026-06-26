@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   GmapsParseError,
+  googleMapsSearchUrl,
   googleMapsStreetViewLayerUrl,
   parseGoogleMapsUrl,
 } from "../gmaps-url";
@@ -95,6 +96,21 @@ describe("parseGoogleMapsUrl", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+});
+
+describe("googleMapsSearchUrl", () => {
+  it("genera URL search con coordinate", () => {
+    const u = googleMapsSearchUrl(46.5, 10.3);
+    expect(u).toContain("google.com/maps/search/");
+    expect(u).toContain("query=46.5");
+    expect(u).toContain("10.3");
+  });
+
+  it("include il nome se presente", () => {
+    const u = googleMapsSearchUrl(46.5, 10.3, "Bivacco Tuckett");
+    expect(u).toContain("Bivacco");
+    expect(u).toContain("Tuckett");
   });
 });
 
