@@ -137,6 +137,18 @@ function dedupePositions(p: Position[]): Position[] {
 export const ELEV_GAIN_DEFAULT_WINDOW_PTS = 15;
 export const ELEV_GAIN_DEFAULT_THRESHOLD_M = 3;
 
+/** Finestra media mobile leggera solo per disegno profilo (non altera D+/D-). */
+export const ELEV_DISPLAY_DEFAULT_WINDOW_PTS = 5;
+
+/** Media mobile centrata sulle quote per profilo altimetrico (visualizzazione). */
+export function smoothElevationProfile(
+  elev: number[],
+  windowPts = ELEV_DISPLAY_DEFAULT_WINDOW_PTS,
+): number[] {
+  if (elev.length < 3 || windowPts <= 1) return elev;
+  return movingAverageElev(elev, windowPts);
+}
+
 /** D+ / D- cumulato dalla sequenza di altitudini. */
 export function elevationGainLoss(elev: Array<number | null | undefined>): {
   gain: number;

@@ -248,7 +248,7 @@ function initSchema(db: Database.Database): void {
       id TEXT PRIMARY KEY,
       owner TEXT NOT NULL,
       name TEXT NOT NULL,
-      activity TEXT NOT NULL CHECK(activity IN ('road','mtb','hike')),
+      activity TEXT NOT NULL CHECK(activity IN ('road','mtb','hike','gravel')),
       geojson TEXT NOT NULL,
       waypoints_json TEXT NOT NULL DEFAULT '[]',
       length_km REAL NOT NULL DEFAULT 0,
@@ -283,11 +283,64 @@ function initSchema(db: Database.Database): void {
       east REAL NOT NULL,
       imported_at INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS user_profiles (
+      username TEXT PRIMARY KEY,
+      display_name TEXT NOT NULL DEFAULT '',
+      bio TEXT NOT NULL DEFAULT '',
+      avatar_path TEXT,
+      home_area TEXT NOT NULL DEFAULT '',
+      level TEXT NOT NULL DEFAULT 'intermediate'
+        CHECK(level IN ('beginner','intermediate','advanced','expert')),
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS user_follows (
+      follower TEXT NOT NULL,
+      following TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (follower, following),
+      CHECK (follower != following)
+    );
+    CREATE INDEX IF NOT EXISTS idx_user_follows_following ON user_follows(following);
+
+    CREATE TABLE IF NOT EXISTS groups (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL CHECK(type IN ('friends','club','trip','custom')),
+      description TEXT NOT NULL DEFAULT '',
+      avatar_path TEXT,
+      created_by TEXT NOT NULL,
+      route_id TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_groups_created_by ON groups(created_by);
+
+    CREATE TABLE IF NOT EXISTS group_members (
+      group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+      username TEXT NOT NULL,
+      role TEXT NOT NULL CHECK(role IN ('owner','admin','member')),
+      joined_at INTEGER NOT NULL,
+      PRIMARY KEY (group_id, username)
+    );
+    CREATE INDEX IF NOT EXISTS idx_group_members_user ON group_members(username);
+
+    CREATE TABLE IF NOT EXISTS group_messages (
+      id TEXT PRIMARY KEY,
+      group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+      from_user TEXT NOT NULL,
+      body TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_group_messages_group ON group_messages(group_id, created_at DESC);
   `);
   migrateTracksElevProfileScales(db);
   migrateNotableSectionsDescriptionEn(db);
   migratePoisRaceVisible(db);
   migratePoisCampsiteCategory(db);
+  migrateUserRoutesGravelActivity(db);
   seedAppUsers(db);
 }
 
@@ -304,6 +357,36 @@ function migratePoisCampsiteCategory(db: Database.Database): void {
   db.prepare(
     `UPDATE pois SET category = 'campsite' WHERE category = 'lodging' AND sub_kind = 'camp_site'`
   ).run();
+}
+
+/** Estende CHECK activity su user_routes per includere gravel. */
+function migrateUserRoutesGravelActivity(db: Database.Database): void {
+  const row = db
+    .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'user_routes'`)
+    .get() as { sql?: string } | undefined;
+  if (!row?.sql || row.sql.includes("'gravel'")) return;
+
+  db.exec(`
+    CREATE TABLE user_routes_gravel_mig (
+      id TEXT PRIMARY KEY,
+      owner TEXT NOT NULL,
+      name TEXT NOT NULL,
+      activity TEXT NOT NULL CHECK(activity IN ('road','mtb','hike','gravel')),
+      geojson TEXT NOT NULL,
+      waypoints_json TEXT NOT NULL DEFAULT '[]',
+      length_km REAL NOT NULL DEFAULT 0,
+      elev_gain_m REAL NOT NULL DEFAULT 0,
+      elev_loss_m REAL NOT NULL DEFAULT 0,
+      visibility TEXT NOT NULL DEFAULT 'private' CHECK(visibility IN ('private','public')),
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    INSERT INTO user_routes_gravel_mig SELECT * FROM user_routes;
+    DROP TABLE user_routes;
+    ALTER TABLE user_routes_gravel_mig RENAME TO user_routes;
+    CREATE INDEX IF NOT EXISTS idx_user_routes_owner ON user_routes(owner, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_user_routes_visibility ON user_routes(visibility, updated_at DESC);
+  `);
 }
 
 /** Allinea D+/D- misurati sui vertici salvati a quelli ITRA sui trkpt grezzi (ingest). */
@@ -1078,7 +1161,7 @@ export type AppUserRow = {
   created_at: number;
 };
 
-export type UserRouteActivity = "road" | "mtb" | "hike";
+export type UserRouteActivity = "road" | "mtb" | "hike" | "gravel";
 
 export type UserRouteVisibility = "private" | "public";
 
@@ -1418,4 +1501,352 @@ export function countLocalPoisByCategory(): Array<{ category: string; n: number 
   return getDb()
     .prepare(`SELECT category, COUNT(*) AS n FROM osm_poi GROUP BY category ORDER BY n DESC`)
     .all() as Array<{ category: string; n: number }>;
+}
+
+/* ---------------- Profilo, follow, gruppi ---------------- */
+
+export type ProfileLevel = "beginner" | "intermediate" | "advanced" | "expert";
+
+export type UserProfileRow = {
+  username: string;
+  display_name: string;
+  bio: string;
+  avatar_path: string | null;
+  home_area: string;
+  level: ProfileLevel;
+  created_at: number;
+  updated_at: number;
+};
+
+export type GroupType = "friends" | "club" | "trip" | "custom";
+
+export type GroupMemberRole = "owner" | "admin" | "member";
+
+export type GroupRow = {
+  id: string;
+  name: string;
+  type: GroupType;
+  description: string;
+  avatar_path: string | null;
+  created_by: string;
+  route_id: string | null;
+  created_at: number;
+  updated_at: number;
+};
+
+export type GroupMemberRow = {
+  group_id: string;
+  username: string;
+  role: GroupMemberRole;
+  joined_at: number;
+};
+
+export type GroupMessageRow = {
+  id: string;
+  group_id: string;
+  from_user: string;
+  body: string;
+  created_at: number;
+};
+
+function normalizeUser(username: string): string {
+  return username.trim().toLowerCase();
+}
+
+export function getUserProfile(username: string): UserProfileRow | undefined {
+  return getDb()
+    .prepare(`SELECT * FROM user_profiles WHERE username = ?`)
+    .get(normalizeUser(username)) as UserProfileRow | undefined;
+}
+
+export function ensureUserProfile(username: string): UserProfileRow {
+  const u = normalizeUser(username);
+  const existing = getUserProfile(u);
+  if (existing) return existing;
+  const now = Date.now();
+  getDb()
+    .prepare(
+      `INSERT INTO user_profiles (username, display_name, bio, avatar_path, home_area, level, created_at, updated_at)
+       VALUES (?, '', '', NULL, '', 'intermediate', ?, ?)`
+    )
+    .run(u, now, now);
+  return getUserProfile(u)!;
+}
+
+export function upsertUserProfile(input: {
+  username: string;
+  display_name?: string;
+  bio?: string;
+  avatar_path?: string | null;
+  home_area?: string;
+  level?: ProfileLevel;
+}): UserProfileRow {
+  const u = normalizeUser(input.username);
+  ensureUserProfile(u);
+  const row = getUserProfile(u)!;
+  const now = Date.now();
+  getDb()
+    .prepare(
+      `UPDATE user_profiles SET
+        display_name = @display_name,
+        bio = @bio,
+        avatar_path = @avatar_path,
+        home_area = @home_area,
+        level = @level,
+        updated_at = @updated_at
+      WHERE username = @username`
+    )
+    .run({
+      username: u,
+      display_name: input.display_name ?? row.display_name,
+      bio: input.bio ?? row.bio,
+      avatar_path: input.avatar_path !== undefined ? input.avatar_path : row.avatar_path,
+      home_area: input.home_area ?? row.home_area,
+      level: input.level ?? row.level,
+      updated_at: now,
+    });
+  return getUserProfile(u)!;
+}
+
+export function followUser(follower: string, following: string): boolean {
+  const f = normalizeUser(follower);
+  const t = normalizeUser(following);
+  if (f === t) return false;
+  if (!getAppUser(t)) return false;
+  const now = Date.now();
+  const res = getDb()
+    .prepare(
+      `INSERT OR IGNORE INTO user_follows (follower, following, created_at) VALUES (?, ?, ?)`
+    )
+    .run(f, t, now);
+  return res.changes > 0;
+}
+
+export function unfollowUser(follower: string, following: string): boolean {
+  const res = getDb()
+    .prepare(`DELETE FROM user_follows WHERE follower = ? AND following = ?`)
+    .run(normalizeUser(follower), normalizeUser(following));
+  return res.changes > 0;
+}
+
+export function isFollowing(follower: string, following: string): boolean {
+  const r = getDb()
+    .prepare(`SELECT 1 AS n FROM user_follows WHERE follower = ? AND following = ?`)
+    .get(normalizeUser(follower), normalizeUser(following)) as { n: number } | undefined;
+  return !!r;
+}
+
+export function countFollowers(username: string): number {
+  const r = getDb()
+    .prepare(`SELECT COUNT(*) AS n FROM user_follows WHERE following = ?`)
+    .get(normalizeUser(username)) as { n: number };
+  return r.n;
+}
+
+export function countFollowing(username: string): number {
+  const r = getDb()
+    .prepare(`SELECT COUNT(*) AS n FROM user_follows WHERE follower = ?`)
+    .get(normalizeUser(username)) as { n: number };
+  return r.n;
+}
+
+export function listFollowing(username: string): string[] {
+  return (
+    getDb()
+      .prepare(`SELECT following FROM user_follows WHERE follower = ? ORDER BY created_at DESC`)
+      .all(normalizeUser(username)) as Array<{ following: string }>
+  ).map((r) => r.following);
+}
+
+export function listFollowers(username: string): string[] {
+  return (
+    getDb()
+      .prepare(`SELECT follower FROM user_follows WHERE following = ? ORDER BY created_at DESC`)
+      .all(normalizeUser(username)) as Array<{ follower: string }>
+  ).map((r) => r.follower);
+}
+
+export function countPublicRoutesForOwner(owner: string): number {
+  const r = getDb()
+    .prepare(`SELECT COUNT(*) AS n FROM user_routes WHERE owner = ? AND visibility = 'public'`)
+    .get(normalizeUser(owner)) as { n: number };
+  return r.n;
+}
+
+export function getGroup(id: string): GroupRow | undefined {
+  return getDb().prepare(`SELECT * FROM groups WHERE id = ?`).get(id) as GroupRow | undefined;
+}
+
+export function insertGroup(input: {
+  id: string;
+  name: string;
+  type: GroupType;
+  description?: string;
+  avatar_path?: string | null;
+  created_by: string;
+  route_id?: string | null;
+  created_at: number;
+  updated_at: number;
+}): void {
+  getDb()
+    .prepare(
+      `INSERT INTO groups (id, name, type, description, avatar_path, created_by, route_id, created_at, updated_at)
+       VALUES (@id, @name, @type, @description, @avatar_path, @created_by, @route_id, @created_at, @updated_at)`
+    )
+    .run({
+      ...input,
+      description: input.description ?? "",
+      avatar_path: input.avatar_path ?? null,
+      created_by: normalizeUser(input.created_by),
+      route_id: input.route_id ?? null,
+    });
+}
+
+export function updateGroup(
+  id: string,
+  patch: {
+    name?: string;
+    type?: GroupType;
+    description?: string;
+    avatar_path?: string | null;
+    route_id?: string | null;
+    updated_at: number;
+  }
+): void {
+  const row = getGroup(id);
+  if (!row) return;
+  getDb()
+    .prepare(
+      `UPDATE groups SET
+        name = @name,
+        type = @type,
+        description = @description,
+        avatar_path = @avatar_path,
+        route_id = @route_id,
+        updated_at = @updated_at
+      WHERE id = @id`
+    )
+    .run({
+      id,
+      name: patch.name ?? row.name,
+      type: patch.type ?? row.type,
+      description: patch.description ?? row.description,
+      avatar_path: patch.avatar_path !== undefined ? patch.avatar_path : row.avatar_path,
+      route_id: patch.route_id !== undefined ? patch.route_id : row.route_id,
+      updated_at: patch.updated_at,
+    });
+}
+
+export function deleteGroup(id: string): boolean {
+  const res = getDb().prepare(`DELETE FROM groups WHERE id = ?`).run(id);
+  return res.changes > 0;
+}
+
+export function addGroupMember(input: {
+  group_id: string;
+  username: string;
+  role: GroupMemberRole;
+  joined_at: number;
+}): boolean {
+  const res = getDb()
+    .prepare(
+      `INSERT OR IGNORE INTO group_members (group_id, username, role, joined_at)
+       VALUES (?, ?, ?, ?)`
+    )
+    .run(input.group_id, normalizeUser(input.username), input.role, input.joined_at);
+  return res.changes > 0;
+}
+
+export function removeGroupMember(groupId: string, username: string): boolean {
+  const res = getDb()
+    .prepare(`DELETE FROM group_members WHERE group_id = ? AND username = ?`)
+    .run(groupId, normalizeUser(username));
+  return res.changes > 0;
+}
+
+export function getGroupMember(groupId: string, username: string): GroupMemberRow | undefined {
+  return getDb()
+    .prepare(`SELECT * FROM group_members WHERE group_id = ? AND username = ?`)
+    .get(groupId, normalizeUser(username)) as GroupMemberRow | undefined;
+}
+
+export function listGroupMembers(groupId: string): GroupMemberRow[] {
+  return getDb()
+    .prepare(
+      `SELECT * FROM group_members WHERE group_id = ? ORDER BY
+        CASE role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,
+        joined_at ASC`
+    )
+    .all(groupId) as GroupMemberRow[];
+}
+
+export function listGroupsForUser(username: string): GroupRow[] {
+  const u = normalizeUser(username);
+  return getDb()
+    .prepare(
+      `SELECT g.* FROM groups g
+       INNER JOIN group_members m ON m.group_id = g.id
+       WHERE m.username = ?
+       ORDER BY g.updated_at DESC`
+    )
+    .all(u) as GroupRow[];
+}
+
+export function insertGroupMessage(input: {
+  id: string;
+  group_id: string;
+  from_user: string;
+  body: string;
+  created_at: number;
+}): GroupMessageRow {
+  getDb()
+    .prepare(
+      `INSERT INTO group_messages (id, group_id, from_user, body, created_at)
+       VALUES (@id, @group_id, @from_user, @body, @created_at)`
+    )
+    .run({ ...input, from_user: normalizeUser(input.from_user) });
+  getDb()
+    .prepare(`UPDATE groups SET updated_at = ? WHERE id = ?`)
+    .run(input.created_at, input.group_id);
+  return getDb()
+    .prepare(`SELECT * FROM group_messages WHERE id = ?`)
+    .get(input.id) as GroupMessageRow;
+}
+
+export function listGroupMessages(
+  groupId: string,
+  opts?: { since?: number; limit?: number }
+): GroupMessageRow[] {
+  const limit = Math.min(Math.max(opts?.limit ?? 100, 1), 500);
+  if (opts?.since) {
+    return getDb()
+      .prepare(
+        `SELECT * FROM group_messages WHERE group_id = ? AND created_at > ?
+         ORDER BY created_at ASC LIMIT ?`
+      )
+      .all(groupId, opts.since, limit) as GroupMessageRow[];
+  }
+  return getDb()
+    .prepare(
+      `SELECT * FROM group_messages WHERE group_id = ?
+       ORDER BY created_at DESC LIMIT ?`
+    )
+    .all(groupId, limit)
+    .reverse() as GroupMessageRow[];
+}
+
+export function getLastGroupMessage(groupId: string): GroupMessageRow | undefined {
+  return getDb()
+    .prepare(`SELECT * FROM group_messages WHERE group_id = ? ORDER BY created_at DESC LIMIT 1`)
+    .get(groupId) as GroupMessageRow | undefined;
+}
+
+export function isGroupAdmin(groupId: string, username: string): boolean {
+  const m = getGroupMember(groupId, username);
+  return m?.role === "owner" || m?.role === "admin";
+}
+
+export function isGroupOwner(groupId: string, username: string): boolean {
+  const m = getGroupMember(groupId, username);
+  return m?.role === "owner";
 }

@@ -22,12 +22,18 @@ import {
 } from "@/lib/categories";
 import type { V2SearchPoi } from "@/app/api/v2/pois/search/route";
 import { geocodeToPoi, type PlaceSearchKind } from "@/lib/geocoding";
+import { DEFAULT_MAP_VIEW_CENTER } from "@/lib/map-defaults";
 import type { ViewBbox } from "@/lib/overpass";
 import { sampleElevationsForLine } from "@/lib/elevation";
 import type { StoredCoord } from "@/lib/track-coords";
+import { elevationGainLossSmoothed, smoothElevationProfile } from "@/lib/track-geometry";
+import type { RouteTech } from "@/lib/ors-route-tech";
+import { formatSurfacePctSummary, formatTerrainIt, SURFACE_COLORS } from "@/lib/ors-route-tech";
+import type { TrackSurfaceKind } from "@/lib/surface-osm";
 
 type Props = {
   isAdmin?: boolean;
+  username?: string;
 };
 
 type MapAction =
@@ -39,6 +45,7 @@ const ACTIVITY_LABELS: Record<UserRouteActivity, string> = {
   road: "Bici da strada",
   mtb: "MTB",
   hike: "Escursione",
+  gravel: "Gravel",
 };
 
 const POI_RADIUS_PRESETS: PoiKindMeta[] = SEARCH_KINDS;
@@ -103,7 +110,7 @@ function applyInsertInRoute(
   return [...wps.slice(0, idx), p, ...wps.slice(idx)];
 }
 
-export default function V2RouteBuilder({ isAdmin = false }: Props) {
+export default function V2RouteBuilder({ isAdmin = false, username }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const routeId = searchParams.get("route");
@@ -111,7 +118,10 @@ export default function V2RouteBuilder({ isAdmin = false }: Props) {
   const [activity, setActivity] = useState<UserRouteActivity>("hike");
   const [waypoints, setWaypoints] = useState<V2Waypoint[]>([]);
   const [routeCoords, setRouteCoords] = useState<[number, number][] | null>(null);
+  const [routeTech, setRouteTech] = useState<RouteTech | null>(null);
   const [lengthKm, setLengthKm] = useState(0);
+  const [elevGainM, setElevGainM] = useState(0);
+  const [elevLossM, setElevLossM] = useState(0);
   const [pois, setPois] = useState<V2SearchPoi[]>([]);
   const [poiSearchCenter, setPoiSearchCenter] = useState<{ lng: number; lat: number } | null>(null);
   const [poiSearchBbox, setPoiSearchBbox] = useState<ViewBbox | null>(null);
@@ -123,7 +133,9 @@ export default function V2RouteBuilder({ isAdmin = false }: Props) {
   const [name, setName] = useState("");
   const [visibility, setVisibility] = useState<UserRouteVisibility>("private");
   const [mapAction, setMapAction] = useState<MapAction | null>(null);
-  const [mapCenter, setMapCenter] = useState<{ lng: number; lat: number; zoom?: number } | undefined>();
+  const [mapCenter, setMapCenter] = useState<{ lng: number; lat: number; zoom?: number } | undefined>(
+    DEFAULT_MAP_VIEW_CENTER
+  );
   const [profileCoords, setProfileCoords] = useState<StoredCoord[]>([]);
   const [hoverKm, setHoverKm] = useState<number | null>(null);
   const [selectedWaypointIndex, setSelectedWaypointIndex] = useState<number | null>(null);
@@ -138,7 +150,10 @@ export default function V2RouteBuilder({ isAdmin = false }: Props) {
   const fetchRoute = useCallback(async (wps: V2Waypoint[], act: UserRouteActivity) => {
     if (wps.length < 2) {
       setRouteCoords(null);
+      setRouteTech(null);
       setLengthKm(0);
+      setElevGainM(0);
+      setElevLossM(0);
       return;
     }
     setRouting(true);
@@ -154,14 +169,19 @@ export default function V2RouteBuilder({ isAdmin = false }: Props) {
         error?: string;
         feature?: GeoJSON.Feature<GeoJSON.LineString>;
         length_km?: number;
+        tech?: RouteTech | null;
       };
       if (!res.ok || !data.feature) throw new Error(data.error ?? "Routing fallito");
       setRouteCoords(data.feature.geometry.coordinates as [number, number][]);
+      setRouteTech(data.tech ?? null);
       setLengthKm(data.length_km ?? 0);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
       setRouteCoords(null);
+      setRouteTech(null);
       setLengthKm(0);
+      setElevGainM(0);
+      setElevLossM(0);
     } finally {
       setRouting(false);
     }
@@ -180,6 +200,8 @@ export default function V2RouteBuilder({ isAdmin = false }: Props) {
   useEffect(() => {
     if (!routeCoords || routeCoords.length < 2) {
       setProfileCoords([]);
+      setElevGainM(0);
+      setElevLossM(0);
       return;
     }
     let cancelled = false;
@@ -187,8 +209,15 @@ export default function V2RouteBuilder({ isAdmin = false }: Props) {
       const positions = routeCoords.map((c) => [c[0], c[1]] as [number, number]);
       const { distanceKm, elevationM, sampled } = await sampleElevationsForLine(positions);
       if (cancelled) return;
+      const { gain, loss } = elevationGainLossSmoothed(elevationM);
+      setElevGainM(gain);
+      setElevLossM(loss);
+      const displayWindow = Math.max(3, Math.min(7, Math.round(elevationM.length / 20)));
+      const smoothed = smoothElevationProfile(elevationM, displayWindow);
       setProfileCoords(
-        sampled.map((p, i) => [p[0], p[1], elevationM[i] ?? null, distanceKm[i] ?? 0] as StoredCoord)
+        sampled.map(
+          (p, i) => [p[0], p[1], smoothed[i] ?? null, distanceKm[i] ?? 0] as StoredCoord,
+        ),
       );
     })();
     return () => {
@@ -442,6 +471,8 @@ export default function V2RouteBuilder({ isAdmin = false }: Props) {
           activity,
           visibility,
           length_km: lengthKm,
+          elev_gain_m: elevGainM,
+          elev_loss_m: elevLossM,
           waypoints: waypoints.map((w) => [w.lng, w.lat]),
           geojson: {
             type: "Feature",
@@ -462,8 +493,8 @@ export default function V2RouteBuilder({ isAdmin = false }: Props) {
   };
 
   const stats = useMemo(
-    () => ({ waypoints: waypoints.length, km: lengthKm }),
-    [waypoints.length, lengthKm]
+    () => ({ waypoints: waypoints.length, km: lengthKm, elevGainM, elevLossM }),
+    [waypoints.length, lengthKm, elevGainM, elevLossM],
   );
 
   const pendingPoint =
@@ -489,7 +520,7 @@ export default function V2RouteBuilder({ isAdmin = false }: Props) {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <V2Nav isAdmin={isAdmin} />
+      <V2Nav isAdmin={isAdmin} username={username} />
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
         <aside className="hmr-panel z-10 flex max-h-[45vh] shrink-0 flex-col gap-3 overflow-y-auto border-b border-[color:var(--hmr-border)]/60 p-3 lg:max-h-none lg:w-80 lg:border-b-0 lg:border-r">
           <div>
@@ -541,7 +572,7 @@ export default function V2RouteBuilder({ isAdmin = false }: Props) {
             ))}
           </div>
 
-          <div className="grid grid-cols-3 gap-2 text-center text-xs">
+          <div className="grid grid-cols-4 gap-2 text-center text-xs">
             <div className="rounded-lg bg-[color:var(--hmr-elev)] p-2">
               <div className="text-[9px] uppercase text-[color:var(--hmr-faint)]">Tappe</div>
               <div className="font-medium">{stats.waypoints}</div>
@@ -551,10 +582,48 @@ export default function V2RouteBuilder({ isAdmin = false }: Props) {
               <div className="font-medium">{stats.km.toFixed(1)}</div>
             </div>
             <div className="rounded-lg bg-[color:var(--hmr-elev)] p-2">
-              <div className="text-[9px] uppercase text-[color:var(--hmr-faint)]">POI</div>
-              <div className="font-medium">{pois.length}</div>
+              <div className="text-[9px] uppercase text-[color:var(--hmr-faint)]">D+</div>
+              <div className="font-medium">{Math.round(stats.elevGainM)}</div>
+            </div>
+            <div className="rounded-lg bg-[color:var(--hmr-elev)] p-2">
+              <div className="text-[9px] uppercase text-[color:var(--hmr-faint)]">D-</div>
+              <div className="font-medium">{Math.round(stats.elevLossM)}</div>
             </div>
           </div>
+
+          {routeTech?.summary ? (
+            <section className="rounded-lg border border-[color:var(--hmr-border)]/70 bg-[color:var(--hmr-elev)] p-2.5 text-xs">
+              <p className="text-[10px] font-medium uppercase tracking-wide text-[color:var(--hmr-faint)]">
+                Terreno sul percorso
+              </p>
+              <p className="mt-1 text-[color:var(--hmr-text)]">
+                {formatSurfacePctSummary(routeTech.summary.surface_pct)}
+              </p>
+              <div className="mt-1.5 flex flex-wrap gap-2 text-[10px] text-[color:var(--hmr-muted)]">
+                {routeTech.summary.max_difficulty ? (
+                  <span>Difficoltà max: {routeTech.summary.max_difficulty}</span>
+                ) : null}
+                {routeTech.summary.max_steepness ? (
+                  <span>Ripidità max: {routeTech.summary.max_steepness}</span>
+                ) : null}
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {(["asphalt", "gravel", "single", "unknown"] as TrackSurfaceKind[]).map((k) => {
+                  const pct = routeTech.summary.surface_pct[k];
+                  if (pct < 1) return null;
+                  return (
+                    <span key={k} className="inline-flex items-center gap-1 text-[10px]">
+                      <span
+                        className="inline-block h-2 w-2 rounded-full"
+                        style={{ background: SURFACE_COLORS[k] }}
+                      />
+                      {formatTerrainIt(k)} {pct.toFixed(0)}%
+                    </span>
+                  );
+                })}
+              </div>
+            </section>
+          ) : null}
 
           <div className="flex flex-wrap gap-2">
             <button
@@ -570,7 +639,10 @@ export default function V2RouteBuilder({ isAdmin = false }: Props) {
               onClick={() => {
                 setWaypoints([]);
                 setRouteCoords(null);
+                setRouteTech(null);
                 setLengthKm(0);
+                setElevGainM(0);
+                setElevLossM(0);
                 setPois([]);
                 setPoiSearchCenter(null);
                 setPoiSearchBbox(null);
@@ -624,14 +696,14 @@ export default function V2RouteBuilder({ isAdmin = false }: Props) {
               Cerca nell&apos;area
             </button>
             <p className="mt-1 text-[10px] text-[color:var(--hmr-muted)]">
-              Sposta e ingrandisci la mappa, scegli le categorie, poi cerca (max ~22 km di lato)
+              Sposta e ingrandisci la mappa, scegli le categorie, poi cerca (max ~55 km di lato)
             </p>
           </div>
 
           <div>
             <div className="mb-1 flex items-center justify-between gap-2">
               <p className="text-[10px] uppercase tracking-wide text-[color:var(--hmr-faint)]">
-                Categorie POI {actionCenter ? "(sul punto selezionato)" : "(ultima tappa o Atene)"}
+                Categorie POI {actionCenter ? "(sul punto selezionato)" : "(ultima tappa o Chiavenna)"}
               </p>
               {poiBusy ? <span className="text-[10px] text-[color:var(--hmr-muted)]">Cerco…</span> : null}
               {pois.length > 0 || poiSearchCenter || poiSearchBbox ? (
@@ -655,7 +727,7 @@ export default function V2RouteBuilder({ isAdmin = false }: Props) {
                       actionCenter ??
                       (waypoints.length > 0
                         ? waypoints[waypoints.length - 1]
-                        : { lng: 23.7275, lat: 37.9838 });
+                        : DEFAULT_MAP_VIEW_CENTER);
                     void searchPoisAtByKind(center.lng, center.lat, k);
                   }}
                   className="rounded-lg border px-2 py-1 text-[11px] disabled:opacity-50"
@@ -675,7 +747,7 @@ export default function V2RouteBuilder({ isAdmin = false }: Props) {
                     actionCenter ??
                     (waypoints.length > 0
                       ? waypoints[waypoints.length - 1]
-                      : { lng: 23.7275, lat: 37.9838 });
+                      : DEFAULT_MAP_VIEW_CENTER);
                   void searchPoisAt(center.lng, center.lat, [...CATEGORY_ORDER]);
                 }}
                 className="rounded-lg border border-[color:var(--hmr-border)] px-2 py-1 text-[11px] text-[color:var(--hmr-muted)] hover:text-[color:var(--hmr-text)] disabled:opacity-50"
@@ -760,6 +832,7 @@ export default function V2RouteBuilder({ isAdmin = false }: Props) {
             <V2PlanMap
               waypoints={waypoints}
               routeCoords={routeCoords}
+              routeColoredSegments={routeTech?.colored_segments}
               pois={pois}
               poiSearchCenter={poiSearchCenter}
               poiSearchBbox={poiSearchBbox}
@@ -890,6 +963,7 @@ export default function V2RouteBuilder({ isAdmin = false }: Props) {
                 atKm={null}
                 hoverKm={hoverKm}
                 onHoverKm={setHoverKm}
+                surfaceBands={routeTech?.surface_bands}
                 wrapperClassName="!rounded-none !border-0 !bg-transparent !shadow-none h-full min-h-0 w-full min-w-0"
               />
             ) : (

@@ -12,8 +12,11 @@ export async function GET(req: Request) {
   }
 
   const abs = path.join(process.cwd(), rel);
-  const allowedRoot = path.join(process.cwd(), "data", "uploads", "field");
-  if (!abs.startsWith(allowedRoot)) {
+  const fieldRoot = path.join(process.cwd(), "data", "uploads", "field");
+  const avatarRoot = path.join(process.cwd(), "data", "uploads", "avatars");
+  const allowed =
+    abs.startsWith(fieldRoot) || abs.startsWith(avatarRoot);
+  if (!allowed) {
     return NextResponse.json({ error: "path non consentito" }, { status: 403 });
   }
 

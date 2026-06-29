@@ -3,6 +3,7 @@ import type { StoredCoord } from "../track-coords";
 import { elevationGainLoss, elevationGainLossSmoothed } from "../track-geometry";
 import {
   coordAtKm,
+  gradeAtKm,
   measureBetween,
   polylineBetween,
   projectLngLatToTrack,
@@ -27,6 +28,16 @@ describe("track-measure", () => {
   it("coordAtKm clamps to endpoints", () => {
     expect(coordAtKm(coords, -5)?.lat).toBeCloseTo(46.0, 6);
     expect(coordAtKm(coords, 999)?.lat).toBeCloseTo(46.04, 6);
+  });
+
+  it("gradeAtKm estimates slope over a km window", () => {
+    const climb: StoredCoord[] = [
+      [11, 46, 1000, 0],
+      [11, 46.01, 1100, 1],
+    ];
+    const g = gradeAtKm(climb, 0.5, 0.4);
+    expect(g).not.toBeNull();
+    expect(g!).toBeCloseTo(10, 0);
   });
 
   it("projectLngLatToTrack snaps a point to the nearest segment", () => {

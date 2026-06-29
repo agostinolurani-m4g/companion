@@ -1,7 +1,7 @@
 # HMR Companion — produzione su VPS (~4€/mese es. Hetzner CX22)
 #
 # Variabili d'app (INGEST_TOKEN, GOOGLE_MAPS_API_KEY, MAPILLARY_ACCESS_TOKEN,
-# NEXT_PUBLIC_WINDY_API_KEY, …): un solo file `.env` in QUESTA cartella (deploy/),
+# NEXT_PUBLIC_WINDY_API_KEY, NEXT_PUBLIC_MAPTILER_KEY, …): un solo file `.env` in QUESTA cartella (deploy/),
 # solo sul server — non in git. Il servizio `hmr` lo carica con `env_file`.
 #
 # Compose legge lo stesso `.env` per `${VAR}` nel YAML (es. build args e Caddy).
@@ -14,6 +14,7 @@ services:
       args:
         # Stesso nome nel `.env`: serve al `npm run build` (bundle client Next).
         NEXT_PUBLIC_WINDY_API_KEY: ${NEXT_PUBLIC_WINDY_API_KEY:-}
+        NEXT_PUBLIC_MAPTILER_KEY: ${NEXT_PUBLIC_MAPTILER_KEY:-}
     restart: unless-stopped
     env_file: .env
     environment:

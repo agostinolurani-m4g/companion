@@ -549,8 +549,9 @@ export function clampPoiHarvestRadiusM(radiusM: number): number {
 
 export type ViewBbox = { south: number; west: number; north: number; east: number };
 
-/** Lato max bbox per harvest POI (~22 km) — evita timeout Overpass. */
-const MAX_POI_BBOX_SPAN_DEG = 0.2;
+/** Lato max bbox per harvest POI (~55 km). Con i POI locali (SQLite) la query
+ *  resta veloce; per il fallback Overpass aree ampie possono andare in timeout. */
+const MAX_POI_BBOX_SPAN_DEG = 0.5;
 
 export function clampPoiHarvestBbox(
   b: ViewBbox

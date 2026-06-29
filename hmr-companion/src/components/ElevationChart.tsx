@@ -4,7 +4,7 @@ import { useId, useMemo, useRef } from "react";
 import type { CheckpointRow, NotableSectionRow, RacePlanItemRow } from "@/lib/db";
 import type { StoredCoord } from "@/lib/track-coords";
 import type { TrackSurfaceKind } from "@/lib/surface-osm";
-import { coordAtKm, measureBetween } from "@/lib/track-measure";
+import { coordAtKm, gradeAtKm, measureBetween } from "@/lib/track-measure";
 
 export type ElevationRaceItem = Pick<RacePlanItemRow, "id" | "km_start" | "km_end" | "kind" | "title">;
 export type { RacePlanItemKind } from "@/lib/race-plan-types";
@@ -216,6 +216,11 @@ export default function ElevationChart({
   const hoverElev = useMemo(() => {
     if (hoverKm == null) return null;
     return coordAtKm(coords, hoverKm)?.elev ?? null;
+  }, [hoverKm, coords]);
+
+  const hoverGrade = useMemo(() => {
+    if (hoverKm == null) return null;
+    return gradeAtKm(coords, hoverKm);
   }, [hoverKm, coords]);
 
   const measurement = useMemo(() => {
@@ -555,6 +560,7 @@ export default function ElevationChart({
       <ChartTooltip
         hoverKm={hoverKm}
         hoverElev={hoverElev}
+        hoverGrade={hoverGrade}
         pinAKm={pinAKm}
         pinBKm={pinBKm}
         measurement={measurement}
@@ -567,6 +573,7 @@ export default function ElevationChart({
 function ChartTooltip({
   hoverKm,
   hoverElev,
+  hoverGrade,
   pinAKm,
   pinBKm,
   measurement,
@@ -574,6 +581,7 @@ function ChartTooltip({
 }: {
   hoverKm: number | null;
   hoverElev: number | null;
+  hoverGrade: number | null;
   pinAKm: number | null;
   pinBKm: number | null;
   measurement: {
@@ -588,12 +596,17 @@ function ChartTooltip({
   const hasAny = hoverKm != null || pinAKm != null;
   if (!hasAny) return null;
   const showMeasure = measurement != null && pinAKm != null;
+  const gradeLabel =
+    hoverGrade != null
+      ? `${hoverGrade > 0 ? "+" : ""}${hoverGrade.toFixed(1)}%`
+      : null;
   return (
     <div className="pointer-events-none absolute right-2 top-1 rounded-md bg-black/70 px-2 py-1 text-[10px] leading-snug text-white">
       {hoverKm != null && (
         <div>
           km {hoverKm.toFixed(1)}
           {hoverElev != null ? ` · ${Math.round(hoverElev)} m` : ""}
+          {gradeLabel ? ` · ${gradeLabel}` : ""}
         </div>
       )}
       {hoverKm != null && hoverTerrainLabel && (

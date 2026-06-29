@@ -12,7 +12,7 @@ export const runtime = "nodejs";
 
 type Ctx = { params: Promise<{ id: string }> };
 
-const VALID_ACTIVITIES = new Set<UserRouteActivity>(["road", "mtb", "hike"]);
+const VALID_ACTIVITIES = new Set<UserRouteActivity>(["road", "mtb", "hike", "gravel"]);
 const VALID_VISIBILITY = new Set<UserRouteVisibility>(["private", "public"]);
 
 function canReadRoute(route: NonNullable<ReturnType<typeof getUserRoute>>, username: string): boolean {

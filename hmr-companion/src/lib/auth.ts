@@ -28,7 +28,7 @@ const FIXED_LOGIN: Readonly<Record<string, string>> = {
 export const ADMIN_USERS = new Set(["ago"]);
 
 /** Utenti con accesso beta v2. */
-export const V2_BETA_USERS = new Set(["ago"]);
+export const V2_BETA_USERS = new Set(["ago", "ale", "gala", "babbo", "marti"]);
 
 export function normalizeUsername(username: string): string {
   return username.trim().toLowerCase();

@@ -1,8 +1,18 @@
 import type { NextConfig } from "next";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+const require = createRequire(import.meta.url);
+const { loadEnvConfig } = require("@next/env") as typeof import("@next/env");
+
 const appDir = path.dirname(fileURLToPath(import.meta.url));
+const isDev = process.env.NODE_ENV !== "production";
+
+// Monorepo: shared `.env.local` at repo root (parent) — e.g. NEXT_PUBLIC_MAPTILER_KEY.
+// App-local env in `hmr-companion/` overrides parent values.
+loadEnvConfig(path.join(appDir, ".."), isDev);
+loadEnvConfig(appDir, isDev);
 
 const nextConfig: NextConfig = {
   output: "standalone",

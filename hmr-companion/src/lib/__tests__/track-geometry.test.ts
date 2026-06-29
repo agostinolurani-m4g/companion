@@ -7,6 +7,7 @@ import {
   haversineKm,
   nearestPointOnPolyline,
   positionAtKm,
+  smoothElevationProfile,
 } from "../track-geometry";
 
 describe("track-geometry", () => {
@@ -49,6 +50,13 @@ describe("track-geometry", () => {
     const { gain, loss } = elevationGainLoss([100, 120, 110, 150, 140]);
     expect(gain).toBe(60);
     expect(loss).toBe(20);
+  });
+
+  it("smoothElevationProfile softens spikes without flattening trends", () => {
+    const noisy = [100, 108, 102, 107, 103, 110];
+    const smooth = smoothElevationProfile(noisy, 3);
+    expect(smooth[0]).toBeCloseTo(104, 0);
+    expect(smooth[smooth.length - 1]).toBeGreaterThan(smooth[0]);
   });
 
   it("smoothed elevation gain ignores sub-threshold noise", () => {

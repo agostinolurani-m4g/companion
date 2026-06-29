@@ -219,6 +219,27 @@ export function coordAtKm(coords: StoredCoord[], km: number): CoordAtKm | null {
 }
 
 /**
+ * Pendenza locale % al km lungo il profilo (finestra simmetrica in km).
+ * Usa quote già presenti in `coords` (idealmente leggermente smussate per display).
+ */
+export function gradeAtKm(
+  coords: StoredCoord[],
+  km: number,
+  halfWindowKm = 0.15,
+): number | null {
+  if (coords.length < 2) return null;
+  const totalKm = coords[coords.length - 1][3];
+  const lo = Math.max(0, km - halfWindowKm);
+  const hi = Math.min(totalKm, km + halfWindowKm);
+  const distKm = hi - lo;
+  if (distKm < 0.02) return null;
+  const ptLo = coordAtKm(coords, lo);
+  const ptHi = coordAtKm(coords, hi);
+  if (ptLo?.elev == null || ptHi?.elev == null) return null;
+  return ((ptHi.elev - ptLo.elev) / (distKm * 1000)) * 100;
+}
+
+/**
  * Measure distance and elevation gain/loss between two positions on the track,
  * identified by their cumulative km. Works in either order; gain/loss are
  * always computed following the forward direction (from min km to max km).

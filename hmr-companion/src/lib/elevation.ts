@@ -3,7 +3,7 @@ import type { Position } from "geojson";
 /** Campiona una linea e chiede quota a Open-Elevation (POST). */
 export async function sampleElevationsForLine(
   coordinates: Position[],
-  maxPoints = 80
+  maxPoints = 100
 ): Promise<{ distanceKm: number[]; elevationM: number[]; sampled: Position[] }> {
   if (coordinates.length < 2) {
     return { distanceKm: [], elevationM: [], sampled: [] };

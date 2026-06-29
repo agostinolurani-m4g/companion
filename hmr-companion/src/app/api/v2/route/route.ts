@@ -9,10 +9,11 @@ import {
   lineLengthKm,
 } from "@/lib/osrm-route";
 import { activityPrefersOrs, fetchOrsRouteLine } from "@/lib/openrouteservice-route";
+import type { RouteTech } from "@/lib/ors-route-tech";
 
 export const runtime = "nodejs";
 
-const VALID_ACTIVITIES = new Set<UserRouteActivity>(["road", "mtb", "hike"]);
+const VALID_ACTIVITIES = new Set<UserRouteActivity>(["road", "mtb", "hike", "gravel"]);
 
 function routeCacheKey(coordinates: [number, number][], activity: UserRouteActivity): string {
   const rounded = coordinates.map(([lng, lat]) => `${Math.round(lng * 1e5)}_${Math.round(lat * 1e5)}`).join(";");
@@ -43,6 +44,7 @@ export async function POST(req: Request) {
       length_km: number;
       profile: string;
       engine: string;
+      tech?: RouteTech | null;
     } | null;
     if (cached?.feature) {
       return NextResponse.json({ ...cached, fromCache: true });
@@ -52,6 +54,7 @@ export async function POST(req: Request) {
     let feature: GeoJSON.Feature<GeoJSON.LineString> | null = null;
     let profile = activityToOsrmProfile(activity);
     let engine = "osrm";
+    let tech: RouteTech | null = null;
 
     if (orsKey && activityPrefersOrs(activity)) {
       const ors = await fetchOrsRouteLine(coordinates, activity, orsKey);
@@ -59,7 +62,12 @@ export async function POST(req: Request) {
         feature = ors.feature;
         profile = ors.meta.profileUsed as unknown as typeof profile;
         engine = "openrouteservice";
+        tech = ors.tech;
       }
+    } else if (!orsKey && activityPrefersOrs(activity)) {
+      console.warn(
+        `[v2/route] OPENROUTESERVICE_API_KEY mancante: attività "${activity}" instradata col fallback OSRM demo (solo profilo auto). Aggiungi la chiave in .env.local per il routing a piedi/MTB/gravel reale.`,
+      );
     }
 
     if (!feature) {
@@ -73,11 +81,12 @@ export async function POST(req: Request) {
       feature = osrm.feature;
       profile = osrm.meta.profileUsed;
       engine = "osrm";
+      tech = null;
     }
 
     const coords = feature.geometry.coordinates as [number, number][];
     const length_km = lineLengthKm(coords);
-    const payload = { feature, length_km, profile, engine, routingMode: "snapped" as const };
+    const payload = { feature, length_km, profile, engine, routingMode: "snapped" as const, tech };
     geoCacheSet(cacheKey, payload);
     return NextResponse.json(payload);
   } catch (e) {

@@ -11,7 +11,7 @@ import {
 
 export const runtime = "nodejs";
 
-const VALID_ACTIVITIES = new Set<UserRouteActivity>(["road", "mtb", "hike"]);
+const VALID_ACTIVITIES = new Set<UserRouteActivity>(["road", "mtb", "hike", "gravel"]);
 const VALID_VISIBILITY = new Set<UserRouteVisibility>(["private", "public"]);
 
 function serializeRoute(row: ReturnType<typeof listRoutesForOwner>[number]) {

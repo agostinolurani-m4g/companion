@@ -8,6 +8,7 @@ import type { UserRouteActivity, UserRouteVisibility } from "@/lib/db";
 
 type Props = {
   isAdmin?: boolean;
+  username?: string;
 };
 
 type RouteItem = {
@@ -25,9 +26,10 @@ const ACTIVITY_LABELS: Record<UserRouteActivity, string> = {
   road: "Strada",
   mtb: "MTB",
   hike: "Escursione",
+  gravel: "Gravel",
 };
 
-export default function V2MyRoutes({ isAdmin = false }: Props) {
+export default function V2MyRoutes({ isAdmin = false, username }: Props) {
   const router = useRouter();
   const [tab, setTab] = useState<"mine" | "public">("mine");
   const [routes, setRoutes] = useState<RouteItem[]>([]);
@@ -89,7 +91,7 @@ export default function V2MyRoutes({ isAdmin = false }: Props) {
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto">
-      <V2Nav isAdmin={isAdmin} />
+      <V2Nav isAdmin={isAdmin} username={username} />
       <div className="mx-auto w-full max-w-3xl flex-1 p-4">
         <h1 className="text-xl font-semibold">Area personale</h1>
         <p className="mt-1 text-sm text-[color:var(--hmr-muted)]">

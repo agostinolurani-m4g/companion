@@ -1,19 +1,24 @@
-import { Suspense } from "react";
 import { redirect } from "next/navigation";
-import V2RouteBuilder from "@/components/v2/V2RouteBuilder";
+import V2GroupDetail from "@/components/v2/V2GroupDetail";
 import { getCurrentSessionEmail, isAdminUser, isV2BetaUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-export default async function V2PlanPage() {
+type Props = { params: Promise<{ id: string }> };
+
+export default async function V2GroupPage({ params }: Props) {
   const sessionEmail = await getCurrentSessionEmail();
   if (!sessionEmail) redirect("/");
   if (!isV2BetaUser(sessionEmail)) redirect("/");
 
+  const { id } = await params;
+
   return (
-    <Suspense fallback={<div className="p-4 text-sm text-[color:var(--hmr-muted)]">Caricamento…</div>}>
-      <V2RouteBuilder isAdmin={isAdminUser(sessionEmail)} username={sessionEmail} />
-    </Suspense>
+    <V2GroupDetail
+      groupId={id}
+      username={sessionEmail}
+      isAdmin={isAdminUser(sessionEmail)}
+    />
   );
 }

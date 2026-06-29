@@ -10,5 +10,5 @@ export default async function V2MePage() {
   if (!sessionEmail) redirect("/");
   if (!isV2BetaUser(sessionEmail)) redirect("/");
 
-  return <V2MyRoutes isAdmin={isAdminUser(sessionEmail)} />;
+  return <V2MyRoutes isAdmin={isAdminUser(sessionEmail)} username={sessionEmail} />;
 }

@@ -7,7 +7,9 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import type { PoiCategory } from "@/lib/db";
 import { resolvePoiKind } from "@/lib/categories";
 import type { V2SearchPoi } from "@/app/api/v2/pois/search/route";
+import { DEFAULT_MAP_VIEW_CENTER } from "@/lib/map-defaults";
 import type { ViewBbox } from "@/lib/overpass";
+import type { RouteColoredSegment } from "@/lib/ors-route-tech";
 
 export type V2Waypoint = { lng: number; lat: number; label?: string };
 
@@ -19,6 +21,8 @@ export type V2MapClickTarget =
 type Props = {
   waypoints: V2Waypoint[];
   routeCoords: [number, number][] | null;
+  /** Tratti colorati per superficie (da ORS extra_info). */
+  routeColoredSegments?: RouteColoredSegment[] | null;
   pois: V2SearchPoi[];
   poiSearchCenter?: { lng: number; lat: number } | null;
   poiSearchBbox?: ViewBbox | null;
@@ -31,6 +35,27 @@ type Props = {
   flyTo?: { lng: number; lat: number; zoom?: number; key?: number } | null;
 };
 
+const MAPTILER_KEY = process.env.NEXT_PUBLIC_MAPTILER_KEY?.trim() || undefined;
+
+const MAPTILER_STYLES = {
+  outdoor: "outdoor-v2",
+  streets: "streets-v2",
+  dark: "dataviz-dark",
+} as const;
+
+type BaseStyleId = keyof typeof MAPTILER_STYLES;
+
+const BASE_STYLE_LABELS: Record<BaseStyleId, string> = {
+  outdoor: "Outdoor",
+  streets: "Streets",
+  dark: "Dark",
+};
+
+function maptilerStyleUrl(id: BaseStyleId, key: string): string {
+  return `https://api.maptiler.com/maps/${MAPTILER_STYLES[id]}/style.json?key=${key}`;
+}
+
+/** Raster fallback when no MapTiler key is configured. */
 const OSM_STYLE: StyleSpecification = {
   version: 8,
   glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
@@ -48,6 +73,57 @@ const OSM_STYLE: StyleSpecification = {
 
 const EMPTY_FC: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
 
+/** Pallini tappe: più piccoli da lontano, più grandi zoomando. */
+const WAYPOINT_RADIUS = [
+  "interpolate",
+  ["linear"],
+  ["zoom"],
+  8,
+  4,
+  11,
+  6,
+  13,
+  8,
+  15,
+  10,
+  17,
+  13,
+  19,
+  16,
+] as const;
+
+const WAYPOINT_HALO_RADIUS = [
+  "interpolate",
+  ["linear"],
+  ["zoom"],
+  8,
+  7,
+  11,
+  10,
+  13,
+  13,
+  15,
+  16,
+  17,
+  20,
+  19,
+  24,
+] as const;
+
+const WAYPOINT_STROKE_WIDTH = [
+  "interpolate",
+  ["linear"],
+  ["zoom"],
+  8,
+  1.5,
+  13,
+  2.5,
+  17,
+  3,
+  19,
+  3.5,
+] as const;
+
 function setGeoJson(map: MaplibreMap, sourceId: string, data: GeoJSON.FeatureCollection) {
   const src = map.getSource(sourceId) as GeoJSONSource | undefined;
   if (src) src.setData(data);
@@ -56,6 +132,7 @@ function setGeoJson(map: MaplibreMap, sourceId: string, data: GeoJSON.FeatureCol
 export default function V2PlanMap({
   waypoints,
   routeCoords,
+  routeColoredSegments,
   pois,
   poiSearchCenter,
   poiSearchBbox,
@@ -69,7 +146,11 @@ export default function V2PlanMap({
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MaplibreMap | null>(null);
   const layersReadyRef = useRef(false);
+  const globalHandlersAttachedRef = useRef(false);
+  const layerHandlerCleanupRef = useRef<(() => void) | null>(null);
   const [mapReady, setMapReady] = useState(false);
+  const [baseStyle, setBaseStyle] = useState<BaseStyleId>("outdoor");
+  const [overlayEpoch, setOverlayEpoch] = useState(0);
   const onInteractionRef = useRef(onMapInteraction);
   const onWaypointMoveRef = useRef(onWaypointMove);
   const onViewportChangeRef = useRef(onViewportChange);
@@ -94,16 +175,19 @@ export default function V2PlanMap({
     waypointsRef.current = waypoints;
   }, [waypoints]);
 
-  const initOverlayLayers = useCallback((map: MaplibreMap) => {
-    if (layersReadyRef.current) return;
-    layersReadyRef.current = true;
+  const addOverlaySourcesAndLayers = useCallback((map: MaplibreMap) => {
+    if (map.getSource("v2-route")) return;
 
     map.addSource("v2-route", { type: "geojson", data: EMPTY_FC });
     map.addLayer({
       id: "v2-route",
       type: "line",
       source: "v2-route",
-      paint: { "line-color": "#38bdf8", "line-width": 5, "line-opacity": 0.92 },
+      paint: {
+        "line-color": ["coalesce", ["get", "color"], "#38bdf8"],
+        "line-width": 5,
+        "line-opacity": 0.92,
+      },
     });
 
     map.addSource("v2-poi-radius", { type: "geojson", data: EMPTY_FC });
@@ -161,7 +245,7 @@ export default function V2PlanMap({
       type: "circle",
       source: "v2-waypoints",
       paint: {
-        "circle-radius": 16,
+        "circle-radius": WAYPOINT_HALO_RADIUS,
         "circle-color": "#38bdf8",
         "circle-opacity": 0.2,
       },
@@ -171,24 +255,26 @@ export default function V2PlanMap({
       type: "circle",
       source: "v2-waypoints",
       paint: {
-        "circle-radius": 10,
+        "circle-radius": WAYPOINT_RADIUS,
         "circle-color": "#f6f8ff",
-        "circle-stroke-width": 3,
+        "circle-stroke-width": WAYPOINT_STROKE_WIDTH,
         "circle-stroke-color": "#38bdf8",
       },
     });
+  }, []);
+
+  const bindLayerHandlers = useCallback((map: MaplibreMap) => {
+    layerHandlerCleanupRef.current?.();
+    layerHandlerCleanupRef.current = null;
 
     const interactiveLayers = ["v2-pois-hit", "v2-waypoints", "v2-waypoints-halo"];
-    for (const layerId of interactiveLayers) {
-      map.on("mouseenter", layerId, () => {
-        if (!dragRef.current) map.getCanvas().style.cursor = "pointer";
-      });
-      map.on("mouseleave", layerId, () => {
-        if (!dragRef.current) map.getCanvas().style.cursor = "";
-      });
-    }
-
-    map.on("mousedown", "v2-waypoints", (e) => {
+    const onLayerEnter = () => {
+      if (!dragRef.current) map.getCanvas().style.cursor = "pointer";
+    };
+    const onLayerLeave = () => {
+      if (!dragRef.current) map.getCanvas().style.cursor = "";
+    };
+    const onWaypointMouseDown = (e: maplibregl.MapLayerMouseEvent) => {
       if (e.originalEvent.button !== 0) return;
       const idx = Number((e.features?.[0]?.properties as { idx?: number } | undefined)?.idx);
       if (!Number.isFinite(idx) || idx < 1) return;
@@ -196,7 +282,26 @@ export default function V2PlanMap({
       map.dragPan.disable();
       map.getCanvas().style.cursor = "grabbing";
       e.preventDefault();
-    });
+    };
+
+    for (const layerId of interactiveLayers) {
+      map.on("mouseenter", layerId, onLayerEnter);
+      map.on("mouseleave", layerId, onLayerLeave);
+    }
+    map.on("mousedown", "v2-waypoints", onWaypointMouseDown);
+
+    layerHandlerCleanupRef.current = () => {
+      for (const layerId of interactiveLayers) {
+        map.off("mouseenter", layerId, onLayerEnter);
+        map.off("mouseleave", layerId, onLayerLeave);
+      }
+      map.off("mousedown", "v2-waypoints", onWaypointMouseDown);
+    };
+  }, []);
+
+  const attachGlobalHandlers = useCallback((map: MaplibreMap) => {
+    if (globalHandlersAttachedRef.current) return;
+    globalHandlersAttachedRef.current = true;
 
     map.on("mousemove", (e) => {
       const drag = dragRef.current;
@@ -241,7 +346,9 @@ export default function V2PlanMap({
         suppressClickRef.current = false;
         return;
       }
-      const poiHits = map.queryRenderedFeatures(e.point, { layers: ["v2-pois-hit"] });
+      const poiHits = map.getLayer("v2-pois-hit")
+        ? map.queryRenderedFeatures(e.point, { layers: ["v2-pois-hit"] })
+        : [];
       if (poiHits.length > 0) {
         const props = poiHits[0].properties as { id?: string };
         const poi = poisRef.current.find((p) => p.id === props.id);
@@ -255,18 +362,21 @@ export default function V2PlanMap({
     });
   }, []);
 
-  useEffect(() => {
-    if (!containerRef.current || mapRef.current) return;
-    const map = new maplibregl.Map({
-      container: containerRef.current,
-      style: OSM_STYLE,
-      center: [initialCenter?.lng ?? 23.7275, initialCenter?.lat ?? 37.9838],
-      zoom: initialCenter?.zoom ?? 10,
-      attributionControl: { compact: true },
-    });
-    map.addControl(new maplibregl.NavigationControl({ visualizePitch: false }), "top-right");
-    map.on("load", () => {
-      initOverlayLayers(map);
+  const ensureOverlays = useCallback(
+    (map: MaplibreMap) => {
+      addOverlaySourcesAndLayers(map);
+      bindLayerHandlers(map);
+      attachGlobalHandlers(map);
+      layersReadyRef.current = true;
+      setOverlayEpoch((n) => n + 1);
+    },
+    [addOverlaySourcesAndLayers, attachGlobalHandlers, bindLayerHandlers],
+  );
+
+  const handleStyleReady = useCallback(
+    (map: MaplibreMap) => {
+      if (!map.isStyleLoaded()) return;
+      ensureOverlays(map);
       setMapReady(true);
       const b = map.getBounds();
       onViewportChangeRef.current?.({
@@ -275,6 +385,47 @@ export default function V2PlanMap({
         north: b.getNorth(),
         east: b.getEast(),
       });
+    },
+    [ensureOverlays],
+  );
+
+  const changeBaseStyle = useCallback(
+    (id: BaseStyleId) => {
+      const map = mapRef.current;
+      if (!map || !MAPTILER_KEY || id === baseStyle) return;
+      setBaseStyle(id);
+      layersReadyRef.current = false;
+      map.setStyle(maptilerStyleUrl(id, MAPTILER_KEY));
+      // Overlays are re-added by the persistent "styledata" handler once the new
+      // style is fully loaded; a one-shot listener here can fire too early.
+    },
+    [baseStyle, handleStyleReady],
+  );
+
+  useEffect(() => {
+    if (!containerRef.current || mapRef.current) return;
+    const initialStyle = MAPTILER_KEY ? maptilerStyleUrl("outdoor", MAPTILER_KEY) : OSM_STYLE;
+    const map = new maplibregl.Map({
+      container: containerRef.current,
+      style: initialStyle,
+      center: [
+        initialCenter?.lng ?? DEFAULT_MAP_VIEW_CENTER.lng,
+        initialCenter?.lat ?? DEFAULT_MAP_VIEW_CENTER.lat,
+      ],
+      zoom: initialCenter?.zoom ?? DEFAULT_MAP_VIEW_CENTER.zoom,
+      pitch: MAPTILER_KEY ? 30 : 0,
+      attributionControl: { compact: true },
+    });
+    map.addControl(new maplibregl.NavigationControl({ visualizePitch: Boolean(MAPTILER_KEY) }), "top-right");
+    map.on("load", () => handleStyleReady(map));
+    map.on("styledata", () => {
+      // Re-add overlays whenever the style is (re)loaded and our layers are
+      // missing (e.g. after a base-style switch). Relying on layersReadyRef is
+      // fragile because setStyle wipes custom layers without resetting the ref.
+      if (map.isStyleLoaded() && !map.getLayer("v2-route")) {
+        layersReadyRef.current = false;
+        handleStyleReady(map);
+      }
     });
     map.on("moveend", () => {
       const b = map.getBounds();
@@ -287,24 +438,45 @@ export default function V2PlanMap({
     });
     mapRef.current = map;
     return () => {
+      layerHandlerCleanupRef.current?.();
+      layerHandlerCleanupRef.current = null;
       layersReadyRef.current = false;
+      globalHandlersAttachedRef.current = false;
       setMapReady(false);
       map.remove();
       mapRef.current = null;
     };
-  }, [initOverlayLayers, initialCenter?.lat, initialCenter?.lng, initialCenter?.zoom]);
+  }, [handleStyleReady, initialCenter?.lat, initialCenter?.lng, initialCenter?.zoom]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady || !layersReadyRef.current) return;
 
-    const routeGeo: GeoJSON.FeatureCollection = {
-      type: "FeatureCollection",
-      features:
-        routeCoords && routeCoords.length >= 2
-          ? [{ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: routeCoords } }]
-          : [],
-    };
+    const routeGeo: GeoJSON.FeatureCollection = (() => {
+      if (routeColoredSegments && routeColoredSegments.length > 0) {
+        return {
+          type: "FeatureCollection",
+          features: routeColoredSegments.map((seg, i) => ({
+            type: "Feature" as const,
+            properties: { color: seg.color, surface: seg.surface, idx: i },
+            geometry: { type: "LineString" as const, coordinates: seg.coordinates },
+          })),
+        };
+      }
+      if (routeCoords && routeCoords.length >= 2) {
+        return {
+          type: "FeatureCollection",
+          features: [
+            {
+              type: "Feature",
+              properties: {},
+              geometry: { type: "LineString", coordinates: routeCoords },
+            },
+          ],
+        };
+      }
+      return EMPTY_FC;
+    })();
 
     const wpGeo: GeoJSON.FeatureCollection = {
       type: "FeatureCollection",
@@ -385,7 +557,7 @@ export default function V2PlanMap({
     setGeoJson(map, "v2-pois", poiGeo);
     setGeoJson(map, "v2-pending", pendingGeo);
     setGeoJson(map, "v2-poi-radius", radiusGeo);
-  }, [routeCoords, waypoints, pois, pendingPoint, poiSearchCenter, poiSearchBbox, mapReady]);
+  }, [routeCoords, routeColoredSegments, waypoints, pois, pendingPoint, poiSearchCenter, poiSearchBbox, mapReady, overlayEpoch]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -403,7 +575,33 @@ export default function V2PlanMap({
     });
   }, [flyTo?.lng, flyTo?.lat, flyTo?.zoom, flyTo?.key]);
 
-  return <div ref={containerRef} className="h-full w-full min-h-0" />;
+  return (
+    <div className="relative h-full w-full min-h-0">
+      <div ref={containerRef} className="h-full w-full min-h-0" />
+      {MAPTILER_KEY ? (
+        <div
+          className="absolute top-3 left-3 z-10 flex gap-1 rounded-lg border border-white/10 bg-slate-900/85 p-1 shadow-lg backdrop-blur-sm"
+          role="group"
+          aria-label="Stile base map"
+        >
+          {(Object.keys(MAPTILER_STYLES) as BaseStyleId[]).map((id) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => changeBaseStyle(id)}
+              className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                baseStyle === id
+                  ? "bg-sky-500 text-slate-950"
+                  : "text-slate-200 hover:bg-white/10"
+              }`}
+            >
+              {BASE_STYLE_LABELS[id]}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 /** Approximate circle polygon in WGS84 (good enough for 3 km radius). */
