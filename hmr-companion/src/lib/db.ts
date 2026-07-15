@@ -248,18 +248,24 @@ function initSchema(db: Database.Database): void {
       id TEXT PRIMARY KEY,
       owner TEXT NOT NULL,
       name TEXT NOT NULL,
-      activity TEXT NOT NULL CHECK(activity IN ('road','mtb','hike','gravel')),
+      activity TEXT NOT NULL CHECK(activity IN ('road','mtb','hike','gravel','ski')),
       geojson TEXT NOT NULL,
       waypoints_json TEXT NOT NULL DEFAULT '[]',
       length_km REAL NOT NULL DEFAULT 0,
       elev_gain_m REAL NOT NULL DEFAULT 0,
       elev_loss_m REAL NOT NULL DEFAULT 0,
       visibility TEXT NOT NULL DEFAULT 'private' CHECK(visibility IN ('private','public')),
+      source TEXT,
+      source_url TEXT,
+      license TEXT,
+      external_id TEXT,
+      meta_json TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_user_routes_owner ON user_routes(owner, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_user_routes_visibility ON user_routes(visibility, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_user_routes_source_ext ON user_routes(source, external_id);
 
     CREATE TABLE IF NOT EXISTS osm_poi (
       osm_type TEXT NOT NULL,
@@ -335,12 +341,41 @@ function initSchema(db: Database.Database): void {
       created_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_group_messages_group ON group_messages(group_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS ski_outings (
+      id TEXT PRIMARY KEY,
+      route_id TEXT NOT NULL REFERENCES user_routes(id) ON DELETE CASCADE,
+      owner TEXT NOT NULL,
+      title TEXT NOT NULL,
+      outing_date TEXT,
+      snow_notes TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_ski_outings_route ON ski_outings(route_id, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_ski_outings_owner ON ski_outings(owner, updated_at DESC);
+
+    CREATE TABLE IF NOT EXISTS outing_participants (
+      outing_id TEXT NOT NULL REFERENCES ski_outings(id) ON DELETE CASCADE,
+      username TEXT NOT NULL,
+      PRIMARY KEY (outing_id, username)
+    );
+    CREATE INDEX IF NOT EXISTS idx_outing_participants_user ON outing_participants(username);
+
+    CREATE TABLE IF NOT EXISTS outing_groups (
+      outing_id TEXT NOT NULL REFERENCES ski_outings(id) ON DELETE CASCADE,
+      group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+      PRIMARY KEY (outing_id, group_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_outing_groups_group ON outing_groups(group_id);
   `);
   migrateTracksElevProfileScales(db);
   migrateNotableSectionsDescriptionEn(db);
   migratePoisRaceVisible(db);
   migratePoisCampsiteCategory(db);
   migrateUserRoutesGravelActivity(db);
+  migrateUserRoutesSkiActivity(db);
+  migrateUserRoutesSourceMeta(db);
   seedAppUsers(db);
 }
 
@@ -359,6 +394,50 @@ function migratePoisCampsiteCategory(db: Database.Database): void {
   ).run();
 }
 
+/** Estende CHECK activity su user_routes per includere ski. */
+function migrateUserRoutesSkiActivity(db: Database.Database): void {
+  const row = db
+    .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'user_routes'`)
+    .get() as { sql?: string } | undefined;
+  if (!row?.sql || row.sql.includes("'ski'")) return;
+
+  db.exec(`
+    CREATE TABLE user_routes_ski_mig (
+      id TEXT PRIMARY KEY,
+      owner TEXT NOT NULL,
+      name TEXT NOT NULL,
+      activity TEXT NOT NULL CHECK(activity IN ('road','mtb','hike','gravel','ski')),
+      geojson TEXT NOT NULL,
+      waypoints_json TEXT NOT NULL DEFAULT '[]',
+      length_km REAL NOT NULL DEFAULT 0,
+      elev_gain_m REAL NOT NULL DEFAULT 0,
+      elev_loss_m REAL NOT NULL DEFAULT 0,
+      visibility TEXT NOT NULL DEFAULT 'private' CHECK(visibility IN ('private','public')),
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    INSERT INTO user_routes_ski_mig SELECT * FROM user_routes;
+    DROP TABLE user_routes;
+    ALTER TABLE user_routes_ski_mig RENAME TO user_routes;
+    CREATE INDEX IF NOT EXISTS idx_user_routes_owner ON user_routes(owner, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_user_routes_visibility ON user_routes(visibility, updated_at DESC);
+  `);
+}
+
+/** Aggiunge colonne sorgente e metadati estesi su user_routes. */
+function migrateUserRoutesSourceMeta(db: Database.Database): void {
+  const cols = db.prepare(`PRAGMA table_info(user_routes)`).all() as { name: string }[];
+  const names = new Set(cols.map((c) => c.name));
+  if (!names.has("source")) db.exec(`ALTER TABLE user_routes ADD COLUMN source TEXT`);
+  if (!names.has("source_url")) db.exec(`ALTER TABLE user_routes ADD COLUMN source_url TEXT`);
+  if (!names.has("license")) db.exec(`ALTER TABLE user_routes ADD COLUMN license TEXT`);
+  if (!names.has("external_id")) db.exec(`ALTER TABLE user_routes ADD COLUMN external_id TEXT`);
+  if (!names.has("meta_json")) db.exec(`ALTER TABLE user_routes ADD COLUMN meta_json TEXT`);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_user_routes_source_ext ON user_routes(source, external_id)`,
+  );
+}
+
 /** Estende CHECK activity su user_routes per includere gravel. */
 function migrateUserRoutesGravelActivity(db: Database.Database): void {
   const row = db
@@ -371,7 +450,7 @@ function migrateUserRoutesGravelActivity(db: Database.Database): void {
       id TEXT PRIMARY KEY,
       owner TEXT NOT NULL,
       name TEXT NOT NULL,
-      activity TEXT NOT NULL CHECK(activity IN ('road','mtb','hike','gravel')),
+      activity TEXT NOT NULL CHECK(activity IN ('road','mtb','hike','gravel','ski')),
       geojson TEXT NOT NULL,
       waypoints_json TEXT NOT NULL DEFAULT '[]',
       length_km REAL NOT NULL DEFAULT 0,
@@ -1161,7 +1240,7 @@ export type AppUserRow = {
   created_at: number;
 };
 
-export type UserRouteActivity = "road" | "mtb" | "hike" | "gravel";
+export type UserRouteActivity = "road" | "mtb" | "hike" | "gravel" | "ski";
 
 export type UserRouteVisibility = "private" | "public";
 
@@ -1176,6 +1255,11 @@ export type UserRouteRow = {
   elev_gain_m: number;
   elev_loss_m: number;
   visibility: UserRouteVisibility;
+  source: string | null;
+  source_url: string | null;
+  license: string | null;
+  external_id: string | null;
+  meta_json: string | null;
   created_at: number;
   updated_at: number;
 };
@@ -1246,6 +1330,12 @@ export function getUserRoute(id: string): UserRouteRow | undefined {
   return getDb().prepare(`SELECT * FROM user_routes WHERE id = ?`).get(id) as UserRouteRow | undefined;
 }
 
+export function getUserRouteByExternal(source: string, externalId: string): UserRouteRow | undefined {
+  return getDb()
+    .prepare(`SELECT * FROM user_routes WHERE source = ? AND external_id = ?`)
+    .get(source, externalId) as UserRouteRow | undefined;
+}
+
 export function insertUserRoute(input: {
   id: string;
   owner: string;
@@ -1257,6 +1347,11 @@ export function insertUserRoute(input: {
   elev_gain_m: number;
   elev_loss_m: number;
   visibility: UserRouteVisibility;
+  source?: string | null;
+  source_url?: string | null;
+  license?: string | null;
+  external_id?: string | null;
+  meta_json?: string | null;
   created_at: number;
   updated_at: number;
 }): void {
@@ -1264,13 +1359,25 @@ export function insertUserRoute(input: {
     .prepare(
       `INSERT INTO user_routes (
         id, owner, name, activity, geojson, waypoints_json,
-        length_km, elev_gain_m, elev_loss_m, visibility, created_at, updated_at
+        length_km, elev_gain_m, elev_loss_m, visibility,
+        source, source_url, license, external_id, meta_json,
+        created_at, updated_at
       ) VALUES (
         @id, @owner, @name, @activity, @geojson, @waypoints_json,
-        @length_km, @elev_gain_m, @elev_loss_m, @visibility, @created_at, @updated_at
+        @length_km, @elev_gain_m, @elev_loss_m, @visibility,
+        @source, @source_url, @license, @external_id, @meta_json,
+        @created_at, @updated_at
       )`
     )
-    .run({ ...input, owner: input.owner.trim().toLowerCase() });
+    .run({
+      ...input,
+      owner: input.owner.trim().toLowerCase(),
+      source: input.source ?? null,
+      source_url: input.source_url ?? null,
+      license: input.license ?? null,
+      external_id: input.external_id ?? null,
+      meta_json: input.meta_json ?? null,
+    });
 }
 
 export function updateUserRoute(
@@ -1284,6 +1391,11 @@ export function updateUserRoute(
     elev_gain_m?: number;
     elev_loss_m?: number;
     visibility?: UserRouteVisibility;
+    source?: string | null;
+    source_url?: string | null;
+    license?: string | null;
+    external_id?: string | null;
+    meta_json?: string | null;
     updated_at: number;
   }
 ): void {
@@ -1300,6 +1412,11 @@ export function updateUserRoute(
         elev_gain_m = @elev_gain_m,
         elev_loss_m = @elev_loss_m,
         visibility = @visibility,
+        source = @source,
+        source_url = @source_url,
+        license = @license,
+        external_id = @external_id,
+        meta_json = @meta_json,
         updated_at = @updated_at
       WHERE id = @id`
     )
@@ -1313,6 +1430,11 @@ export function updateUserRoute(
       elev_gain_m: patch.elev_gain_m ?? row.elev_gain_m,
       elev_loss_m: patch.elev_loss_m ?? row.elev_loss_m,
       visibility: patch.visibility ?? row.visibility,
+      source: patch.source !== undefined ? patch.source : row.source,
+      source_url: patch.source_url !== undefined ? patch.source_url : row.source_url,
+      license: patch.license !== undefined ? patch.license : row.license,
+      external_id: patch.external_id !== undefined ? patch.external_id : row.external_id,
+      meta_json: patch.meta_json !== undefined ? patch.meta_json : row.meta_json,
       updated_at: patch.updated_at,
     });
 }
@@ -1850,3 +1972,178 @@ export function isGroupOwner(groupId: string, username: string): boolean {
   const m = getGroupMember(groupId, username);
   return m?.role === "owner";
 }
+
+// --- Ski outings (gita vs percorso) ---
+
+export type SkiOutingRow = {
+  id: string;
+  route_id: string;
+  owner: string;
+  title: string;
+  outing_date: string | null;
+  snow_notes: string;
+  created_at: number;
+  updated_at: number;
+};
+
+export function insertSkiOuting(input: {
+  id: string;
+  route_id: string;
+  owner: string;
+  title: string;
+  outing_date?: string | null;
+  snow_notes?: string;
+  created_at: number;
+  updated_at: number;
+}): void {
+  getDb()
+    .prepare(
+      `INSERT INTO ski_outings (id, route_id, owner, title, outing_date, snow_notes, created_at, updated_at)
+       VALUES (@id, @route_id, @owner, @title, @outing_date, @snow_notes, @created_at, @updated_at)`,
+    )
+    .run({
+      ...input,
+      owner: input.owner.trim().toLowerCase(),
+      outing_date: input.outing_date ?? null,
+      snow_notes: input.snow_notes ?? "",
+    });
+}
+
+export function addOutingParticipant(outingId: string, username: string): void {
+  getDb()
+    .prepare(`INSERT OR IGNORE INTO outing_participants (outing_id, username) VALUES (?, ?)`)
+    .run(outingId, normalizeUser(username));
+}
+
+export function addOutingGroup(outingId: string, groupId: string): void {
+  getDb()
+    .prepare(`INSERT OR IGNORE INTO outing_groups (outing_id, group_id) VALUES (?, ?)`)
+    .run(outingId, groupId);
+}
+
+export function getSkiOuting(id: string): SkiOutingRow | undefined {
+  return getDb().prepare(`SELECT * FROM ski_outings WHERE id = ?`).get(id) as SkiOutingRow | undefined;
+}
+
+export function listPublicSkiRoutes(): UserRouteRow[] {
+  return getDb()
+    .prepare(
+      `SELECT * FROM user_routes
+       WHERE activity = 'ski' AND visibility = 'public'
+       ORDER BY updated_at DESC`,
+    )
+    .all() as UserRouteRow[];
+}
+
+export function listSkiRoutesForMyOutings(username: string): UserRouteRow[] {
+  const u = normalizeUser(username);
+  return getDb()
+    .prepare(
+      `SELECT DISTINCT r.* FROM user_routes r
+       INNER JOIN ski_outings o ON o.route_id = r.id
+       LEFT JOIN outing_participants p ON p.outing_id = o.id
+       WHERE o.owner = ? OR p.username = ?
+       ORDER BY r.updated_at DESC`,
+    )
+    .all(u, u) as UserRouteRow[];
+}
+
+export function listSkiRoutesForGroup(groupId: string): UserRouteRow[] {
+  return getDb()
+    .prepare(
+      `SELECT DISTINCT r.* FROM user_routes r
+       INNER JOIN ski_outings o ON o.route_id = r.id
+       INNER JOIN outing_groups og ON og.outing_id = o.id
+       WHERE og.group_id = ?
+       ORDER BY r.updated_at DESC`,
+    )
+    .all(groupId) as UserRouteRow[];
+}
+
+export function listOutingParticipants(outingId: string): string[] {
+  return (
+    getDb()
+      .prepare(`SELECT username FROM outing_participants WHERE outing_id = ? ORDER BY username`)
+      .all(outingId) as { username: string }[]
+  ).map((r) => r.username);
+}
+
+export function listOutingGroups(outingId: string): string[] {
+  return (
+    getDb()
+      .prepare(`SELECT group_id FROM outing_groups WHERE outing_id = ? ORDER BY group_id`)
+      .all(outingId) as { group_id: string }[]
+  ).map((r) => r.group_id);
+}
+
+const OUTING_VISIBLE_SQL = `
+  o.owner = @user
+  OR EXISTS (
+    SELECT 1 FROM outing_participants p
+    WHERE p.outing_id = o.id AND p.username = @user
+  )
+  OR EXISTS (
+    SELECT 1 FROM outing_groups og
+    INNER JOIN group_members gm ON gm.group_id = og.group_id AND gm.username = @user
+    WHERE og.outing_id = o.id
+  )
+  OR EXISTS (
+    SELECT 1 FROM user_routes r
+    WHERE r.id = o.route_id AND r.owner = @user
+  )
+`;
+
+export function canViewSkiOuting(outingId: string, username: string): boolean {
+  const user = normalizeUser(username);
+  const row = getDb()
+    .prepare(
+      `SELECT 1 AS ok FROM ski_outings o
+       WHERE o.id = @outingId AND (${OUTING_VISIBLE_SQL})`,
+    )
+    .get({ outingId, user }) as { ok: number } | undefined;
+  return row?.ok === 1;
+}
+
+export function listOutingsForRoute(routeId: string): SkiOutingRow[] {
+  return getDb()
+    .prepare(
+      `SELECT * FROM ski_outings
+       WHERE route_id = ?
+       ORDER BY outing_date DESC, updated_at DESC`,
+    )
+    .all(routeId) as SkiOutingRow[];
+}
+
+export function listOutingsVisibleForRoute(routeId: string, username: string): SkiOutingRow[] {
+  const user = normalizeUser(username);
+  return getDb()
+    .prepare(
+      `SELECT o.* FROM ski_outings o
+       WHERE o.route_id = @routeId AND (${OUTING_VISIBLE_SQL})
+       ORDER BY o.outing_date DESC, o.updated_at DESC`,
+    )
+    .all({ routeId, user }) as SkiOutingRow[];
+}
+
+export function listOutingsVisibleForUser(username: string): SkiOutingRow[] {
+  const user = normalizeUser(username);
+  return getDb()
+    .prepare(
+      `SELECT o.* FROM ski_outings o
+       WHERE ${OUTING_VISIBLE_SQL}
+       ORDER BY o.outing_date DESC, o.updated_at DESC`,
+    )
+    .all({ user }) as SkiOutingRow[];
+}
+
+export function countOutingsVisibleForRoute(routeId: string, username: string): number {
+  const user = normalizeUser(username);
+  const row = getDb()
+    .prepare(
+      `SELECT COUNT(*) AS n FROM ski_outings o
+       WHERE o.route_id = @routeId AND (${OUTING_VISIBLE_SQL})`,
+    )
+    .get({ routeId, user }) as { n: number };
+  return row.n;
+}
+

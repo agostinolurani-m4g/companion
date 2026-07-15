@@ -25,6 +25,7 @@ export function activityToOrsProfile(activity: UserRouteActivity): OrsProfile {
     case "mtb":
       return "cycling-mountain";
     case "hike":
+    case "ski":
       return "foot-hiking";
     default:
       return "foot-hiking";
@@ -32,7 +33,7 @@ export function activityToOrsProfile(activity: UserRouteActivity): OrsProfile {
 }
 
 export function activityPrefersOrs(activity: UserRouteActivity): boolean {
-  return activity === "road" || activity === "mtb" || activity === "hike" || activity === "gravel";
+  return activity === "road" || activity === "mtb" || activity === "hike" || activity === "gravel" || activity === "ski";
 }
 
 type OrsFetchResult = {

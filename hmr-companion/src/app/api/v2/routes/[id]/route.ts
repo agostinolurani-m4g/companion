@@ -12,7 +12,7 @@ export const runtime = "nodejs";
 
 type Ctx = { params: Promise<{ id: string }> };
 
-const VALID_ACTIVITIES = new Set<UserRouteActivity>(["road", "mtb", "hike", "gravel"]);
+const VALID_ACTIVITIES = new Set<UserRouteActivity>(["road", "mtb", "hike", "gravel", "ski"]);
 const VALID_VISIBILITY = new Set<UserRouteVisibility>(["private", "public"]);
 
 function canReadRoute(route: NonNullable<ReturnType<typeof getUserRoute>>, username: string): boolean {
@@ -20,17 +20,34 @@ function canReadRoute(route: NonNullable<ReturnType<typeof getUserRoute>>, usern
 }
 
 function serializeRoute(row: NonNullable<ReturnType<typeof getUserRoute>>) {
+  let meta_json: Record<string, unknown> | null = null;
+  if (row.meta_json) {
+    try {
+      meta_json = JSON.parse(row.meta_json) as Record<string, unknown>;
+    } catch {
+      meta_json = null;
+    }
+  }
   return {
     id: row.id,
     owner: row.owner,
     name: row.name,
     activity: row.activity,
-    geojson: JSON.parse(row.geojson) as GeoJSON.Feature<GeoJSON.LineString>,
-    waypoints: JSON.parse(row.waypoints_json) as [number, number][],
+    geojson: JSON.parse(row.geojson) as
+      | GeoJSON.Feature<GeoJSON.LineString>
+      | GeoJSON.FeatureCollection,
+    waypoints: JSON.parse(row.waypoints_json) as
+      | [number, number][]
+      | { ascent: [number, number][]; descent: [number, number][] },
     length_km: row.length_km,
     elev_gain_m: row.elev_gain_m,
     elev_loss_m: row.elev_loss_m,
     visibility: row.visibility,
+    source: row.source,
+    source_url: row.source_url,
+    license: row.license,
+    external_id: row.external_id,
+    meta_json,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -53,12 +70,17 @@ export async function GET(_req: Request, ctx: Ctx) {
 type PatchBody = {
   name?: string;
   activity?: UserRouteActivity;
-  geojson?: GeoJSON.Feature<GeoJSON.LineString>;
-  waypoints?: [number, number][];
+  geojson?: GeoJSON.Feature<GeoJSON.LineString> | GeoJSON.FeatureCollection;
+  waypoints?: [number, number][] | { ascent: [number, number][]; descent: [number, number][] };
   length_km?: number;
   elev_gain_m?: number;
   elev_loss_m?: number;
   visibility?: UserRouteVisibility;
+  source?: string | null;
+  source_url?: string | null;
+  license?: string | null;
+  external_id?: string | null;
+  meta_json?: Record<string, unknown> | null;
 };
 
 export async function PATCH(req: Request, ctx: Ctx) {
@@ -89,6 +111,11 @@ export async function PATCH(req: Request, ctx: Ctx) {
     elev_gain_m: body.elev_gain_m,
     elev_loss_m: body.elev_loss_m,
     visibility: body.visibility,
+    source: body.source,
+    source_url: body.source_url,
+    license: body.license,
+    external_id: body.external_id,
+    meta_json: body.meta_json ? JSON.stringify(body.meta_json) : undefined,
     updated_at: Date.now(),
   });
 

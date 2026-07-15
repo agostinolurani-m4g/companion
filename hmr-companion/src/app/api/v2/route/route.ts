@@ -13,7 +13,7 @@ import type { RouteTech } from "@/lib/ors-route-tech";
 
 export const runtime = "nodejs";
 
-const VALID_ACTIVITIES = new Set<UserRouteActivity>(["road", "mtb", "hike", "gravel"]);
+const VALID_ACTIVITIES = new Set<UserRouteActivity>(["road", "mtb", "hike", "gravel", "ski"]);
 
 function routeCacheKey(coordinates: [number, number][], activity: UserRouteActivity): string {
   const rounded = coordinates.map(([lng, lat]) => `${Math.round(lng * 1e5)}_${Math.round(lat * 1e5)}`).join(";");

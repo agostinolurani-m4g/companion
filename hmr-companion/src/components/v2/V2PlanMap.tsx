@@ -10,6 +10,7 @@ import type { V2SearchPoi } from "@/app/api/v2/pois/search/route";
 import { DEFAULT_MAP_VIEW_CENTER } from "@/lib/map-defaults";
 import type { ViewBbox } from "@/lib/overpass";
 import type { RouteColoredSegment } from "@/lib/ors-route-tech";
+import { AVALANCHE_LEGEND, SKI_AVALANCHE_DEFAULT_OPACITY, SKI_SLOPE_DEFAULT_OPACITY, SLOPE_TILES_URL } from "@/lib/ski-overlays";
 
 export type V2Waypoint = { lng: number; lat: number; label?: string };
 
@@ -33,6 +34,21 @@ type Props = {
   initialCenter?: { lng: number; lat: number; zoom?: number };
   /** Volo mappa verso un punto (incrementare `key` per ripetere). */
   flyTo?: { lng: number; lat: number; zoom?: number; key?: number } | null;
+  /** Overlay raster pendenza (>30/45/60/70°). */
+  slopeVisible?: boolean;
+  slopeOpacity?: number;
+  /** Overlay GeoJSON bollettino valanghe (EAWS). */
+  avalancheGeoJson?: GeoJSON.FeatureCollection | null;
+  avalancheVisible?: boolean;
+  avalancheOpacity?: number;
+  /** Nasconde pallini tappa (es. mappa esplorabile). */
+  showWaypoints?: boolean;
+  /** FeatureCollection esplorazione (routeId in properties). */
+  exploreGeoJson?: GeoJSON.FeatureCollection | null;
+  /** Click su traccia in modalità esplora. */
+  onRouteSelect?: (routeId: string) => void;
+  /** Marker partenza (P) / arrivo (A). */
+  routeMarkersGeoJson?: GeoJSON.FeatureCollection | null;
 };
 
 const MAPTILER_KEY = process.env.NEXT_PUBLIC_MAPTILER_KEY?.trim() || undefined;
@@ -70,6 +86,21 @@ const OSM_STYLE: StyleSpecification = {
   },
   layers: [{ id: "osm", type: "raster", source: "osm" }],
 };
+
+const AVALANCHE_FILL_COLOR: maplibregl.ExpressionSpecification = [
+  "case",
+  ["==", ["get", "danger"], 1],
+  AVALANCHE_LEGEND[0].color,
+  ["==", ["get", "danger"], 2],
+  AVALANCHE_LEGEND[1].color,
+  ["==", ["get", "danger"], 3],
+  AVALANCHE_LEGEND[2].color,
+  ["==", ["get", "danger"], 4],
+  AVALANCHE_LEGEND[3].color,
+  ["==", ["get", "danger"], 5],
+  AVALANCHE_LEGEND[4].color,
+  "#64748b",
+];
 
 const EMPTY_FC: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
 
@@ -124,6 +155,44 @@ const WAYPOINT_STROKE_WIDTH = [
   3.5,
 ] as const;
 
+/** Contorno traccia per leggibilità su qualsiasi sfondo. */
+const ROUTE_CASING_WIDTH = [
+  "interpolate",
+  ["linear"],
+  ["zoom"],
+  8,
+  3,
+  11,
+  4,
+  13,
+  5,
+  15,
+  6,
+  17,
+  8,
+  19,
+  10,
+] as const;
+
+/** Traccia sottile ma visibile grazie al casing. */
+const ROUTE_LINE_WIDTH = [
+  "interpolate",
+  ["linear"],
+  ["zoom"],
+  8,
+  1.5,
+  11,
+  2,
+  13,
+  2.5,
+  15,
+  3,
+  17,
+  3.5,
+  19,
+  4,
+] as const;
+
 function setGeoJson(map: MaplibreMap, sourceId: string, data: GeoJSON.FeatureCollection) {
   const src = map.getSource(sourceId) as GeoJSONSource | undefined;
   if (src) src.setData(data);
@@ -142,6 +211,15 @@ export default function V2PlanMap({
   onViewportChange,
   initialCenter,
   flyTo,
+  slopeVisible = false,
+  slopeOpacity = SKI_SLOPE_DEFAULT_OPACITY,
+  avalancheGeoJson,
+  avalancheVisible = false,
+  avalancheOpacity = SKI_AVALANCHE_DEFAULT_OPACITY,
+  showWaypoints = true,
+  exploreGeoJson,
+  onRouteSelect,
+  routeMarkersGeoJson,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MaplibreMap | null>(null);
@@ -158,6 +236,11 @@ export default function V2PlanMap({
   const waypointsRef = useRef(waypoints);
   const dragRef = useRef<{ index: number; startX: number; startY: number; moved: boolean } | null>(null);
   const suppressClickRef = useRef(false);
+  const onRouteSelectRef = useRef(onRouteSelect);
+
+  useEffect(() => {
+    onRouteSelectRef.current = onRouteSelect;
+  }, [onRouteSelect]);
 
   useEffect(() => {
     onInteractionRef.current = onMapInteraction;
@@ -175,20 +258,116 @@ export default function V2PlanMap({
     waypointsRef.current = waypoints;
   }, [waypoints]);
 
-  const addOverlaySourcesAndLayers = useCallback((map: MaplibreMap) => {
-    if (map.getSource("v2-route")) return;
+  const addRasterOverlay = useCallback(
+    (
+      map: MaplibreMap,
+      sourceId: string,
+      layerId: string,
+      tilesUrl: string,
+      visible: boolean,
+      opacity: number,
+    ) => {
+      if (!tilesUrl || map.getSource(sourceId)) return;
+      map.addSource(sourceId, {
+        type: "raster",
+        tiles: [tilesUrl],
+        tileSize: 256,
+        maxzoom: 16,
+      });
+      map.addLayer({
+        id: layerId,
+        type: "raster",
+        source: sourceId,
+        paint: { "raster-opacity": opacity },
+        layout: { visibility: visible ? "visible" : "none" },
+      });
+    },
+    [],
+  );
 
-    map.addSource("v2-route", { type: "geojson", data: EMPTY_FC });
-    map.addLayer({
-      id: "v2-route",
-      type: "line",
-      source: "v2-route",
-      paint: {
-        "line-color": ["coalesce", ["get", "color"], "#38bdf8"],
-        "line-width": 5,
-        "line-opacity": 0.92,
-      },
-    });
+  const addOverlaySourcesAndLayers = useCallback(
+    (map: MaplibreMap) => {
+      if (map.getSource("v2-route")) return;
+
+      addRasterOverlay(map, "ski-slope", "ski-slope", SLOPE_TILES_URL, slopeVisible, slopeOpacity);
+
+      map.addSource("ski-avalanche", { type: "geojson", data: EMPTY_FC });
+      map.addLayer({
+        id: "ski-avalanche-fill",
+        type: "fill",
+        source: "ski-avalanche",
+        paint: {
+          "fill-color": AVALANCHE_FILL_COLOR,
+          "fill-opacity": avalancheOpacity,
+        },
+        layout: { visibility: avalancheVisible ? "visible" : "none" },
+      });
+      map.addLayer({
+        id: "ski-avalanche-line",
+        type: "line",
+        source: "ski-avalanche",
+        paint: {
+          "line-color": "#0f172a",
+          "line-width": 0.6,
+          "line-opacity": avalancheVisible ? avalancheOpacity * 0.5 : 0,
+        },
+        layout: { visibility: avalancheVisible ? "visible" : "none" },
+      });
+
+      map.addSource("v2-route", { type: "geojson", data: EMPTY_FC });
+      map.addLayer({
+        id: "v2-route-casing",
+        type: "line",
+        source: "v2-route",
+        paint: {
+          "line-color": "#0b1221",
+          "line-width": ROUTE_CASING_WIDTH,
+          "line-opacity": ["case", ["==", ["get", "dimmed"], true], 0.35, 0.85],
+        },
+      });
+      map.addLayer({
+        id: "v2-route",
+        type: "line",
+        source: "v2-route",
+        paint: {
+          "line-color": ["coalesce", ["get", "color"], "#38bdf8"],
+          "line-width": ROUTE_LINE_WIDTH,
+          "line-opacity": ["case", ["==", ["get", "dimmed"], true], 0.28, 0.92],
+        },
+      });
+      map.addLayer({
+        id: "v2-route-hit",
+        type: "line",
+        source: "v2-route",
+        paint: {
+          "line-color": "#000000",
+          "line-width": 12,
+          "line-opacity": 0,
+        },
+      });
+
+      map.addSource("v2-route-markers", { type: "geojson", data: EMPTY_FC });
+      map.addLayer({
+        id: "v2-route-markers-halo",
+        type: "circle",
+        source: "v2-route-markers",
+        paint: {
+          "circle-radius": 12,
+          "circle-color": ["get", "haloColor"],
+          "circle-opacity": 0.28,
+        },
+      });
+      map.addLayer({
+        id: "v2-route-markers",
+        type: "circle",
+        source: "v2-route-markers",
+        paint: {
+          "circle-radius": 7,
+          "circle-color": ["get", "color"],
+          "circle-stroke-width": 2,
+          "circle-stroke-color": "#0b1221",
+        },
+      });
 
     map.addSource("v2-poi-radius", { type: "geojson", data: EMPTY_FC });
     map.addLayer({
@@ -261,7 +440,9 @@ export default function V2PlanMap({
         "circle-stroke-color": "#38bdf8",
       },
     });
-  }, []);
+    },
+    [addRasterOverlay, avalancheOpacity, avalancheVisible, slopeOpacity, slopeVisible],
+  );
 
   const bindLayerHandlers = useCallback((map: MaplibreMap) => {
     layerHandlerCleanupRef.current?.();
@@ -290,12 +471,34 @@ export default function V2PlanMap({
     }
     map.on("mousedown", "v2-waypoints", onWaypointMouseDown);
 
+    const onRouteEnter = () => {
+      if (!dragRef.current && onRouteSelectRef.current) map.getCanvas().style.cursor = "pointer";
+    };
+    const onRouteLeave = () => {
+      if (!dragRef.current) map.getCanvas().style.cursor = "";
+    };
+    const onRouteClick = (e: maplibregl.MapLayerMouseEvent) => {
+      if (!onRouteSelectRef.current) return;
+      const f = e.features?.[0];
+      const routeId = (f?.properties as { routeId?: string } | undefined)?.routeId;
+      if (routeId) {
+        e.preventDefault();
+        onRouteSelectRef.current(routeId);
+      }
+    };
+    map.on("mouseenter", "v2-route-hit", onRouteEnter);
+    map.on("mouseleave", "v2-route-hit", onRouteLeave);
+    map.on("click", "v2-route-hit", onRouteClick);
+
     layerHandlerCleanupRef.current = () => {
       for (const layerId of interactiveLayers) {
         map.off("mouseenter", layerId, onLayerEnter);
         map.off("mouseleave", layerId, onLayerLeave);
       }
       map.off("mousedown", "v2-waypoints", onWaypointMouseDown);
+      map.off("mouseenter", "v2-route-hit", onRouteEnter);
+      map.off("mouseleave", "v2-route-hit", onRouteLeave);
+      map.off("click", "v2-route-hit", onRouteClick);
     };
   }, []);
 
@@ -355,6 +558,17 @@ export default function V2PlanMap({
         if (poi) {
           onInteractionRef.current({ kind: "poi", poi });
           return;
+        }
+      }
+
+      if (onRouteSelectRef.current && map.getLayer("v2-route-hit")) {
+        const routeHits = map.queryRenderedFeatures(e.point, { layers: ["v2-route-hit"] });
+        if (routeHits.length > 0) {
+          const routeId = (routeHits[0].properties as { routeId?: string }).routeId;
+          if (routeId) {
+            onRouteSelectRef.current(routeId);
+            return;
+          }
         }
       }
 
@@ -453,6 +667,9 @@ export default function V2PlanMap({
     if (!map || !mapReady || !layersReadyRef.current) return;
 
     const routeGeo: GeoJSON.FeatureCollection = (() => {
+      if (exploreGeoJson && exploreGeoJson.features.length > 0) {
+        return exploreGeoJson;
+      }
       if (routeColoredSegments && routeColoredSegments.length > 0) {
         return {
           type: "FeatureCollection",
@@ -478,14 +695,16 @@ export default function V2PlanMap({
       return EMPTY_FC;
     })();
 
-    const wpGeo: GeoJSON.FeatureCollection = {
-      type: "FeatureCollection",
-      features: waypoints.map((w, i) => ({
-        type: "Feature",
-        properties: { idx: i + 1, label: w.label ?? String(i + 1) },
-        geometry: { type: "Point", coordinates: [w.lng, w.lat] },
-      })),
-    };
+    const wpGeo: GeoJSON.FeatureCollection = showWaypoints
+      ? {
+          type: "FeatureCollection",
+          features: waypoints.map((w, i) => ({
+            type: "Feature",
+            properties: { idx: i + 1, label: w.label ?? String(i + 1) },
+            geometry: { type: "Point", coordinates: [w.lng, w.lat] },
+          })),
+        }
+      : EMPTY_FC;
 
     const poiGeo: GeoJSON.FeatureCollection = {
       type: "FeatureCollection",
@@ -553,11 +772,53 @@ export default function V2PlanMap({
     }
 
     setGeoJson(map, "v2-route", routeGeo);
+    setGeoJson(map, "v2-route-markers", routeMarkersGeoJson ?? EMPTY_FC);
     setGeoJson(map, "v2-waypoints", wpGeo);
     setGeoJson(map, "v2-pois", poiGeo);
     setGeoJson(map, "v2-pending", pendingGeo);
     setGeoJson(map, "v2-poi-radius", radiusGeo);
-  }, [routeCoords, routeColoredSegments, waypoints, pois, pendingPoint, poiSearchCenter, poiSearchBbox, mapReady, overlayEpoch]);
+  }, [
+    routeCoords,
+    routeColoredSegments,
+    exploreGeoJson,
+    routeMarkersGeoJson,
+    waypoints,
+    showWaypoints,
+    pois,
+    pendingPoint,
+    poiSearchCenter,
+    poiSearchBbox,
+    mapReady,
+    overlayEpoch,
+  ]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || !layersReadyRef.current) return;
+    if (map.getLayer("ski-slope")) {
+      map.setLayoutProperty("ski-slope", "visibility", slopeVisible ? "visible" : "none");
+      map.setPaintProperty("ski-slope", "raster-opacity", slopeOpacity);
+    }
+    for (const layerId of ["ski-avalanche-fill", "ski-avalanche-line"]) {
+      if (map.getLayer(layerId)) {
+        map.setLayoutProperty(layerId, "visibility", avalancheVisible ? "visible" : "none");
+      }
+    }
+    if (map.getLayer("ski-avalanche-fill")) {
+      map.setPaintProperty("ski-avalanche-fill", "fill-opacity", avalancheOpacity);
+    }
+    if (map.getLayer("ski-avalanche-line")) {
+      map.setPaintProperty("ski-avalanche-line", "line-opacity", avalancheVisible ? avalancheOpacity * 0.5 : 0);
+    }
+  }, [mapReady, slopeVisible, slopeOpacity, avalancheVisible, avalancheOpacity, overlayEpoch]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || !layersReadyRef.current) return;
+    if (avalancheGeoJson) {
+      setGeoJson(map, "ski-avalanche", avalancheGeoJson);
+    }
+  }, [avalancheGeoJson, mapReady, overlayEpoch]);
 
   useEffect(() => {
     const map = mapRef.current;

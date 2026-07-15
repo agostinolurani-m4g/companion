@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 3002",
+    "dev": "node scripts/strip-turbopack-cache.mjs && next dev -p 3002 --webpack",
+    "dev:turbo": "next dev -p 3002 --turbopack",
+    "dev:clean": "node scripts/clean-next.mjs && node scripts/strip-turbopack-cache.mjs && next dev -p 3002 --webpack",
     "build": "next build",
     "start": "next start -p 3002",
     "lint": "eslint",
@@ -14,6 +16,8 @@
     "snapshot:surface": "tsx scripts/snapshot-surface.ts",
     "osm:import": "tsx scripts/import-osm-pois.ts",
     "seed": "npm run ingest && npm run snapshot",
+    "import:c2c": "tsx scripts/import-camptocamp-ski.ts",
+    "bundle:eaws": "tsx scripts/bundle-eaws-regions-it.ts",
     "icons:pwa": "node scripts/generate-pwa-icons.mjs"
   },
   "dependencies": {

@@ -19,7 +19,16 @@ type RouteItem = {
   length_km: number;
   elev_gain_m: number;
   visibility: UserRouteVisibility;
+  source?: string | null;
+  source_url?: string | null;
+  license?: string | null;
   updated_at: number;
+};
+
+const SOURCE_LABELS: Record<string, string> = {
+  camptocamp: "camptocamp.org",
+  gulliver: "Gulliver",
+  user: "Utente",
 };
 
 const ACTIVITY_LABELS: Record<UserRouteActivity, string> = {
@@ -27,6 +36,7 @@ const ACTIVITY_LABELS: Record<UserRouteActivity, string> = {
   mtb: "MTB",
   hike: "Escursione",
   gravel: "Gravel",
+  ski: "Scialpinismo",
 };
 
 export default function V2MyRoutes({ isAdmin = false, username }: Props) {
@@ -36,6 +46,7 @@ export default function V2MyRoutes({ isAdmin = false, username }: Props) {
   const [busy, setBusy] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [activityFilter, setActivityFilter] = useState<UserRouteActivity | "all">("all");
 
   const load = useCallback(async (scope: "mine" | "public") => {
     setBusy(true);
@@ -89,6 +100,9 @@ export default function V2MyRoutes({ isAdmin = false, username }: Props) {
     }
   };
 
+  const visibleRoutes =
+    activityFilter === "all" ? routes : routes.filter((r) => r.activity === activityFilter);
+
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto">
       <V2Nav isAdmin={isAdmin} username={username} />
@@ -127,17 +141,46 @@ export default function V2MyRoutes({ isAdmin = false, username }: Props) {
           >
             + Nuovo percorso
           </Link>
+          <Link
+            href="/v2/scialpinismo/esplora"
+            className="rounded-lg border border-[color:var(--hmr-border)] px-3 py-1.5 text-xs text-[color:var(--hmr-accent)]"
+          >
+            Mappa gite
+          </Link>
+          <Link
+            href="/v2/scialpinismo/nuova"
+            className="rounded-lg border border-[color:var(--hmr-border)] px-3 py-1.5 text-xs text-[color:var(--hmr-accent)]"
+          >
+            + Gita sci
+          </Link>
+        </div>
+
+        <div className="mt-3 flex flex-wrap gap-1">
+          {(["all", "ski", "hike", "road", "mtb", "gravel"] as const).map((a) => (
+            <button
+              key={a}
+              type="button"
+              onClick={() => setActivityFilter(a)}
+              className={
+                activityFilter === a
+                  ? "rounded-lg bg-[color:var(--hmr-accent)]/20 px-2 py-0.5 text-[10px] text-[color:var(--hmr-accent)]"
+                  : "rounded-lg border border-[color:var(--hmr-border)] px-2 py-0.5 text-[10px] text-[color:var(--hmr-muted)]"
+              }
+            >
+              {a === "all" ? "Tutti" : ACTIVITY_LABELS[a]}
+            </button>
+          ))}
         </div>
 
         {busy ? (
           <p className="mt-6 text-sm text-[color:var(--hmr-muted)]">Caricamento…</p>
-        ) : routes.length === 0 ? (
+        ) : visibleRoutes.length === 0 ? (
           <p className="mt-6 text-sm text-[color:var(--hmr-muted)]">
             {tab === "mine" ? "Nessun percorso salvato." : "Nessun percorso pubblico."}
           </p>
         ) : (
           <ul className="mt-4 grid gap-3">
-            {routes.map((r) => (
+            {visibleRoutes.map((r) => (
               <li
                 key={r.id}
                 className="hmr-panel flex flex-col gap-3 rounded-2xl border border-[color:var(--hmr-border)]/80 p-4 sm:flex-row sm:items-center"
@@ -157,10 +200,30 @@ export default function V2MyRoutes({ isAdmin = false, username }: Props) {
                   >
                     {r.visibility === "public" ? "Pubblico" : "Privato"}
                   </span>
+                  {r.source ? (
+                    <span className="ml-1 inline-block rounded-full bg-sky-500/10 px-2 py-0.5 text-[10px] text-sky-300">
+                      {SOURCE_LABELS[r.source] ?? r.source}
+                      {r.license ? ` · ${r.license}` : null}
+                    </span>
+                  ) : null}
+                  {r.source_url ? (
+                    <a
+                      href={r.source_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="ml-1 text-[10px] text-[color:var(--hmr-accent)] underline"
+                    >
+                      Fonte
+                    </a>
+                  ) : null}
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <Link
-                    href={`/v2/plan?route=${encodeURIComponent(r.id)}`}
+                    href={
+                      r.activity === "ski"
+                        ? `/v2/scialpinismo?route=${encodeURIComponent(r.id)}`
+                        : `/v2/plan?route=${encodeURIComponent(r.id)}`
+                    }
                     className="rounded-lg bg-[color:var(--hmr-accent)] px-3 py-2 text-xs font-medium text-[color:var(--hmr-bg)]"
                   >
                     Apri

@@ -154,6 +154,7 @@ export function activityToOsrmProfile(activity: UserRouteActivity): OsrmProfile 
     case "gravel":
       return "cycling";
     case "hike":
+    case "ski":
       return "foot";
     default:
       return "foot";

@@ -46,7 +46,10 @@ const ACTIVITY_LABELS: Record<UserRouteActivity, string> = {
   mtb: "MTB",
   hike: "Escursione",
   gravel: "Gravel",
+  ski: "Scialpinismo",
 };
+
+const PLAN_ACTIVITIES: UserRouteActivity[] = ["road", "mtb", "hike", "gravel"];
 
 const POI_RADIUS_PRESETS: PoiKindMeta[] = SEARCH_KINDS;
 
@@ -556,7 +559,7 @@ export default function V2RouteBuilder({ isAdmin = false, username }: Props) {
           </section>
 
           <div className="flex flex-wrap gap-1">
-            {(Object.keys(ACTIVITY_LABELS) as UserRouteActivity[]).map((a) => (
+            {PLAN_ACTIVITIES.map((a) => (
               <button
                 key={a}
                 type="button"
