@@ -40,7 +40,7 @@ export default function V2SkiOutingPanel({
     setErr(null);
     try {
       const data = await fetchJson<{ outings?: SkiOutingDto[] }>(
-        `/api/v2/ski/outings?route_id=${encodeURIComponent(routeId)}`,
+        `/api/v2/outings?route_id=${encodeURIComponent(routeId)}`,
       );
       setOutings(data.outings ?? []);
     } catch (e) {
@@ -83,7 +83,7 @@ export default function V2SkiOutingPanel({
         .split(/[,;\s]+/)
         .map((s) => s.trim().toLowerCase())
         .filter(Boolean);
-      const res = await fetch("/api/v2/ski/outings", {
+      const res = await fetch("/api/v2/outings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

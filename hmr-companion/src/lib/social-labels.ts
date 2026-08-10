@@ -1,4 +1,10 @@
-import type { GroupType, ProfileLevel } from "@/lib/db";
+import type { GroupType, ProfileLevel, TrustTier } from "@/lib/db";
+
+export const TRUST_TIER_LABELS: Record<TrustTier, string> = {
+  new: "Novizio",
+  reliable: "Affidabile",
+  expert: "Esperto",
+};
 
 export const LEVEL_LABELS: Record<ProfileLevel, string> = {
   beginner: "Principiante",

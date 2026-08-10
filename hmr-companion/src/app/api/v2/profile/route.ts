@@ -10,7 +10,7 @@ const VALID_LEVELS = new Set<ProfileLevel>(["beginner", "intermediate", "advance
 export async function GET() {
   const auth = await requireV2Beta();
   if (!auth) return NextResponse.json({ error: "Non autorizzato" }, { status: 403 });
-  return NextResponse.json({ profile: profileForUsername(auth.email) });
+  return NextResponse.json({ profile: profileForUsername(auth.email, true) });
 }
 
 type PatchBody = {

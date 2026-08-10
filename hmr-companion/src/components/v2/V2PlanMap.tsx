@@ -45,8 +45,14 @@ type Props = {
   showWaypoints?: boolean;
   /** FeatureCollection esplorazione (routeId in properties). */
   exploreGeoJson?: GeoJSON.FeatureCollection | null;
+  /** Marker foto sulla mappa. */
+  photosGeoJson?: GeoJSON.FeatureCollection | null;
+  /** Marker segnalazioni sulla mappa. */
+  reportsGeoJson?: GeoJSON.FeatureCollection | null;
   /** Click su traccia in modalità esplora. */
   onRouteSelect?: (routeId: string) => void;
+  /** Click su segnalazione. */
+  onReportSelect?: (reportId: string) => void;
   /** Marker partenza (P) / arrivo (A). */
   routeMarkersGeoJson?: GeoJSON.FeatureCollection | null;
 };
@@ -121,7 +127,7 @@ const WAYPOINT_RADIUS = [
   13,
   19,
   16,
-] as const;
+] as maplibregl.ExpressionSpecification;
 
 const WAYPOINT_HALO_RADIUS = [
   "interpolate",
@@ -139,7 +145,7 @@ const WAYPOINT_HALO_RADIUS = [
   20,
   19,
   24,
-] as const;
+] as maplibregl.ExpressionSpecification;
 
 const WAYPOINT_STROKE_WIDTH = [
   "interpolate",
@@ -153,7 +159,7 @@ const WAYPOINT_STROKE_WIDTH = [
   3,
   19,
   3.5,
-] as const;
+] as maplibregl.ExpressionSpecification;
 
 /** Contorno traccia per leggibilità su qualsiasi sfondo. */
 const ROUTE_CASING_WIDTH = [
@@ -172,7 +178,7 @@ const ROUTE_CASING_WIDTH = [
   8,
   19,
   10,
-] as const;
+] as maplibregl.ExpressionSpecification;
 
 /** Traccia sottile ma visibile grazie al casing. */
 const ROUTE_LINE_WIDTH = [
@@ -191,7 +197,7 @@ const ROUTE_LINE_WIDTH = [
   3.5,
   19,
   4,
-] as const;
+] as maplibregl.ExpressionSpecification;
 
 function setGeoJson(map: MaplibreMap, sourceId: string, data: GeoJSON.FeatureCollection) {
   const src = map.getSource(sourceId) as GeoJSONSource | undefined;
@@ -218,7 +224,10 @@ export default function V2PlanMap({
   avalancheOpacity = SKI_AVALANCHE_DEFAULT_OPACITY,
   showWaypoints = true,
   exploreGeoJson,
+  photosGeoJson,
+  reportsGeoJson,
   onRouteSelect,
+  onReportSelect,
   routeMarkersGeoJson,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -237,10 +246,14 @@ export default function V2PlanMap({
   const dragRef = useRef<{ index: number; startX: number; startY: number; moved: boolean } | null>(null);
   const suppressClickRef = useRef(false);
   const onRouteSelectRef = useRef(onRouteSelect);
+  const onReportSelectRef = useRef(onReportSelect);
 
   useEffect(() => {
     onRouteSelectRef.current = onRouteSelect;
   }, [onRouteSelect]);
+  useEffect(() => {
+    onReportSelectRef.current = onReportSelect;
+  }, [onReportSelect]);
 
   useEffect(() => {
     onInteractionRef.current = onMapInteraction;
@@ -418,6 +431,38 @@ export default function V2PlanMap({
       },
     });
 
+    map.addSource("v2-photos", { type: "geojson", data: EMPTY_FC });
+    map.addLayer({
+      id: "v2-photos",
+      type: "circle",
+      source: "v2-photos",
+      paint: {
+        "circle-radius": 6,
+        "circle-color": "#ec4899",
+        "circle-stroke-width": 2,
+        "circle-stroke-color": "#0b1221",
+      },
+    });
+
+    map.addSource("v2-reports", { type: "geojson", data: EMPTY_FC });
+    map.addLayer({
+      id: "v2-reports",
+      type: "circle",
+      source: "v2-reports",
+      paint: {
+        "circle-radius": ["case", ["get", "verified"], 9, 7],
+        "circle-color": ["get", "color"],
+        "circle-stroke-width": ["case", ["get", "verified"], 3, 1],
+        "circle-stroke-color": "#fbbf24",
+      },
+    });
+    map.addLayer({
+      id: "v2-reports-hit",
+      type: "circle",
+      source: "v2-reports",
+      paint: { "circle-radius": 14, "circle-opacity": 0 },
+    });
+
     map.addSource("v2-waypoints", { type: "geojson", data: EMPTY_FC });
     map.addLayer({
       id: "v2-waypoints-halo",
@@ -567,6 +612,17 @@ export default function V2PlanMap({
           const routeId = (routeHits[0].properties as { routeId?: string }).routeId;
           if (routeId) {
             onRouteSelectRef.current(routeId);
+            return;
+          }
+        }
+      }
+
+      if (onReportSelectRef.current && map.getLayer("v2-reports-hit")) {
+        const reportHits = map.queryRenderedFeatures(e.point, { layers: ["v2-reports-hit"] });
+        if (reportHits.length > 0) {
+          const reportId = (reportHits[0].properties as { reportId?: string }).reportId;
+          if (reportId) {
+            onReportSelectRef.current(reportId);
             return;
           }
         }
@@ -777,11 +833,15 @@ export default function V2PlanMap({
     setGeoJson(map, "v2-pois", poiGeo);
     setGeoJson(map, "v2-pending", pendingGeo);
     setGeoJson(map, "v2-poi-radius", radiusGeo);
+    setGeoJson(map, "v2-photos", photosGeoJson ?? EMPTY_FC);
+    setGeoJson(map, "v2-reports", reportsGeoJson ?? EMPTY_FC);
   }, [
     routeCoords,
     routeColoredSegments,
     exploreGeoJson,
     routeMarkersGeoJson,
+    photosGeoJson,
+    reportsGeoJson,
     waypoints,
     showWaypoints,
     pois,

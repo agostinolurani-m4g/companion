@@ -13,7 +13,7 @@ const EMPTY_TILE = Buffer.from(
 );
 
 function tileResponse(body: Buffer, extraHeaders?: Record<string, string>) {
-  return new NextResponse(body, {
+  return new NextResponse(new Uint8Array(body), {
     status: 200,
     headers: {
       "Content-Type": "image/png",

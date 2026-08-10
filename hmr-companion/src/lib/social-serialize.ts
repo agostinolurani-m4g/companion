@@ -5,16 +5,27 @@ import {
   ensureUserProfile,
   getLastGroupMessage,
   getUserProfile,
+  getUserStats,
   listGroupMembers,
   type GroupRow,
   type UserProfileRow,
+  type UserStats,
 } from "@/lib/db";
-import { GROUP_TYPE_LABELS, LEVEL_LABELS } from "@/lib/social-labels";
+import { GROUP_TYPE_LABELS, LEVEL_LABELS, TRUST_TIER_LABELS } from "@/lib/social-labels";
+
+export type SerializedProfile = ReturnType<typeof serializeProfile>;
 
 export function serializeProfile(
   row: UserProfileRow,
-  extras?: { followers?: number; following?: number; public_routes?: number }
+  extras?: {
+    followers?: number;
+    following?: number;
+    public_routes?: number;
+    stats?: UserStats;
+  },
 ) {
+  const trustTier = row.trust_tier ?? "new";
+  const trustScore = row.trust_score ?? 0;
   return {
     username: row.username,
     display_name: row.display_name || row.username,
@@ -23,17 +34,23 @@ export function serializeProfile(
     home_area: row.home_area,
     level: row.level,
     level_label: LEVEL_LABELS[row.level],
+    trust_score: trustScore,
+    trust_tier: trustTier,
+    trust_tier_label: TRUST_TIER_LABELS[trustTier],
     followers: extras?.followers ?? countFollowers(row.username),
     following: extras?.following ?? countFollowing(row.username),
     public_routes: extras?.public_routes ?? countPublicRoutesForOwner(row.username),
+    stats: extras?.stats,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
 }
 
-export function profileForUsername(username: string) {
+export function profileForUsername(username: string, includeStats = false) {
   const row = ensureUserProfile(username);
-  return serializeProfile(row);
+  return serializeProfile(row, {
+    stats: includeStats ? getUserStats(username) : undefined,
+  });
 }
 
 export function serializeGroupSummary(group: GroupRow, viewerUsername?: string) {
@@ -59,4 +76,8 @@ export function serializeGroupSummary(group: GroupRow, viewerUsername?: string) 
       ? members.some((m) => m.username === viewerUsername)
       : undefined,
   };
+}
+
+export function serializeUserStats(stats: UserStats) {
+  return stats;
 }

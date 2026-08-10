@@ -53,6 +53,9 @@ export default function V2Groups({ username, isAdmin = false }: Props) {
   const inviteUser = searchParams.get("invite")?.trim().toLowerCase() ?? "";
 
   const [groups, setGroups] = useState<GroupSummary[]>([]);
+  const [pendingInvites, setPendingInvites] = useState<
+    Array<{ group_id: string; group_name: string; invited_by: string }>
+  >([]);
   const [following, setFollowing] = useState<FollowingProfile[]>([]);
   const [busy, setBusy] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -70,15 +73,20 @@ export default function V2Groups({ username, isAdmin = false }: Props) {
     setBusy(true);
     setErr(null);
     try {
-      const [gRes, fRes] = await Promise.all([
+      const [gRes, fRes, iRes] = await Promise.all([
         fetch("/api/v2/groups"),
         fetch("/api/v2/follow"),
+        fetch("/api/v2/groups/invites"),
       ]);
       const gData = (await gRes.json()) as { error?: string; groups?: GroupSummary[] };
       const fData = (await fRes.json()) as { error?: string; following?: FollowingProfile[] };
+      const iData = (await iRes.json()) as {
+        invites?: Array<{ group_id: string; group_name: string; invited_by: string }>;
+      };
       if (!gRes.ok) throw new Error(gData.error ?? "Caricamento gruppi fallito");
       setGroups(gData.groups ?? []);
       if (fRes.ok) setFollowing(fData.following ?? []);
+      if (iRes.ok) setPendingInvites(iData.invites ?? []);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -153,6 +161,52 @@ export default function V2Groups({ username, isAdmin = false }: Props) {
             + Nuovo gruppo
           </button>
         </div>
+
+        {pendingInvites.length > 0 ? (
+          <div className="mt-4 hmr-panel rounded-2xl border border-amber-500/30 p-4">
+            <h2 className="text-sm font-medium">Inviti in sospeso</h2>
+            <ul className="mt-2 grid gap-2">
+              {pendingInvites.map((inv) => (
+                <li
+                  key={inv.group_id}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[color:var(--hmr-border)]/60 px-3 py-2 text-xs"
+                >
+                  <span>
+                    <strong>{inv.group_name}</strong> · da @{inv.invited_by}
+                  </span>
+                  <span className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void fetch("/api/v2/groups/invites", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ group_id: inv.group_id, action: "accept" }),
+                        }).then(() => load())
+                      }
+                      className="rounded-lg bg-[color:var(--hmr-accent)] px-2 py-1 text-[color:var(--hmr-bg)]"
+                    >
+                      Accetta
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void fetch("/api/v2/groups/invites", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ group_id: inv.group_id, action: "decline" }),
+                        }).then(() => load())
+                      }
+                      className="rounded-lg border px-2 py-1"
+                    >
+                      Rifiuta
+                    </button>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
 
         {showCreate ? (
           <div className="mt-4 hmr-panel rounded-2xl border border-[color:var(--hmr-border)]/80 p-4">

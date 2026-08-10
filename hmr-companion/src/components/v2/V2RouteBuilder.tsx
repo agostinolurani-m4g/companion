@@ -132,6 +132,7 @@ export default function V2RouteBuilder({ isAdmin = false, username }: Props) {
   const [routing, setRouting] = useState(false);
   const [poiBusy, setPoiBusy] = useState(false);
   const [saveBusy, setSaveBusy] = useState(false);
+  const [outingBusy, setOutingBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [visibility, setVisibility] = useState<UserRouteVisibility>("private");
@@ -495,6 +496,30 @@ export default function V2RouteBuilder({ isAdmin = false, username }: Props) {
     }
   };
 
+  const registerOuting = async () => {
+    if (!routeId) return;
+    setOutingBusy(true);
+    setErr(null);
+    try {
+      const res = await fetch("/api/v2/outings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          route_id: routeId,
+          title: name.trim() || "Gita",
+          outing_date: new Date().toISOString().slice(0, 10),
+        }),
+      });
+      const data = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Registrazione gita fallita");
+      router.push("/v2/me");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setOutingBusy(false);
+    }
+  };
+
   const stats = useMemo(
     () => ({ waypoints: waypoints.length, km: lengthKm, elevGainM, elevLossM }),
     [waypoints.length, lengthKm, elevGainM, elevLossM],
@@ -826,6 +851,16 @@ export default function V2RouteBuilder({ isAdmin = false, username }: Props) {
             >
               {saveBusy ? "Salvo…" : "Salva percorso"}
             </button>
+            {routeId ? (
+              <button
+                type="button"
+                disabled={outingBusy}
+                onClick={() => void registerOuting()}
+                className="w-full rounded-lg border border-[color:var(--hmr-border)] px-4 py-2.5 text-sm text-[color:var(--hmr-accent)] disabled:opacity-50"
+              >
+                {outingBusy ? "Registro…" : "Registra gita"}
+              </button>
+            ) : null}
             {err ? <p className="text-xs text-red-400">{err}</p> : null}
           </div>
         </aside>

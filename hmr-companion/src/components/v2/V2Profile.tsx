@@ -20,9 +20,20 @@ type Profile = {
   home_area: string;
   level: ProfileLevel;
   level_label: string;
+  trust_score: number;
+  trust_tier: string;
+  trust_tier_label: string;
   followers: number;
   following: number;
   public_routes: number;
+  stats?: {
+    total_km: number;
+    total_elev_gain_m: number;
+    outings_count: number;
+    photos_count: number;
+    reports_verified: number;
+    confirmations_received: number;
+  };
 };
 
 type RouteItem = {
@@ -32,6 +43,15 @@ type RouteItem = {
   length_km: number;
   elev_gain_m: number;
 };
+
+type PhotoItem = {
+  id: string;
+  caption: string;
+  url?: string;
+  photo_path: string;
+};
+
+type FollowUser = { username: string; display_name: string };
 
 const LEVELS: { value: ProfileLevel; label: string }[] = [
   { value: "beginner", label: "Principiante" },
@@ -64,6 +84,10 @@ export default function V2Profile({ username, isAdmin = false }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [routes, setRoutes] = useState<RouteItem[]>([]);
+  const [photos, setPhotos] = useState<PhotoItem[]>([]);
+  const [stats, setStats] = useState<Profile["stats"] | null>(null);
+  const [followList, setFollowList] = useState<FollowUser[] | null>(null);
+  const [followListKind, setFollowListKind] = useState<"followers" | "following" | null>(null);
   const [isSelf, setIsSelf] = useState(false);
   const [isFollowing, setIsFollowing] = useState(false);
   const [busy, setBusy] = useState(true);
@@ -86,12 +110,21 @@ export default function V2Profile({ username, isAdmin = false }: Props) {
         error?: string;
         profile?: Profile;
         routes?: RouteItem[];
+        photos?: PhotoItem[];
+        stats?: Profile["stats"];
         is_self?: boolean;
         is_following?: boolean;
       };
       if (!res.ok) throw new Error(data.error ?? "Caricamento fallito");
       setProfile(data.profile ?? null);
       setRoutes(data.routes ?? []);
+      setPhotos(
+        (data.photos ?? []).map((p) => ({
+          ...p,
+          url: p.url ?? `/api/field-photo?path=${encodeURIComponent(p.photo_path)}`,
+        })),
+      );
+      setStats(data.stats ?? data.profile?.stats ?? null);
       setIsSelf(!!data.is_self);
       setIsFollowing(!!data.is_following);
       if (data.profile) {
@@ -147,6 +180,23 @@ export default function V2Profile({ username, isAdmin = false }: Props) {
       setSaving(false);
     }
   };
+
+  const loadFollowList = async (kind: "followers" | "following") => {
+    try {
+      const res = await fetch(`/api/v2/follow/${encodeURIComponent(username)}?list=${kind}`);
+      const data = (await res.json()) as { users?: FollowUser[] };
+      setFollowList(data.users ?? []);
+      setFollowListKind(kind);
+    } catch {
+      setFollowList([]);
+      setFollowListKind(kind);
+    }
+  };
+
+  const routeHref = (activity: string, id: string) =>
+    activity === "ski"
+      ? `/v2/scialpinismo?route=${encodeURIComponent(id)}`
+      : `/v2/plan?route=${encodeURIComponent(id)}`;
 
   const uploadAvatar = async (file: File) => {
     setErr(null);
@@ -219,24 +269,61 @@ export default function V2Profile({ username, isAdmin = false }: Props) {
             <span className="mt-2 inline-block rounded-full bg-[color:var(--hmr-accent)]/15 px-2.5 py-0.5 text-xs text-[color:var(--hmr-accent)]">
               {profile.level_label}
             </span>
+            <span className="ml-2 mt-2 inline-block rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-xs text-emerald-400">
+              {profile.trust_tier_label}
+            </span>
             {profile.bio ? (
               <p className="mt-3 text-sm leading-relaxed text-[color:var(--hmr-text)]">{profile.bio}</p>
             ) : null}
 
             <div className="mt-4 flex flex-wrap gap-4 text-sm">
-              <span>
+              <button type="button" onClick={() => void loadFollowList("followers")} className="hover:text-[color:var(--hmr-accent)]">
                 <strong>{profile.followers}</strong>{" "}
                 <span className="text-[color:var(--hmr-muted)]">follower</span>
-              </span>
-              <span>
+              </button>
+              <button type="button" onClick={() => void loadFollowList("following")} className="hover:text-[color:var(--hmr-accent)]">
                 <strong>{profile.following}</strong>{" "}
                 <span className="text-[color:var(--hmr-muted)]">seguiti</span>
-              </span>
+              </button>
               <span>
                 <strong>{profile.public_routes}</strong>{" "}
                 <span className="text-[color:var(--hmr-muted)]">percorsi pubblici</span>
               </span>
             </div>
+
+            {stats ? (
+              <div className="mt-4 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                <div className="rounded-lg bg-[color:var(--hmr-elev)]/50 px-2 py-1.5">
+                  <strong>{stats.total_km.toFixed(0)}</strong> km
+                </div>
+                <div className="rounded-lg bg-[color:var(--hmr-elev)]/50 px-2 py-1.5">
+                  <strong>{stats.outings_count}</strong> gite
+                </div>
+                <div className="rounded-lg bg-[color:var(--hmr-elev)]/50 px-2 py-1.5">
+                  <strong>{stats.photos_count}</strong> foto
+                </div>
+                <div className="rounded-lg bg-[color:var(--hmr-elev)]/50 px-2 py-1.5">
+                  <strong>{stats.reports_verified}</strong> segnal. verif.
+                </div>
+              </div>
+            ) : null}
+
+            {followList && followListKind ? (
+              <div className="mt-3 rounded-lg border border-[color:var(--hmr-border)]/60 p-2">
+                <p className="text-[10px] font-medium uppercase text-[color:var(--hmr-muted)]">
+                  {followListKind === "followers" ? "Follower" : "Seguiti"}
+                </p>
+                <ul className="mt-1 space-y-1">
+                  {followList.map((u) => (
+                    <li key={u.username}>
+                      <Link href={`/v2/u/${encodeURIComponent(u.username)}`} className="text-xs hover:text-[color:var(--hmr-accent)]">
+                        {u.display_name || u.username}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
 
             <div className="mt-4 flex flex-wrap gap-2">
               {isSelf ? (
@@ -335,7 +422,7 @@ export default function V2Profile({ username, isAdmin = false }: Props) {
               {routes.map((r) => (
                 <li key={r.id}>
                   <Link
-                    href={`/v2/plan?route=${encodeURIComponent(r.id)}`}
+                    href={routeHref(r.activity, r.id)}
                     className="hmr-panel block rounded-xl border border-[color:var(--hmr-border)]/60 p-3 text-sm hover:border-[color:var(--hmr-accent)]/40"
                   >
                     <span className="font-medium">{r.name}</span>
@@ -346,6 +433,19 @@ export default function V2Profile({ username, isAdmin = false }: Props) {
                 </li>
               ))}
             </ul>
+          </div>
+        ) : null}
+
+        {photos.length > 0 ? (
+          <div className="mt-6">
+            <h2 className="text-sm font-medium">Foto</h2>
+            <div className="mt-3 grid grid-cols-3 gap-2">
+              {photos.map((p) => (
+                <div key={p.id} className="overflow-hidden rounded-lg border border-[color:var(--hmr-border)]/60">
+                  {p.url ? <img src={p.url} alt="" className="aspect-square w-full object-cover" /> : null}
+                </div>
+              ))}
+            </div>
           </div>
         ) : null}
 

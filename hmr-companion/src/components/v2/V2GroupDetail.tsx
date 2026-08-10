@@ -43,12 +43,15 @@ export default function V2GroupDetail({ groupId, username, isAdmin = false }: Pr
   const [group, setGroup] = useState<GroupDetail | null>(null);
   const [myRole, setMyRole] = useState<GroupMemberRole | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [tab, setTab] = useState<"chat" | "members">("chat");
+  const [tab, setTab] = useState<"chat" | "members" | "outings" | "settings">("chat");
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(true);
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [memberInput, setMemberInput] = useState("");
+  const [outings, setOutings] = useState<Array<{ id: string; title: string; outing_date: string | null }>>([]);
+  const [routeInput, setRouteInput] = useState("");
+  const avatarRef = useRef<HTMLInputElement>(null);
   const lastTsRef = useRef(0);
 
   const loadGroup = useCallback(async () => {
@@ -93,6 +96,12 @@ export default function V2GroupDetail({ groupId, username, isAdmin = false }: Pr
     [groupId]
   );
 
+  const loadOutings = useCallback(async () => {
+    const res = await fetch(`/api/v2/groups/${encodeURIComponent(groupId)}/outings`);
+    const data = (await res.json()) as { outings?: Array<{ id: string; title: string; outing_date: string | null }> };
+    setOutings(data.outings ?? []);
+  }, [groupId]);
+
   const loadAll = useCallback(async () => {
     setBusy(true);
     setErr(null);
@@ -100,12 +109,13 @@ export default function V2GroupDetail({ groupId, username, isAdmin = false }: Pr
       await loadGroup();
       lastTsRef.current = 0;
       await loadMessages(true);
+      await loadOutings();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
-  }, [loadGroup, loadMessages]);
+  }, [loadGroup, loadMessages, loadOutings]);
 
   useEffect(() => {
     void loadAll();
@@ -188,6 +198,38 @@ export default function V2GroupDetail({ groupId, username, isAdmin = false }: Pr
       const data = (await res.json()) as { error?: string };
       if (!res.ok) throw new Error(data.error ?? "Eliminazione fallita");
       router.push("/v2/groups");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const saveRouteLink = async () => {
+    const routeId = routeInput.trim() || null;
+    try {
+      const res = await fetch(`/api/v2/groups/${encodeURIComponent(groupId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ route_id: routeId }),
+      });
+      const data = (await res.json()) as { error?: string; group?: GroupDetail };
+      if (!res.ok) throw new Error(data.error ?? "Salvataggio fallito");
+      setGroup(data.group ?? null);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const uploadAvatar = async (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    try {
+      const res = await fetch(`/api/v2/groups/${encodeURIComponent(groupId)}/avatar`, {
+        method: "POST",
+        body: fd,
+      });
+      const data = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Upload fallito");
+      await loadGroup();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     }
@@ -276,6 +318,33 @@ export default function V2GroupDetail({ groupId, username, isAdmin = false }: Pr
             >
               Membri
             </button>
+            <button
+              type="button"
+              onClick={() => setTab("outings")}
+              className={
+                tab === "outings"
+                  ? "rounded-lg bg-[color:var(--hmr-accent)] px-3 py-1.5 text-xs font-medium text-[color:var(--hmr-bg)]"
+                  : "rounded-lg border border-[color:var(--hmr-border)] px-3 py-1.5 text-xs"
+              }
+            >
+              Gite
+            </button>
+            {myRole === "owner" ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setTab("settings");
+                  setRouteInput(group.route_id ?? "");
+                }}
+                className={
+                  tab === "settings"
+                    ? "rounded-lg bg-[color:var(--hmr-accent)] px-3 py-1.5 text-xs font-medium text-[color:var(--hmr-bg)]"
+                    : "rounded-lg border border-[color:var(--hmr-border)] px-3 py-1.5 text-xs"
+                }
+              >
+                Impostazioni
+              </button>
+            ) : null}
           </div>
         </div>
 
@@ -348,7 +417,7 @@ export default function V2GroupDetail({ groupId, username, isAdmin = false }: Pr
               </button>
             </div>
           </>
-        ) : (
+        ) : tab === "members" ? (
           <div className="mt-3 min-h-0 flex-1 overflow-y-auto">
             {canManageMembers ? (
               <div className="mb-4 flex gap-2">
@@ -403,6 +472,67 @@ export default function V2GroupDetail({ groupId, username, isAdmin = false }: Pr
                 </li>
               ))}
             </ul>
+          </div>
+        ) : tab === "outings" ? (
+          <div className="mt-3 min-h-0 flex-1 overflow-y-auto">
+            {outings.length === 0 ? (
+              <p className="text-sm text-[color:var(--hmr-muted)]">Nessuna gita collegata al gruppo.</p>
+            ) : (
+              <ul className="grid gap-2">
+                {outings.map((o) => (
+                  <li
+                    key={o.id}
+                    className="hmr-panel rounded-xl border border-[color:var(--hmr-border)]/60 px-3 py-2 text-sm"
+                  >
+                    {o.title}
+                    <span className="ml-2 text-xs text-[color:var(--hmr-muted)]">
+                      {o.outing_date ?? "data n/d"}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        ) : tab === "settings" && myRole === "owner" ? (
+          <div className="mt-3 space-y-4">
+            <div>
+              <p className="text-xs font-medium">Percorso collegato</p>
+              <div className="mt-2 flex gap-2">
+                <input
+                  value={routeInput}
+                  onChange={(e) => setRouteInput(e.target.value)}
+                  placeholder="ID percorso"
+                  className="min-w-0 flex-1 rounded-lg border border-[color:var(--hmr-border)] bg-transparent px-3 py-2 text-sm"
+                />
+                <button type="button" onClick={() => void saveRouteLink()} className="rounded-lg border px-3 py-2 text-xs">
+                  Salva
+                </button>
+              </div>
+            </div>
+            <div>
+              <p className="text-xs font-medium">Avatar gruppo</p>
+              <input
+                ref={avatarRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void uploadAvatar(f);
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => avatarRef.current?.click()}
+                className="mt-2 text-xs text-[color:var(--hmr-accent)]"
+              >
+                Carica avatar
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-3 min-h-0 flex-1 overflow-y-auto">
+            <p className="text-sm text-[color:var(--hmr-muted)]">Seleziona una scheda.</p>
           </div>
         )}
 

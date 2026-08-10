@@ -16,7 +16,7 @@ describe("ski-outings helpers", () => {
       owner: "alice",
       title: "Test",
       outing_date: "2026-02-01",
-      snow_notes: "neve buona",
+      notes: "neve buona",
       created_at: 1,
       updated_at: 2,
     };

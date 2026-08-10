@@ -376,6 +376,9 @@ function initSchema(db: Database.Database): void {
   migrateUserRoutesGravelActivity(db);
   migrateUserRoutesSkiActivity(db);
   migrateUserRoutesSourceMeta(db);
+  migrateUserProfilesTrust(db);
+  migrateV2SocialTables(db);
+  migrateSkiOutingsToOutings(db);
   seedAppUsers(db);
 }
 
@@ -384,6 +387,87 @@ function migratePoisRaceVisible(db: Database.Database): void {
   const names = new Set(cols.map((c) => c.name));
   if (!names.has("race_visible")) {
     db.exec(`ALTER TABLE pois ADD COLUMN race_visible INTEGER NOT NULL DEFAULT 1`);
+  }
+}
+
+function migrateUserProfilesTrust(db: Database.Database): void {
+  const cols = db.prepare(`PRAGMA table_info(user_profiles)`).all() as { name: string }[];
+  const names = new Set(cols.map((c) => c.name));
+  if (!names.has("trust_score")) {
+    db.exec(`ALTER TABLE user_profiles ADD COLUMN trust_score REAL NOT NULL DEFAULT 0`);
+  }
+  if (!names.has("trust_tier")) {
+    db.exec(
+      `ALTER TABLE user_profiles ADD COLUMN trust_tier TEXT NOT NULL DEFAULT 'new' CHECK(trust_tier IN ('new','reliable','expert'))`,
+    );
+  }
+}
+
+function migrateV2SocialTables(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS user_photos (
+      id TEXT PRIMARY KEY,
+      owner TEXT NOT NULL,
+      lng REAL NOT NULL,
+      lat REAL NOT NULL,
+      caption TEXT NOT NULL DEFAULT '',
+      photo_path TEXT NOT NULL,
+      route_id TEXT,
+      outing_id TEXT,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_user_photos_owner ON user_photos(owner, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_user_photos_bbox ON user_photos(lat, lng);
+
+    CREATE TABLE IF NOT EXISTS field_reports (
+      id TEXT PRIMARY KEY,
+      author TEXT NOT NULL,
+      lng REAL NOT NULL,
+      lat REAL NOT NULL,
+      kind TEXT NOT NULL CHECK(kind IN (
+        'avalanche','road_closed','steep','bridge_down',
+        'trail_blocked','water','other'
+      )),
+      description TEXT NOT NULL DEFAULT '',
+      route_id TEXT,
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','resolved')),
+      confirmation_count INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_field_reports_status ON field_reports(status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_field_reports_author ON field_reports(author);
+
+    CREATE TABLE IF NOT EXISTS field_report_confirmations (
+      report_id TEXT NOT NULL REFERENCES field_reports(id) ON DELETE CASCADE,
+      username TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (report_id, username)
+    );
+
+    CREATE TABLE IF NOT EXISTS group_invites (
+      group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+      username TEXT NOT NULL,
+      invited_by TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','accepted','declined')),
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (group_id, username)
+    );
+    CREATE INDEX IF NOT EXISTS idx_group_invites_user ON group_invites(username, status);
+  `);
+}
+
+function migrateSkiOutingsToOutings(db: Database.Database): void {
+  const tables = db
+    .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name IN ('ski_outings','outings')`)
+    .all() as { name: string }[];
+  const names = new Set(tables.map((t) => t.name));
+  if (names.has("outings") || !names.has("ski_outings")) return;
+  db.exec(`ALTER TABLE ski_outings RENAME TO outings`);
+  const cols = db.prepare(`PRAGMA table_info(outings)`).all() as { name: string }[];
+  if (cols.some((c) => c.name === "snow_notes") && !cols.some((c) => c.name === "notes")) {
+    db.exec(`ALTER TABLE outings RENAME COLUMN snow_notes TO notes`);
   }
 }
 
@@ -1636,9 +1720,13 @@ export type UserProfileRow = {
   avatar_path: string | null;
   home_area: string;
   level: ProfileLevel;
+  trust_score: number;
+  trust_tier: TrustTier;
   created_at: number;
   updated_at: number;
 };
+
+export type TrustTier = "new" | "reliable" | "expert";
 
 export type GroupType = "friends" | "club" | "trip" | "custom";
 
@@ -1688,8 +1776,8 @@ export function ensureUserProfile(username: string): UserProfileRow {
   const now = Date.now();
   getDb()
     .prepare(
-      `INSERT INTO user_profiles (username, display_name, bio, avatar_path, home_area, level, created_at, updated_at)
-       VALUES (?, '', '', NULL, '', 'intermediate', ?, ?)`
+      `INSERT INTO user_profiles (username, display_name, bio, avatar_path, home_area, level, trust_score, trust_tier, created_at, updated_at)
+       VALUES (?, '', '', NULL, '', 'intermediate', 0, 'new', ?, ?)`
     )
     .run(u, now, now);
   return getUserProfile(u)!;
@@ -1973,19 +2061,46 @@ export function isGroupOwner(groupId: string, username: string): boolean {
   return m?.role === "owner";
 }
 
-// --- Ski outings (gita vs percorso) ---
+// --- Outings (gita vs percorso) ---
 
-export type SkiOutingRow = {
+export type OutingRow = {
   id: string;
   route_id: string;
   owner: string;
   title: string;
   outing_date: string | null;
-  snow_notes: string;
+  notes: string;
   created_at: number;
   updated_at: number;
 };
 
+/** @deprecated use OutingRow */
+export type SkiOutingRow = OutingRow;
+
+export function insertOuting(input: {
+  id: string;
+  route_id: string;
+  owner: string;
+  title: string;
+  outing_date?: string | null;
+  notes?: string;
+  created_at: number;
+  updated_at: number;
+}): void {
+  getDb()
+    .prepare(
+      `INSERT INTO outings (id, route_id, owner, title, outing_date, notes, created_at, updated_at)
+       VALUES (@id, @route_id, @owner, @title, @outing_date, @notes, @created_at, @updated_at)`,
+    )
+    .run({
+      ...input,
+      owner: input.owner.trim().toLowerCase(),
+      outing_date: input.outing_date ?? null,
+      notes: input.notes ?? "",
+    });
+}
+
+/** @deprecated use insertOuting */
 export function insertSkiOuting(input: {
   id: string;
   route_id: string;
@@ -1993,20 +2108,11 @@ export function insertSkiOuting(input: {
   title: string;
   outing_date?: string | null;
   snow_notes?: string;
+  notes?: string;
   created_at: number;
   updated_at: number;
 }): void {
-  getDb()
-    .prepare(
-      `INSERT INTO ski_outings (id, route_id, owner, title, outing_date, snow_notes, created_at, updated_at)
-       VALUES (@id, @route_id, @owner, @title, @outing_date, @snow_notes, @created_at, @updated_at)`,
-    )
-    .run({
-      ...input,
-      owner: input.owner.trim().toLowerCase(),
-      outing_date: input.outing_date ?? null,
-      snow_notes: input.snow_notes ?? "",
-    });
+  insertOuting({ ...input, notes: input.notes ?? input.snow_notes ?? "" });
 }
 
 export function addOutingParticipant(outingId: string, username: string): void {
@@ -2021,8 +2127,13 @@ export function addOutingGroup(outingId: string, groupId: string): void {
     .run(outingId, groupId);
 }
 
-export function getSkiOuting(id: string): SkiOutingRow | undefined {
-  return getDb().prepare(`SELECT * FROM ski_outings WHERE id = ?`).get(id) as SkiOutingRow | undefined;
+export function getOuting(id: string): OutingRow | undefined {
+  return getDb().prepare(`SELECT * FROM outings WHERE id = ?`).get(id) as OutingRow | undefined;
+}
+
+/** @deprecated use getOuting */
+export function getSkiOuting(id: string): OutingRow | undefined {
+  return getOuting(id);
 }
 
 export function listPublicSkiRoutes(): UserRouteRow[] {
@@ -2040,7 +2151,7 @@ export function listSkiRoutesForMyOutings(username: string): UserRouteRow[] {
   return getDb()
     .prepare(
       `SELECT DISTINCT r.* FROM user_routes r
-       INNER JOIN ski_outings o ON o.route_id = r.id
+       INNER JOIN outings o ON o.route_id = r.id
        LEFT JOIN outing_participants p ON p.outing_id = o.id
        WHERE o.owner = ? OR p.username = ?
        ORDER BY r.updated_at DESC`,
@@ -2052,7 +2163,7 @@ export function listSkiRoutesForGroup(groupId: string): UserRouteRow[] {
   return getDb()
     .prepare(
       `SELECT DISTINCT r.* FROM user_routes r
-       INNER JOIN ski_outings o ON o.route_id = r.id
+       INNER JOIN outings o ON o.route_id = r.id
        INNER JOIN outing_groups og ON og.outing_id = o.id
        WHERE og.group_id = ?
        ORDER BY r.updated_at DESC`,
@@ -2093,57 +2204,488 @@ const OUTING_VISIBLE_SQL = `
   )
 `;
 
-export function canViewSkiOuting(outingId: string, username: string): boolean {
+export function canViewOuting(outingId: string, username: string): boolean {
   const user = normalizeUser(username);
   const row = getDb()
     .prepare(
-      `SELECT 1 AS ok FROM ski_outings o
+      `SELECT 1 AS ok FROM outings o
        WHERE o.id = @outingId AND (${OUTING_VISIBLE_SQL})`,
     )
     .get({ outingId, user }) as { ok: number } | undefined;
   return row?.ok === 1;
 }
 
-export function listOutingsForRoute(routeId: string): SkiOutingRow[] {
+/** @deprecated use canViewOuting */
+export function canViewSkiOuting(outingId: string, username: string): boolean {
+  return canViewOuting(outingId, username);
+}
+
+export function listOutingsForRoute(routeId: string): OutingRow[] {
   return getDb()
     .prepare(
-      `SELECT * FROM ski_outings
+      `SELECT * FROM outings
        WHERE route_id = ?
        ORDER BY outing_date DESC, updated_at DESC`,
     )
-    .all(routeId) as SkiOutingRow[];
+    .all(routeId) as OutingRow[];
 }
 
-export function listOutingsVisibleForRoute(routeId: string, username: string): SkiOutingRow[] {
+export function listOutingsVisibleForRoute(routeId: string, username: string): OutingRow[] {
   const user = normalizeUser(username);
   return getDb()
     .prepare(
-      `SELECT o.* FROM ski_outings o
+      `SELECT o.* FROM outings o
        WHERE o.route_id = @routeId AND (${OUTING_VISIBLE_SQL})
        ORDER BY o.outing_date DESC, o.updated_at DESC`,
     )
-    .all({ routeId, user }) as SkiOutingRow[];
+    .all({ routeId, user }) as OutingRow[];
 }
 
-export function listOutingsVisibleForUser(username: string): SkiOutingRow[] {
+export function listOutingsVisibleForUser(username: string): OutingRow[] {
   const user = normalizeUser(username);
   return getDb()
     .prepare(
-      `SELECT o.* FROM ski_outings o
+      `SELECT o.* FROM outings o
        WHERE ${OUTING_VISIBLE_SQL}
        ORDER BY o.outing_date DESC, o.updated_at DESC`,
     )
-    .all({ user }) as SkiOutingRow[];
+    .all({ user }) as OutingRow[];
 }
 
 export function countOutingsVisibleForRoute(routeId: string, username: string): number {
   const user = normalizeUser(username);
   const row = getDb()
     .prepare(
-      `SELECT COUNT(*) AS n FROM ski_outings o
+      `SELECT COUNT(*) AS n FROM outings o
        WHERE o.route_id = @routeId AND (${OUTING_VISIBLE_SQL})`,
     )
     .get({ routeId, user }) as { n: number };
   return row.n;
+}
+
+/* ---------------- User photos ---------------- */
+
+export type UserPhotoRow = {
+  id: string;
+  owner: string;
+  lng: number;
+  lat: number;
+  caption: string;
+  photo_path: string;
+  route_id: string | null;
+  outing_id: string | null;
+  created_at: number;
+};
+
+export function insertUserPhoto(input: {
+  id: string;
+  owner: string;
+  lng: number;
+  lat: number;
+  caption?: string;
+  photo_path: string;
+  route_id?: string | null;
+  outing_id?: string | null;
+  created_at: number;
+}): UserPhotoRow {
+  getDb()
+    .prepare(
+      `INSERT INTO user_photos (id, owner, lng, lat, caption, photo_path, route_id, outing_id, created_at)
+       VALUES (@id, @owner, @lng, @lat, @caption, @photo_path, @route_id, @outing_id, @created_at)`,
+    )
+    .run({
+      ...input,
+      owner: normalizeUser(input.owner),
+      caption: input.caption ?? "",
+      route_id: input.route_id ?? null,
+      outing_id: input.outing_id ?? null,
+    });
+  return getUserPhoto(input.id)!;
+}
+
+export function getUserPhoto(id: string): UserPhotoRow | undefined {
+  return getDb().prepare(`SELECT * FROM user_photos WHERE id = ?`).get(id) as UserPhotoRow | undefined;
+}
+
+export function countUserPhotos(owner: string): number {
+  const r = getDb()
+    .prepare(`SELECT COUNT(*) AS n FROM user_photos WHERE owner = ?`)
+    .get(normalizeUser(owner)) as { n: number };
+  return r.n;
+}
+
+export function listUserPhotos(owner: string, limit = 50): UserPhotoRow[] {
+  return getDb()
+    .prepare(`SELECT * FROM user_photos WHERE owner = ? ORDER BY created_at DESC LIMIT ?`)
+    .all(normalizeUser(owner), limit) as UserPhotoRow[];
+}
+
+export function listUserPhotosInBbox(
+  south: number,
+  west: number,
+  north: number,
+  east: number,
+  limit = 200,
+): UserPhotoRow[] {
+  return getDb()
+    .prepare(
+      `SELECT * FROM user_photos
+       WHERE lat BETWEEN @south AND @north AND lng BETWEEN @west AND @east
+       ORDER BY created_at DESC LIMIT @limit`,
+    )
+    .all({ south, west, north, east, limit }) as UserPhotoRow[];
+}
+
+/* ---------------- Field reports ---------------- */
+
+export type FieldReportKind =
+  | "avalanche"
+  | "road_closed"
+  | "steep"
+  | "bridge_down"
+  | "trail_blocked"
+  | "water"
+  | "other";
+
+export type FieldReportStatus = "active" | "resolved";
+
+export type FieldReportRow = {
+  id: string;
+  author: string;
+  lng: number;
+  lat: number;
+  kind: FieldReportKind;
+  description: string;
+  route_id: string | null;
+  status: FieldReportStatus;
+  confirmation_count: number;
+  created_at: number;
+  updated_at: number;
+};
+
+export function insertFieldReport(input: {
+  id: string;
+  author: string;
+  lng: number;
+  lat: number;
+  kind: FieldReportKind;
+  description?: string;
+  route_id?: string | null;
+  created_at: number;
+  updated_at: number;
+}): FieldReportRow {
+  getDb()
+    .prepare(
+      `INSERT INTO field_reports (id, author, lng, lat, kind, description, route_id, status, confirmation_count, created_at, updated_at)
+       VALUES (@id, @author, @lng, @lat, @kind, @description, @route_id, 'active', 0, @created_at, @updated_at)`,
+    )
+    .run({
+      ...input,
+      author: normalizeUser(input.author),
+      description: input.description ?? "",
+      route_id: input.route_id ?? null,
+    });
+  return getFieldReport(input.id)!;
+}
+
+export function getFieldReport(id: string): FieldReportRow | undefined {
+  return getDb().prepare(`SELECT * FROM field_reports WHERE id = ?`).get(id) as FieldReportRow | undefined;
+}
+
+export function listFieldReportsInBbox(
+  south: number,
+  west: number,
+  north: number,
+  east: number,
+  activeOnly = true,
+): FieldReportRow[] {
+  const statusClause = activeOnly ? `AND status = 'active'` : "";
+  return getDb()
+    .prepare(
+      `SELECT * FROM field_reports
+       WHERE lat BETWEEN @south AND @north AND lng BETWEEN @west AND @east ${statusClause}
+       ORDER BY updated_at DESC`,
+    )
+    .all({ south, west, north, east }) as FieldReportRow[];
+}
+
+export function listFieldReportsByAuthor(author: string): FieldReportRow[] {
+  return getDb()
+    .prepare(`SELECT * FROM field_reports WHERE author = ? ORDER BY created_at DESC`)
+    .all(normalizeUser(author)) as FieldReportRow[];
+}
+
+export function hasActiveReportNearby(
+  author: string,
+  lng: number,
+  lat: number,
+  radiusDeg = 0.002,
+): boolean {
+  const u = normalizeUser(author);
+  const row = getDb()
+    .prepare(
+      `SELECT 1 AS ok FROM field_reports
+       WHERE author = @u AND status = 'active'
+         AND lng BETWEEN @lng - @r AND @lng + @r
+         AND lat BETWEEN @lat - @r AND @lat + @r
+       LIMIT 1`,
+    )
+    .get({ u, lng, lat, r: radiusDeg }) as { ok: number } | undefined;
+  return !!row;
+}
+
+export function addFieldReportConfirmation(reportId: string, username: string): boolean {
+  const now = Date.now();
+  const res = getDb()
+    .prepare(
+      `INSERT OR IGNORE INTO field_report_confirmations (report_id, username, created_at) VALUES (?, ?, ?)`,
+    )
+    .run(reportId, normalizeUser(username), now);
+  if (res.changes > 0) {
+    getDb()
+      .prepare(
+        `UPDATE field_reports SET confirmation_count = confirmation_count + 1, updated_at = ? WHERE id = ?`,
+      )
+      .run(now, reportId);
+    const report = getFieldReport(reportId);
+    if (report && report.confirmation_count + 1 >= 2) {
+      recalcTrustScore(report.author);
+    }
+    return true;
+  }
+  return false;
+}
+
+export function resolveFieldReport(reportId: string): void {
+  const now = Date.now();
+  getDb()
+    .prepare(`UPDATE field_reports SET status = 'resolved', updated_at = ? WHERE id = ?`)
+    .run(now, reportId);
+}
+
+export function hasConfirmedReport(reportId: string, username: string): boolean {
+  const row = getDb()
+    .prepare(
+      `SELECT 1 AS ok FROM field_report_confirmations WHERE report_id = ? AND username = ?`,
+    )
+    .get(reportId, normalizeUser(username)) as { ok: number } | undefined;
+  return !!row;
+}
+
+export function countVerifiedReportsByAuthor(author: string): number {
+  const r = getDb()
+    .prepare(
+      `SELECT COUNT(*) AS n FROM field_reports WHERE author = ? AND status = 'active' AND confirmation_count >= 2`,
+    )
+    .get(normalizeUser(author)) as { n: number };
+  return r.n;
+}
+
+export function countConfirmationsReceived(author: string): number {
+  const r = getDb()
+    .prepare(
+      `SELECT COALESCE(SUM(confirmation_count), 0) AS n FROM field_reports WHERE author = ?`,
+    )
+    .get(normalizeUser(author)) as { n: number };
+  return r.n;
+}
+
+export function trustTierFromScore(score: number): TrustTier {
+  if (score >= 10) return "expert";
+  if (score >= 3) return "reliable";
+  return "new";
+}
+
+export function recalcTrustScore(username: string): void {
+  const u = normalizeUser(username);
+  const verified = countVerifiedReportsByAuthor(u);
+  const confirmations = countConfirmationsReceived(u);
+  const score = verified * 2 + confirmations;
+  const tier = trustTierFromScore(score);
+  getDb()
+    .prepare(`UPDATE user_profiles SET trust_score = ?, trust_tier = ?, updated_at = ? WHERE username = ?`)
+    .run(score, tier, Date.now(), u);
+}
+
+/* ---------------- Group invites ---------------- */
+
+export type GroupInviteStatus = "pending" | "accepted" | "declined";
+
+export type GroupInviteRow = {
+  group_id: string;
+  username: string;
+  invited_by: string;
+  status: GroupInviteStatus;
+  created_at: number;
+  updated_at: number;
+};
+
+export function insertGroupInvite(input: {
+  group_id: string;
+  username: string;
+  invited_by: string;
+  created_at: number;
+  updated_at: number;
+}): void {
+  getDb()
+    .prepare(
+      `INSERT OR REPLACE INTO group_invites (group_id, username, invited_by, status, created_at, updated_at)
+       VALUES (@group_id, @username, @invited_by, 'pending', @created_at, @updated_at)`,
+    )
+    .run({
+      ...input,
+      username: normalizeUser(input.username),
+      invited_by: normalizeUser(input.invited_by),
+    });
+}
+
+export function listPendingInvitesForUser(username: string): GroupInviteRow[] {
+  return getDb()
+    .prepare(
+      `SELECT * FROM group_invites WHERE username = ? AND status = 'pending' ORDER BY created_at DESC`,
+    )
+    .all(normalizeUser(username)) as GroupInviteRow[];
+}
+
+export function updateGroupInviteStatus(
+  groupId: string,
+  username: string,
+  status: GroupInviteStatus,
+): void {
+  getDb()
+    .prepare(
+      `UPDATE group_invites SET status = ?, updated_at = ? WHERE group_id = ? AND username = ?`,
+    )
+    .run(status, Date.now(), groupId, normalizeUser(username));
+}
+
+export function listOutingsForGroup(groupId: string): OutingRow[] {
+  return getDb()
+    .prepare(
+      `SELECT o.* FROM outings o
+       INNER JOIN outing_groups og ON og.outing_id = o.id
+       WHERE og.group_id = ?
+       ORDER BY o.outing_date DESC, o.updated_at DESC`,
+    )
+    .all(groupId) as OutingRow[];
+}
+
+export function listRoutesForExplore(
+  activity: UserRouteActivity | null,
+  scope: "public" | "mine" | "group",
+  username: string,
+  groupId?: string,
+): UserRouteRow[] {
+  const u = normalizeUser(username);
+  if (scope === "public") {
+    if (activity) {
+      return getDb()
+        .prepare(
+          `SELECT * FROM user_routes WHERE visibility = 'public' AND activity = ? ORDER BY updated_at DESC`,
+        )
+        .all(activity) as UserRouteRow[];
+    }
+    return getDb()
+      .prepare(`SELECT * FROM user_routes WHERE visibility = 'public' ORDER BY updated_at DESC`)
+      .all() as UserRouteRow[];
+  }
+  if (scope === "mine") {
+    if (activity) {
+      return getDb()
+        .prepare(
+          `SELECT DISTINCT r.* FROM user_routes r
+           INNER JOIN outings o ON o.route_id = r.id
+           LEFT JOIN outing_participants p ON p.outing_id = o.id
+           WHERE (o.owner = ? OR p.username = ?) AND r.activity = ?
+           ORDER BY r.updated_at DESC`,
+        )
+        .all(u, u, activity) as UserRouteRow[];
+    }
+    return getDb()
+      .prepare(
+        `SELECT DISTINCT r.* FROM user_routes r
+         INNER JOIN outings o ON o.route_id = r.id
+         LEFT JOIN outing_participants p ON p.outing_id = o.id
+         WHERE o.owner = ? OR p.username = ?
+         ORDER BY r.updated_at DESC`,
+      )
+      .all(u, u) as UserRouteRow[];
+  }
+  if (scope === "group" && groupId) {
+    if (activity) {
+      return getDb()
+        .prepare(
+          `SELECT DISTINCT r.* FROM user_routes r
+           INNER JOIN outings o ON o.route_id = r.id
+           INNER JOIN outing_groups og ON og.outing_id = o.id
+           WHERE og.group_id = ? AND r.activity = ?
+           ORDER BY r.updated_at DESC`,
+        )
+        .all(groupId, activity) as UserRouteRow[];
+    }
+    return listSkiRoutesForGroup(groupId);
+  }
+  return [];
+}
+
+export type UserStats = {
+  total_routes: number;
+  public_routes: number;
+  total_km: number;
+  total_elev_gain_m: number;
+  outings_count: number;
+  photos_count: number;
+  reports_sent: number;
+  reports_verified: number;
+  confirmations_received: number;
+  by_activity: Record<UserRouteActivity, number>;
+};
+
+export function getUserStats(username: string): UserStats {
+  const u = normalizeUser(username);
+  const routeAgg = getDb()
+    .prepare(
+      `SELECT COUNT(*) AS total_routes,
+              COALESCE(SUM(length_km), 0) AS total_km,
+              COALESCE(SUM(elev_gain_m), 0) AS total_elev_gain_m
+       FROM user_routes WHERE owner = ?`,
+    )
+    .get(u) as { total_routes: number; total_km: number; total_elev_gain_m: number };
+
+  const byActivity = getDb()
+    .prepare(`SELECT activity, COUNT(*) AS n FROM user_routes WHERE owner = ? GROUP BY activity`)
+    .all(u) as Array<{ activity: UserRouteActivity; n: number }>;
+
+  const by_activity: Record<UserRouteActivity, number> = {
+    road: 0,
+    mtb: 0,
+    hike: 0,
+    gravel: 0,
+    ski: 0,
+  };
+  for (const row of byActivity) {
+    by_activity[row.activity] = row.n;
+  }
+
+  const outingsRow = getDb()
+    .prepare(`SELECT COUNT(*) AS n FROM outings WHERE owner = ?`)
+    .get(u) as { n: number };
+
+  const reportsRow = getDb()
+    .prepare(`SELECT COUNT(*) AS n FROM field_reports WHERE author = ?`)
+    .get(u) as { n: number };
+
+  return {
+    total_routes: routeAgg.total_routes,
+    public_routes: countPublicRoutesForOwner(u),
+    total_km: routeAgg.total_km,
+    total_elev_gain_m: routeAgg.total_elev_gain_m,
+    outings_count: outingsRow.n,
+    photos_count: countUserPhotos(u),
+    reports_sent: reportsRow.n,
+    reports_verified: countVerifiedReportsByAuthor(u),
+    confirmations_received: countConfirmationsReceived(u),
+    by_activity,
+  };
 }
 

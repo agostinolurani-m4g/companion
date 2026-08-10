@@ -4,7 +4,10 @@ import {
   countFollowers,
   countFollowing,
   followUser,
+  getUserProfile,
   isFollowing,
+  listFollowers,
+  listFollowing,
   unfollowUser,
 } from "@/lib/db";
 
@@ -12,7 +15,7 @@ export const runtime = "nodejs";
 
 type Ctx = { params: Promise<{ username: string }> };
 
-export async function GET(_req: Request, ctx: Ctx) {
+export async function GET(req: Request, ctx: Ctx) {
   const auth = await requireV2Beta();
   if (!auth) return NextResponse.json({ error: "Non autorizzato" }, { status: 403 });
 
@@ -20,6 +23,17 @@ export async function GET(_req: Request, ctx: Ctx) {
   const u = username.trim().toLowerCase();
   if (!isKnownHmrUser(u)) {
     return NextResponse.json({ error: "Utente non trovato" }, { status: 404 });
+  }
+
+  const url = new URL(req.url);
+  const list = url.searchParams.get("list");
+  if (list === "followers" || list === "following") {
+    const names = list === "followers" ? listFollowers(u) : listFollowing(u);
+    const users = names.map((name) => {
+      const p = getUserProfile(name);
+      return { username: name, display_name: p?.display_name || name };
+    });
+    return NextResponse.json({ users });
   }
 
   return NextResponse.json({

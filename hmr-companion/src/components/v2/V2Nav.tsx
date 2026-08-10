@@ -11,8 +11,8 @@ type Props = {
 const LINKS = [
   { href: "/v2/plan", label: "Pianifica" },
   { href: "/v2/scialpinismo", label: "Scialpinismo" },
-  { href: "/v2/scialpinismo/esplora", label: "Esplora" },
-  { href: "/v2/me", label: "Percorsi" },
+  { href: "/v2/esplora", label: "Esplora" },
+  { href: "/v2/me", label: "Area personale" },
   { href: "/v2/groups", label: "Gruppi" },
 ] as const;
 

@@ -5,10 +5,12 @@ import {
   countFollowing,
   countPublicRoutesForOwner,
   ensureUserProfile,
+  getUserStats,
   isFollowing,
   listPublicRoutes,
+  listUserPhotos,
 } from "@/lib/db";
-import { serializeProfile } from "@/lib/social-serialize";
+import { serializeProfile, serializeUserStats } from "@/lib/social-serialize";
 
 export const runtime = "nodejs";
 
@@ -25,10 +27,12 @@ export async function GET(_req: Request, ctx: Ctx) {
   }
 
   const row = ensureUserProfile(u);
+  const stats = getUserStats(u);
   const profile = serializeProfile(row, {
     followers: countFollowers(u),
     following: countFollowing(u),
     public_routes: countPublicRoutesForOwner(u),
+    stats,
   });
 
   const routes = listPublicRoutes()
@@ -42,9 +46,21 @@ export async function GET(_req: Request, ctx: Ctx) {
       updated_at: r.updated_at,
     }));
 
+  const photos = listUserPhotos(u, 12).map((p) => ({
+    id: p.id,
+    lng: p.lng,
+    lat: p.lat,
+    caption: p.caption,
+    photo_path: p.photo_path,
+    url: `/api/field-photo?path=${encodeURIComponent(p.photo_path)}`,
+    created_at: p.created_at,
+  }));
+
   return NextResponse.json({
     profile,
+    stats: serializeUserStats(stats),
     routes,
+    photos,
     is_self: auth.email === u,
     is_following: auth.email === u ? false : isFollowing(auth.email, u),
   });

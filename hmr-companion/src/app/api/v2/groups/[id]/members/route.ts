@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { isKnownHmrUser, requireV2Beta } from "@/lib/auth";
-import { addGroupMember, getGroup, getGroupMember, isGroupAdmin } from "@/lib/db";
-import { serializeGroupSummary } from "@/lib/social-serialize";
+import {
+  getGroup,
+  getGroupMember,
+  insertGroupInvite,
+  isGroupAdmin,
+} from "@/lib/db";
 
 export const runtime = "nodejs";
 
@@ -28,6 +32,13 @@ export async function POST(req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "Già membro" }, { status: 409 });
   }
 
-  addGroupMember({ group_id: id, username: u, role: "member", joined_at: Date.now() });
-  return NextResponse.json({ group: serializeGroupSummary(getGroup(id)!, auth.email) });
+  const now = Date.now();
+  insertGroupInvite({
+    group_id: id,
+    username: u,
+    invited_by: auth.email,
+    created_at: now,
+    updated_at: now,
+  });
+  return NextResponse.json({ ok: true, invited: u });
 }
