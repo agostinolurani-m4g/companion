@@ -55,9 +55,36 @@ type Props = {
   onReportSelect?: (reportId: string) => void;
   /** Marker partenza (P) / arrivo (A). */
   routeMarkersGeoJson?: GeoJSON.FeatureCollection | null;
+  /** Terreno 3D (DEM + pitch). Default 2D: outdoor con sentieri e curve di livello. */
+  terrain3d?: boolean;
 };
 
 const MAPTILER_KEY = process.env.NEXT_PUBLIC_MAPTILER_KEY?.trim() || undefined;
+const TERRAIN_SOURCE_ID = "maptiler-terrain-rgb";
+const TERRAIN_3D_PITCH = 55;
+const TERRAIN_EXAGGERATION = 1.35;
+
+function applyTerrain3d(map: MaplibreMap, enabled: boolean, animate: boolean) {
+  if (!MAPTILER_KEY) {
+    map.setTerrain(null);
+    map.easeTo({ pitch: 0, duration: animate ? 400 : 0 });
+    return;
+  }
+  if (enabled) {
+    if (!map.getSource(TERRAIN_SOURCE_ID)) {
+      map.addSource(TERRAIN_SOURCE_ID, {
+        type: "raster-dem",
+        url: `https://api.maptiler.com/tiles/terrain-rgb-v2/tiles.json?key=${MAPTILER_KEY}`,
+        tileSize: 256,
+      });
+    }
+    map.setTerrain({ source: TERRAIN_SOURCE_ID, exaggeration: TERRAIN_EXAGGERATION });
+    map.easeTo({ pitch: Math.max(map.getPitch(), TERRAIN_3D_PITCH), duration: animate ? 700 : 0 });
+  } else {
+    map.setTerrain(null);
+    map.easeTo({ pitch: 0, duration: animate ? 500 : 0 });
+  }
+}
 
 const MAPTILER_STYLES = {
   outdoor: "outdoor-v2",
@@ -229,6 +256,7 @@ export default function V2PlanMap({
   onRouteSelect,
   onReportSelect,
   routeMarkersGeoJson,
+  terrain3d = false,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MaplibreMap | null>(null);
@@ -237,6 +265,8 @@ export default function V2PlanMap({
   const layerHandlerCleanupRef = useRef<(() => void) | null>(null);
   const [mapReady, setMapReady] = useState(false);
   const [baseStyle, setBaseStyle] = useState<BaseStyleId>("outdoor");
+  const [view3d, setView3d] = useState(terrain3d);
+  const view3dRef = useRef(terrain3d);
   const [overlayEpoch, setOverlayEpoch] = useState(0);
   const onInteractionRef = useRef(onMapInteraction);
   const onWaypointMoveRef = useRef(onWaypointMove);
@@ -270,6 +300,12 @@ export default function V2PlanMap({
   useEffect(() => {
     waypointsRef.current = waypoints;
   }, [waypoints]);
+  useEffect(() => {
+    setView3d(terrain3d);
+  }, [terrain3d]);
+  useEffect(() => {
+    view3dRef.current = view3d;
+  }, [view3d]);
 
   const addRasterOverlay = useCallback(
     (
@@ -647,6 +683,7 @@ export default function V2PlanMap({
     (map: MaplibreMap) => {
       if (!map.isStyleLoaded()) return;
       ensureOverlays(map);
+      applyTerrain3d(map, view3dRef.current, false);
       setMapReady(true);
       const b = map.getBounds();
       onViewportChangeRef.current?.({
@@ -683,10 +720,11 @@ export default function V2PlanMap({
         initialCenter?.lat ?? DEFAULT_MAP_VIEW_CENTER.lat,
       ],
       zoom: initialCenter?.zoom ?? DEFAULT_MAP_VIEW_CENTER.zoom,
-      pitch: MAPTILER_KEY ? 30 : 0,
+      pitch: MAPTILER_KEY && terrain3d ? TERRAIN_3D_PITCH : 0,
+      maxPitch: 85,
       attributionControl: { compact: true },
     });
-    map.addControl(new maplibregl.NavigationControl({ visualizePitch: Boolean(MAPTILER_KEY) }), "top-right");
+    map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-right");
     map.on("load", () => handleStyleReady(map));
     map.on("styledata", () => {
       // Re-add overlays whenever the style is (re)loaded and our layers are
@@ -892,9 +930,16 @@ export default function V2PlanMap({
     map.flyTo({
       center: [flyTo.lng, flyTo.lat],
       zoom: flyTo.zoom ?? Math.max(map.getZoom(), 13),
+      pitch: view3dRef.current ? Math.max(map.getPitch(), TERRAIN_3D_PITCH) : 0,
       duration: 900,
     });
   }, [flyTo?.lng, flyTo?.lat, flyTo?.zoom, flyTo?.key]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    applyTerrain3d(map, view3d, true);
+  }, [view3d, mapReady]);
 
   return (
     <div className="relative h-full w-full min-h-0">
@@ -919,6 +964,15 @@ export default function V2PlanMap({
               {BASE_STYLE_LABELS[id]}
             </button>
           ))}
+          <button
+            type="button"
+            onClick={() => setView3d((v) => !v)}
+            className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+              view3d ? "bg-sky-500 text-slate-950" : "text-slate-200 hover:bg-white/10"
+            }`}
+          >
+            {view3d ? "3D" : "2D"}
+          </button>
         </div>
       ) : null}
     </div>

@@ -476,6 +476,7 @@ export default function V2SkiUpload({ isAdmin = false, username }: Props) {
               showWaypoints={false}
               slopeVisible={Boolean(SLOPE_TILES_URL)}
               slopeOpacity={SKI_SLOPE_DEFAULT_OPACITY}
+              terrain3d
             />
             {step === "review" && meta && gpxCoords ? (
               <V2SkiRouteBanner

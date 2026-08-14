@@ -469,6 +469,7 @@ export default function V2Explore({ isAdmin = false, username }: Props) {
             avalancheGeoJson={avalancheGeoJson}
             avalancheVisible={avalancheVisible && activity === "ski"}
             avalancheOpacity={SKI_AVALANCHE_DEFAULT_OPACITY}
+            terrain3d={activity === "ski"}
           />
           {selectedRoute ? (
             <V2SkiRouteBanner

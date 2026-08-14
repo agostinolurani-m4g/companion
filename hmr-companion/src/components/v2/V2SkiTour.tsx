@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import V2Nav from "@/components/v2/V2Nav";
 import V2PlanMap, { type V2MapClickTarget, type V2Waypoint } from "@/components/v2/V2PlanMap";
@@ -94,6 +94,7 @@ export default function V2SkiTour({ isAdmin = false, username }: Props) {
     source_url: string | null;
     license: string | null;
   } | null>(null);
+  const descentAnchoredRef = useRef(false);
 
   const [slopeVisible, setSlopeVisible] = useState(true);
   const [avalancheVisible, setAvalancheVisible] = useState(false);
@@ -148,6 +149,18 @@ export default function V2SkiTour({ isAdmin = false, username }: Props) {
       return;
     }
     setAscentCoords(buildTrackFromWaypoints(ascentWaypoints));
+  }, [ascentWaypoints]);
+
+  useEffect(() => {
+    if (!descentAnchoredRef.current) return;
+    const lastAscent = ascentWaypoints[ascentWaypoints.length - 1];
+    if (!lastAscent) return;
+    setDescentWaypoints((wps) => {
+      if (wps.length === 0) return [lastAscent];
+      const first = wps[0];
+      if (first.lng === lastAscent.lng && first.lat === lastAscent.lat) return wps;
+      return [lastAscent, ...wps.slice(1)];
+    });
   }, [ascentWaypoints]);
 
   useEffect(() => {
@@ -373,6 +386,7 @@ export default function V2SkiTour({ isAdmin = false, username }: Props) {
         const r = data.route;
         if (r.activity !== "ski") throw new Error("Percorso non di scialpinismo");
         setName(r.name);
+        descentAnchoredRef.current = false;
         const wp = parseSkiWaypoints(r.waypoints);
         const { ascentCoords: ac, descentCoords: dc } = parseSkiGeoJson(r.geojson);
         setAscentWaypoints(
@@ -426,8 +440,24 @@ export default function V2SkiTour({ isAdmin = false, username }: Props) {
     (target: V2MapClickTarget) => {
       if (target.kind !== "map") return;
       const wp: V2Waypoint = { lng: target.lng, lat: target.lat };
-      const list = trackMode === "ascent" ? ascentWaypoints : descentWaypoints;
-      const prev = list[list.length - 1] ?? null;
+      if (trackMode === "ascent") {
+        const prev = ascentWaypoints[ascentWaypoints.length - 1] ?? null;
+        const gap = validateWaypointGap(prev, wp);
+        if (!gap.ok) {
+          setErr(
+            `Tappa troppo distante (${Math.round(gap.distanceKm * 1000)} m). Massimo ${gap.maxGapKm * 1000} m — aggiungi un punto intermedio.`,
+          );
+          return;
+        }
+        setErr(null);
+        setAscentWaypoints((wps) => [...wps, wp]);
+        return;
+      }
+
+      const lastAscent = ascentWaypoints[ascentWaypoints.length - 1] ?? null;
+      const descentList =
+        descentWaypoints.length === 0 && lastAscent ? [lastAscent] : descentWaypoints;
+      const prev = descentList[descentList.length - 1] ?? lastAscent;
       const gap = validateWaypointGap(prev, wp);
       if (!gap.ok) {
         setErr(
@@ -436,24 +466,34 @@ export default function V2SkiTour({ isAdmin = false, username }: Props) {
         return;
       }
       setErr(null);
-      if (trackMode === "ascent") {
-        setAscentWaypoints((wps) => [...wps, wp]);
-      } else {
-        setDescentWaypoints((wps) => [...wps, wp]);
-      }
+      if (lastAscent) descentAnchoredRef.current = true;
+      setDescentWaypoints([...descentList, wp]);
     },
     [trackMode, ascentWaypoints, descentWaypoints],
   );
+
+  const selectTrackMode = (mode: SkiTrackMode) => {
+    setTrackMode(mode);
+    if (mode !== "descent") return;
+    const lastAscent = ascentWaypoints[ascentWaypoints.length - 1];
+    if (!lastAscent || descentWaypoints.length > 0) return;
+    descentAnchoredRef.current = true;
+    setDescentWaypoints([lastAscent]);
+  };
 
   const undoLastWaypoint = () => {
     if (trackMode === "ascent") {
       setAscentWaypoints((wps) => wps.slice(0, -1));
     } else {
-      setDescentWaypoints((wps) => wps.slice(0, -1));
+      setDescentWaypoints((wps) => {
+        const minKeep = descentAnchoredRef.current && ascentWaypoints.length > 0 ? 1 : 0;
+        return wps.length <= minKeep ? wps.slice(0, minKeep) : wps.slice(0, -1);
+      });
     }
   };
 
   const clearAll = () => {
+    descentAnchoredRef.current = false;
     setAscentWaypoints([]);
     setDescentWaypoints([]);
     setAscentCoords(null);
@@ -609,7 +649,7 @@ export default function V2SkiTour({ isAdmin = false, username }: Props) {
               <button
                 key={mode}
                 type="button"
-                onClick={() => setTrackMode(mode)}
+                onClick={() => selectTrackMode(mode)}
                 className={
                   trackMode === mode
                     ? "flex-1 rounded-lg px-2.5 py-1.5 text-xs font-medium text-white"
@@ -627,8 +667,9 @@ export default function V2SkiTour({ isAdmin = false, username }: Props) {
           </div>
           <p className="text-[10px] text-[color:var(--hmr-muted)]">
             Clicca sulla mappa per aggiungere tappe (max {SKI_MAX_WAYPOINT_GAP_KM * 1000} m tra
-            due punti). Tratti con pendenza &gt;{SKI_GRADE_WARN_PCT}% sono evidenziati in arancio
-            (&gt;{SKI_GRADE_ALERT_PCT}% in rosso).
+            due punti). La discesa parte automaticamente dall&apos;ultimo punto di salita. Tratti
+            con pendenza &gt;{SKI_GRADE_WARN_PCT}% sono evidenziati in arancio (&gt;
+            {SKI_GRADE_ALERT_PCT}% in rosso).
           </p>
 
           <div className="grid grid-cols-2 gap-2 text-xs">
@@ -823,6 +864,7 @@ export default function V2SkiTour({ isAdmin = false, username }: Props) {
               avalancheGeoJson={avalancheGeoJson}
               avalancheVisible={avalancheVisible}
               avalancheOpacity={SKI_AVALANCHE_DEFAULT_OPACITY}
+              terrain3d
             />
             {showTrackBanner ? (
               <V2SkiRouteBanner
