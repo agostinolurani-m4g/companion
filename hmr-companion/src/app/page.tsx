@@ -7,9 +7,16 @@ import { listTracks } from "@/lib/db";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-export default async function HomePage() {
+export default async function HomePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ amaro?: string | string[] }>;
+}) {
   const sessionEmail = await getCurrentSessionEmail();
-  if (!sessionEmail) return <LoginGate />;
+  if (!sessionEmail) {
+    const { amaro } = await searchParams;
+    return <LoginGate amaroError={typeof amaro === "string" ? amaro : undefined} />;
+  }
 
   const tracks: TrackPickerItem[] = listTracks().map((t) => ({
     id: t.id,

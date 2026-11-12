@@ -3,11 +3,20 @@
 import { useState, type FormEvent } from "react";
 import { BrandMark } from "@/components/v2/V2Shell";
 
-export default function LoginGate() {
+const AMARO_ERRORS: Readonly<Record<string, string>> = {
+  invalid: "Accesso da Amaro scaduto o non valido: riprova dall'area tesserati.",
+  inactive: "Tessera Amaro non attiva: completa il tesseramento per entrare.",
+  unreachable: "Il sito Amaro non risponde: riprova tra poco.",
+  disabled: "Il tuo accesso a Companion è stato disattivato.",
+};
+
+export default function LoginGate({ amaroError }: { amaroError?: string }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(
+    amaroError ? (AMARO_ERRORS[amaroError] ?? AMARO_ERRORS.invalid) : null
+  );
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -74,6 +83,15 @@ export default function LoginGate() {
         <button type="submit" disabled={busy} className="ui-btn ui-btn-primary mt-6 !min-h-[44px] w-full !text-[14px]">
           {busy ? "Accesso…" : "Accedi"}
         </button>
+
+        <div className="mt-6 border-t border-[color:var(--hmr-border)] pt-6">
+          <a href="/api/auth/amaro/start" className="ui-btn !min-h-[44px] w-full !text-[14px]">
+            Entra come tesserato Amaro
+          </a>
+          <p className="mt-2 text-[12px] text-[color:var(--hmr-muted)]">
+            Passi dall&apos;area tesserati di amarobici.it: nessun&apos;altra password.
+          </p>
+        </div>
       </form>
     </main>
   );

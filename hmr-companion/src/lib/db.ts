@@ -261,6 +261,15 @@ function initSchema(db: Database.Database): void {
       created_at INTEGER NOT NULL
     );
 
+    -- Tesserati Amaro entrati dall'area tesserati (SSO): member_id Amaro -> utente locale.
+    CREATE TABLE IF NOT EXISTS amaro_members (
+      member_id INTEGER PRIMARY KEY,
+      username TEXT NOT NULL UNIQUE,
+      email TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL,
+      last_login_at INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS user_routes (
       id TEXT PRIMARY KEY,
       owner TEXT NOT NULL,
@@ -1719,6 +1728,47 @@ export function countAppUsersByRole(role: AppUserRole): number {
     .prepare(`SELECT COUNT(*) AS n FROM app_users WHERE role = ? AND active = 1`)
     .get(role) as { n: number };
   return r.n;
+}
+
+export type AmaroMemberRow = {
+  member_id: number;
+  username: string;
+  email: string;
+  created_at: number;
+  last_login_at: number;
+};
+
+export function getAmaroMemberById(memberId: number): AmaroMemberRow | undefined {
+  return getDb()
+    .prepare(`SELECT * FROM amaro_members WHERE member_id = ?`)
+    .get(memberId) as AmaroMemberRow | undefined;
+}
+
+export function isAmaroMemberUsername(username: string): boolean {
+  const row = getDb()
+    .prepare(`SELECT 1 AS ok FROM amaro_members WHERE username = ?`)
+    .get(username.trim().toLowerCase());
+  return row !== undefined;
+}
+
+export function insertAmaroMember(input: {
+  member_id: number;
+  username: string;
+  email: string;
+  now: number;
+}): void {
+  getDb()
+    .prepare(
+      `INSERT INTO amaro_members (member_id, username, email, created_at, last_login_at)
+       VALUES (?, ?, ?, ?, ?)`
+    )
+    .run(input.member_id, input.username.trim().toLowerCase(), input.email, input.now, input.now);
+}
+
+export function touchAmaroMember(memberId: number, email: string, now: number): void {
+  getDb()
+    .prepare(`UPDATE amaro_members SET email = ?, last_login_at = ? WHERE member_id = ?`)
+    .run(email, now, memberId);
 }
 
 export function listRoutesForOwner(owner: string): UserRouteRow[] {

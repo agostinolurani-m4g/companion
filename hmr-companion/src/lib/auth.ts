@@ -6,6 +6,7 @@ import {
   getAuthSessionByTokenHash,
   hashAppPassword,
   insertAuthSession,
+  isAmaroMemberUsername,
   pruneAuthSessions,
 } from "@/lib/db";
 
@@ -139,7 +140,8 @@ export function isAdminUser(username: string): boolean {
 export function isV2BetaUser(username: string): boolean {
   const u = normalizeUsername(username);
   if (!isKnownHmrUser(u)) return false;
-  return V2_BETA_USERS.has(u);
+  // I tesserati Amaro entrati dall'area tesserati hanno accesso alla v2.
+  return V2_BETA_USERS.has(u) || isAmaroMemberUsername(u);
 }
 
 export async function requireAdmin(): Promise<{ email: string } | null> {
