@@ -88,6 +88,7 @@ describe("buildFullRoadbook", () => {
         km_end: 2,
         severity: "info",
         description: "",
+        description_en: "",
       },
     ];
     const chunks = buildFullRoadbook({

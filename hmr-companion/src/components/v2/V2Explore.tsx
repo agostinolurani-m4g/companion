@@ -3,13 +3,13 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import V2Nav from "@/components/v2/V2Nav";
 import V2PhotoCapture from "@/components/v2/V2PhotoCapture";
 import V2PlanMap, { type V2MapClickTarget } from "@/components/v2/V2PlanMap";
 import V2ReportSheet, { V2ReportCreateSheet } from "@/components/v2/V2ReportSheet";
-import V2SkiOutingPanel from "@/components/v2/V2SkiOutingPanel";
+import V2OutingList from "@/components/v2/V2OutingList";
 import V2SkiRouteBanner from "@/components/v2/V2SkiRouteBanner";
 import type { UserRouteActivity } from "@/lib/db";
+import { exploreActivityOptions, outingPlanHref, routeEditorHref } from "@/lib/sports";
 import { fetchJson } from "@/lib/fetch-json";
 import {
   applyExploreSelection,
@@ -60,20 +60,7 @@ type ReportDto = {
   viewer_confirmed?: boolean;
 };
 
-const ACTIVITIES: { value: UserRouteActivity | "all"; label: string }[] = [
-  { value: "all", label: "Tutti" },
-  { value: "ski", label: "Sci" },
-  { value: "hike", label: "Trekking" },
-  { value: "road", label: "Strada" },
-  { value: "mtb", label: "MTB" },
-  { value: "gravel", label: "Gravel" },
-];
-
-function routeEditorHref(activity: UserRouteActivity, id: string): string {
-  return activity === "ski"
-    ? `/v2/scialpinismo?route=${encodeURIComponent(id)}`
-    : `/v2/plan?route=${encodeURIComponent(id)}`;
-}
+const ACTIVITIES = exploreActivityOptions();
 
 export default function V2Explore({ isAdmin = false, username }: Props) {
   const router = useRouter();
@@ -86,8 +73,6 @@ export default function V2Explore({ isAdmin = false, username }: Props) {
   const [exploreGeoJson, setExploreGeoJson] = useState<GeoJSON.FeatureCollection | null>(null);
   const [routes, setRoutes] = useState<RouteSummary[]>([]);
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
-  const [outingPanelKey, setOutingPanelKey] = useState(0);
-  const [openOutingForm, setOpenOutingForm] = useState(false);
   const [flyTo, setFlyTo] = useState<{ lng: number; lat: number; zoom?: number; key?: number } | null>(null);
   const [busy, setBusy] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -241,7 +226,6 @@ export default function V2Explore({ isAdmin = false, username }: Props) {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <V2Nav isAdmin={isAdmin} username={username} />
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
         <aside className="hmr-panel z-10 flex max-h-[45vh] shrink-0 flex-col gap-3 overflow-y-auto border-b border-[color:var(--hmr-border)]/60 p-3 lg:max-h-none lg:w-80 lg:border-b-0 lg:border-r">
           <div>
@@ -370,7 +354,7 @@ export default function V2Explore({ isAdmin = false, username }: Props) {
               onClick={() => setReportMode((v) => !v)}
               className={
                 reportMode
-                  ? "rounded-lg bg-amber-500 px-2 py-1 text-[10px] text-slate-950"
+                  ? "rounded-lg bg-[color:var(--hmr-warn)]/100 px-2 py-1 text-[10px] text-slate-950"
                   : "rounded-lg border border-[color:var(--hmr-border)] px-2 py-1 text-[10px]"
               }
             >
@@ -395,10 +379,7 @@ export default function V2Explore({ isAdmin = false, username }: Props) {
                 <li key={r.id}>
                   <button
                     type="button"
-                    onClick={() => {
-                      setOpenOutingForm(false);
-                      setSelectedRouteId(r.id);
-                    }}
+                    onClick={() => setSelectedRouteId(r.id)}
                     className={
                       selectedRouteId === r.id
                         ? "w-full rounded-lg bg-[color:var(--hmr-elev)] px-2 py-1.5 text-left font-medium"
@@ -414,15 +395,14 @@ export default function V2Explore({ isAdmin = false, username }: Props) {
           ) : null}
 
           {selectedRoute ? (
-            <V2SkiOutingPanel
-              key={`${selectedRoute.id}-${outingPanelKey}`}
+            <V2OutingList
+              key={selectedRoute.id}
               routeId={selectedRoute.id}
-              routeName={selectedRoute.name}
-              initialShowForm={openOutingForm}
+              planHref={outingPlanHref(selectedRoute.activity, selectedRoute.id)}
             />
           ) : null}
 
-          {err ? <p className="text-xs text-red-400">{err}</p> : null}
+          {err ? <p className="text-xs text-[color:var(--hmr-danger)]">{err}</p> : null}
         </aside>
 
         <div className="relative min-h-[50vh] flex-1 lg:min-h-0">
@@ -444,6 +424,7 @@ export default function V2Explore({ isAdmin = false, username }: Props) {
               if (!f) return;
               const p = f.properties as {
                 reportId: string;
+                kind: FieldReportKind;
                 kindLabel: string;
                 author: string;
                 description: string;
@@ -453,7 +434,7 @@ export default function V2Explore({ isAdmin = false, username }: Props) {
               setSelectedReport({
                 id: p.reportId,
                 author: p.author,
-                kind: "other",
+                kind: p.kind,
                 kind_label: p.kindLabel,
                 description: p.description,
                 confirmation_count: p.confirmationCount,
@@ -469,6 +450,7 @@ export default function V2Explore({ isAdmin = false, username }: Props) {
             avalancheGeoJson={avalancheGeoJson}
             avalancheVisible={avalancheVisible && activity === "ski"}
             avalancheOpacity={SKI_AVALANCHE_DEFAULT_OPACITY}
+            mapSport={activity === "all" ? "hike" : activity}
             terrain3d={activity === "ski"}
           />
           {selectedRoute ? (
@@ -482,10 +464,7 @@ export default function V2Explore({ isAdmin = false, username }: Props) {
               sourceUrl={selectedRoute.source_url}
               license={selectedRoute.license}
               onOpen={() => router.push(routeEditorHref(selectedRoute.activity, selectedRoute.id))}
-              onRegisterOuting={() => {
-                setOpenOutingForm(true);
-                setOutingPanelKey((k) => k + 1);
-              }}
+              onRegisterOuting={() => router.push(outingPlanHref(selectedRoute.activity, selectedRoute.id))}
               onDismiss={() => setSelectedRouteId(null)}
             />
           ) : null}

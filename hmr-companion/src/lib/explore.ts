@@ -1,4 +1,6 @@
 import type { UserRouteActivity, UserRouteRow } from "@/lib/db";
+import { activityExploreColor, isUserRouteActivity } from "@/lib/sports";
+import { simplifyToMaxPoints } from "@/lib/line-simplify";
 import { parseSkiGeoJson, routeEndpointsFromSkiGeojson, SKI_TRACK_COLORS } from "@/lib/ski-overlays";
 
 export type ExploreScope = "public" | "mine" | `group:${string}`;
@@ -11,20 +13,11 @@ export function parseExploreScope(raw: string | null): ExploreScope | null {
 
 export function parseActivityFilter(raw: string | null): UserRouteActivity | null {
   if (!raw || raw === "all") return null;
-  const valid: UserRouteActivity[] = ["road", "mtb", "hike", "gravel", "ski"];
-  return valid.includes(raw as UserRouteActivity) ? (raw as UserRouteActivity) : null;
+  return isUserRouteActivity(raw) ? raw : null;
 }
 
-const ACTIVITY_COLORS: Record<UserRouteActivity, string> = {
-  road: "#60a5fa",
-  mtb: "#34d399",
-  hike: "#fbbf24",
-  gravel: "#a78bfa",
-  ski: SKI_TRACK_COLORS.ascent,
-};
-
 /** Converte percorsi in FeatureCollection per mappa esplorabile. */
-export function routesToExploreGeoJson(routes: UserRouteRow[]): GeoJSON.FeatureCollection {
+export function routesToExploreGeoJson(routes: UserRouteRow[], maxPoints?: number): GeoJSON.FeatureCollection {
   const features: GeoJSON.Feature<GeoJSON.LineString>[] = [];
 
   for (const route of routes) {
@@ -81,6 +74,12 @@ export function routesToExploreGeoJson(routes: UserRouteRow[]): GeoJSON.FeatureC
     }
   }
 
+  if (maxPoints) {
+    for (const f of features) {
+      const c = f.geometry.coordinates;
+      if (c.length > maxPoints) f.geometry.coordinates = simplifyToMaxPoints(c, maxPoints);
+    }
+  }
   return { type: "FeatureCollection", features };
 }
 
@@ -97,7 +96,7 @@ function lineFeature(
       activity: route.activity,
       mode,
       owner: route.owner,
-      color: ACTIVITY_COLORS[route.activity],
+      color: activityExploreColor(route.activity),
       dimmed: false,
     },
     geometry: { type: "LineString", coordinates: coords },

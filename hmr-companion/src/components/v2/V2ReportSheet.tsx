@@ -31,11 +31,24 @@ type CreateProps = {
   lat: number;
   onClose: () => void;
   onCreated: () => void;
+  /** Precompilazione (es. da un'uscita importata): l'utente può cambiare tutto. */
+  initialKind?: FieldReportKind;
+  initialDescription?: string;
+  /** Contesto mostrato sotto il titolo (es. "Dalla tua uscita del 3 nov"). */
+  contextLabel?: string;
 };
 
-export function V2ReportCreateSheet({ lng, lat, onClose, onCreated }: CreateProps) {
-  const [kind, setKind] = useState<FieldReportKind>("other");
-  const [description, setDescription] = useState("");
+export function V2ReportCreateSheet({
+  lng,
+  lat,
+  onClose,
+  onCreated,
+  initialKind,
+  initialDescription,
+  contextLabel,
+}: CreateProps) {
+  const [kind, setKind] = useState<FieldReportKind>(initialKind ?? "other");
+  const [description, setDescription] = useState(initialDescription ?? "");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -68,6 +81,7 @@ export function V2ReportCreateSheet({ lng, lat, onClose, onCreated }: CreateProp
           </button>
         </div>
         <p className="mt-1 text-[10px] text-[color:var(--hmr-muted)]">
+          {contextLabel ? `${contextLabel} · ` : ""}
           {lat.toFixed(5)}, {lng.toFixed(5)}
         </p>
         <div className="mt-3 flex flex-wrap gap-1">
@@ -101,7 +115,7 @@ export function V2ReportCreateSheet({ lng, lat, onClose, onCreated }: CreateProp
         >
           {busy ? "Invio…" : "Pubblica segnalazione"}
         </button>
-        {err ? <p className="mt-2 text-xs text-red-400">{err}</p> : null}
+        {err ? <p className="mt-2 text-xs text-[color:var(--hmr-danger)]">{err}</p> : null}
       </div>
     </div>
   );

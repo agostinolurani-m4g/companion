@@ -32,15 +32,50 @@ export type C2cRouteSummary = {
   orientations?: string[];
 };
 
-export type C2cRouteDetail = C2cRouteSummary & {
-  locales: {
-    lang: string;
-    title: string;
-    title_prefix?: string | null;
-    summary?: string | null;
-    description?: string | null;
-  }[];
+export type C2cLocale = {
+  lang: string;
+  title: string;
+  title_prefix?: string | null;
+  summary?: string | null;
+  description?: string | null;
+  remarks?: string | null;
+  gear?: string | null;
+  slope?: string | null;
 };
+
+export type C2cAssociatedWaypoint = {
+  document_id: number;
+  waypoint_type?: string;
+  elevation?: number | null;
+  locales?: { lang: string; title: string }[];
+  geometry?: { geom?: string | null };
+};
+
+export type C2cRouteDetail = C2cRouteSummary & {
+  locales: C2cLocale[];
+  /** Durata in GIORNI (stringhe «1», «2»…), non in ore. */
+  durations?: string[] | null;
+  calculated_duration?: number | null;
+  route_types?: string[] | null;
+  lift_access?: boolean | null;
+  glacier_gear?: string | null;
+  associations?: { waypoints?: C2cAssociatedWaypoint[] };
+  areas?: { area_type?: string; locales?: { lang: string; title: string }[] }[];
+};
+
+/** Testo di un campo nella prima lingua disponibile secondo la preferenza (default it → en → fr). */
+export function pickLocaleText(
+  locales: C2cLocale[],
+  field: "summary" | "description" | "remarks" | "gear",
+  prefer: string[] = ["it", "en", "fr"],
+): { text: string; lang: string } | null {
+  const order = [...prefer, ...locales.map((l) => l.lang).filter((l) => !prefer.includes(l))];
+  for (const lang of order) {
+    const v = locales.find((l) => l.lang === lang)?.[field];
+    if (typeof v === "string" && v.trim()) return { text: v.trim(), lang };
+  }
+  return null;
+}
 
 function parseGeom(raw: string | undefined | null): GeoJSON.Geometry | null {
   if (!raw) return null;
@@ -115,6 +150,31 @@ async function c2cFetch<T>(path: string): Promise<T> {
   });
   if (!res.ok) throw new Error(`camptocamp ${path}: HTTP ${res.status}`);
   return (await res.json()) as T;
+}
+
+/** Attività camptocamp → sport dell'app. */
+export const C2C_ACTIVITY_MAP = {
+  hiking: "hike",
+  mountain_biking: "mtb",
+  via_ferrata: "ferrata",
+  snowshoeing: "snowshoe",
+  mountain_climbing: "alpinism",
+} as const;
+
+export type C2cActivity = keyof typeof C2C_ACTIVITY_MAP | "skitouring";
+
+export async function searchRoutes(
+  act: C2cActivity,
+  bbox: C2cBbox3857,
+  opts?: { limit?: number; offset?: number },
+): Promise<{ documents: (C2cRouteSummary & Record<string, unknown>)[]; total: number }> {
+  const q = new URLSearchParams({
+    act,
+    bbox: bboxToParam(bbox),
+    limit: String(opts?.limit ?? 100),
+    offset: String(opts?.offset ?? 0),
+  });
+  return c2cFetch(`/routes?${q}`);
 }
 
 export async function searchSkiRoutes(

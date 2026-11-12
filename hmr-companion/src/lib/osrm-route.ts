@@ -152,9 +152,15 @@ export function activityToOsrmProfile(activity: UserRouteActivity): OsrmProfile 
     case "road":
     case "mtb":
     case "gravel":
+    case "ebike":
+    case "bikepacking":
       return "cycling";
     case "hike":
+    case "trail_run":
     case "ski":
+    case "snowshoe":
+    case "nordic":
+    case "ferrata":
       return "foot";
     default:
       return "foot";

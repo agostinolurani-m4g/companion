@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import V2Nav from "@/components/v2/V2Nav";
 import type { ProfileLevel } from "@/lib/db";
 import { avatarUrl } from "@/lib/social-labels";
 
@@ -215,7 +214,6 @@ export default function V2Profile({ username, isAdmin = false }: Props) {
   if (busy) {
     return (
       <div className="flex h-full min-h-0 flex-col">
-        <V2Nav isAdmin={isAdmin} username={username} />
         <p className="p-4 text-sm text-[color:var(--hmr-muted)]">Caricamento profilo…</p>
       </div>
     );
@@ -224,17 +222,15 @@ export default function V2Profile({ username, isAdmin = false }: Props) {
   if (!profile) {
     return (
       <div className="flex h-full min-h-0 flex-col">
-        <V2Nav isAdmin={isAdmin} username={username} />
-        <p className="p-4 text-sm text-red-400">{err ?? "Profilo non trovato"}</p>
+        <p className="p-4 text-sm text-[color:var(--hmr-danger)]">{err ?? "Profilo non trovato"}</p>
       </div>
     );
   }
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto">
-      <V2Nav isAdmin={isAdmin} username={username} />
       <div className="mx-auto w-full max-w-3xl flex-1 p-4">
-        <div className="hmr-panel flex flex-col gap-4 rounded-2xl border border-[color:var(--hmr-border)]/80 p-5 sm:flex-row sm:items-start">
+        <div className="hmr-panel flex flex-col gap-4 rounded-lg border border-[color:var(--hmr-border)]/80 p-5 sm:flex-row sm:items-start">
           <div className="flex flex-col items-center gap-2">
             <Avatar profile={profile} />
             {isSelf ? (
@@ -269,7 +265,7 @@ export default function V2Profile({ username, isAdmin = false }: Props) {
             <span className="mt-2 inline-block rounded-full bg-[color:var(--hmr-accent)]/15 px-2.5 py-0.5 text-xs text-[color:var(--hmr-accent)]">
               {profile.level_label}
             </span>
-            <span className="ml-2 mt-2 inline-block rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-xs text-emerald-400">
+            <span className="ml-2 mt-2 inline-block rounded-full bg-[color:var(--hmr-safe)]/15 px-2.5 py-0.5 text-xs text-[color:var(--hmr-safe)]">
               {profile.trust_tier_label}
             </span>
             {profile.bio ? (
@@ -360,7 +356,7 @@ export default function V2Profile({ username, isAdmin = false }: Props) {
         </div>
 
         {editing && isSelf ? (
-          <div className="mt-4 hmr-panel rounded-2xl border border-[color:var(--hmr-border)]/80 p-4">
+          <div className="mt-4 hmr-panel rounded-lg border border-[color:var(--hmr-border)]/80 p-4">
             <h2 className="text-sm font-medium">Modifica profilo</h2>
             <div className="mt-3 grid gap-3">
               <label className="grid gap-1 text-xs">
@@ -449,7 +445,7 @@ export default function V2Profile({ username, isAdmin = false }: Props) {
           </div>
         ) : null}
 
-        {err ? <p className="mt-4 text-xs text-red-400">{err}</p> : null}
+        {err ? <p className="mt-4 text-xs text-[color:var(--hmr-danger)]">{err}</p> : null}
       </div>
     </div>
   );

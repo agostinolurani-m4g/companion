@@ -1,8 +1,9 @@
 /**
- * Arricchimento POI: Wikipedia/Wikimedia + foto Mapillary vicine.
+ * Arricchimento POI: Wikipedia (da tag o per nome), foto articolo, Commons e Mapillary vicine.
  */
 
 import { geoCacheGet, geoCacheSet } from "@/lib/db";
+import { commonsPhotosAround, findWikipediaByName, wikiArticlePhotos } from "@/lib/place-info";
 
 export type PoiWikiResult = {
   extract: string | null;
@@ -188,6 +189,9 @@ export async function fetchMapillaryNearPoint(opts: {
 export async function buildPoiDetails(opts: {
   lat: number;
   lng: number;
+  name?: string | null;
+  /** Raggio foto Commons: ampio per vette/paesi, stretto per bar e fontane. */
+  photoRadiusM?: number;
   osmImage?: string | null;
   wikidata?: string | null;
   wikipedia?: string | null;
@@ -201,24 +205,39 @@ export async function buildPoiDetails(opts: {
 
   addPhoto(opts.osmImage);
 
-  const wiki = await fetchWikipediaSummary({
+  let wiki = await fetchWikipediaSummary({
     wikidata: opts.wikidata,
     wikipedia: opts.wikipedia,
   });
-  addPhoto(wiki.image);
-
-  if (opts.mapillaryToken) {
-    try {
-      const mly = await fetchMapillaryNearPoint({
-        lat: opts.lat,
-        lng: opts.lng,
-        accessToken: opts.mapillaryToken,
-      });
-      for (const u of mly) addPhoto(u);
-    } catch (e) {
-      console.warn("mapillary near poi", e);
+  let wikiRef: { lang: string; title: string } | null = null;
+  if (wiki.wiki_url) {
+    const m = /^https:\/\/([a-z-]+)\.wikipedia\.org\/wiki\/(.+)$/.exec(wiki.wiki_url);
+    if (m) wikiRef = { lang: m[1], title: decodeURIComponent(m[2]).replace(/_/g, " ") };
+  } else if (opts.name?.trim()) {
+    const byName = await findWikipediaByName({ name: opts.name, lat: opts.lat, lng: opts.lng });
+    if (byName) {
+      wiki = { extract: byName.extract, image: byName.image, wiki_url: byName.wiki_url };
+      wikiRef = { lang: byName.lang, title: byName.title };
     }
   }
+  addPhoto(wiki.image);
+
+  const radius = opts.photoRadiusM ?? 300;
+  const [articlePhotos, commons, mly] = await Promise.all([
+    wikiRef ? wikiArticlePhotos(wikiRef.lang, wikiRef.title, 6) : Promise.resolve([]),
+    commonsPhotosAround(opts.lat, opts.lng, radius, 6),
+    opts.mapillaryToken
+      ? fetchMapillaryNearPoint({ lat: opts.lat, lng: opts.lng, accessToken: opts.mapillaryToken, maxItems: 4 }).catch(
+          (e) => {
+            console.warn("mapillary near poi", e);
+            return [] as string[];
+          },
+        )
+      : Promise.resolve([] as string[]),
+  ]);
+  for (const u of articlePhotos) addPhoto(u);
+  for (const u of commons) addPhoto(u);
+  for (const u of mly) addPhoto(u);
 
   return {
     photos: photos.slice(0, 12),

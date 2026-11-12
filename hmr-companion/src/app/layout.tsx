@@ -1,6 +1,9 @@
 import type { Metadata, Viewport } from "next";
+import { Inter } from "next/font/google";
 import "./globals.css";
 import ServiceWorkerRegister from "@/components/ServiceWorkerRegister";
+
+const uiFont = Inter({ subsets: ["latin"], variable: "--font-ui", display: "swap" });
 
 export const metadata: Metadata = {
   title: "HMR Companion",
@@ -23,7 +26,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0b1221",
+  themeColor: "#080d17",
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
@@ -33,7 +36,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="it" className="h-full min-h-full antialiased">
+    <html lang="it" className={`h-full min-h-full antialiased ${uiFont.variable}`}>
       <body className="h-full min-h-0 overflow-hidden bg-[color:var(--hmr-bg)] text-[color:var(--hmr-text)] antialiased selection:bg-[color:var(--hmr-accent)]/30">
         <ServiceWorkerRegister />
         {children}

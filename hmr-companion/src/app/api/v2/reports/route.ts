@@ -8,21 +8,10 @@ import {
   listFieldReportsByAuthor,
   listFieldReportsInBbox,
 } from "@/lib/db";
-import type { FieldReportKind } from "@/lib/field-reports";
-import { fieldReportsToGeoJson } from "@/lib/field-reports";
+import { fieldReportsToGeoJson, isFieldReportKind } from "@/lib/field-reports";
 import { serializeFieldReportForViewer } from "@/lib/field-reports-server";
 
 export const runtime = "nodejs";
-
-const VALID_KINDS = new Set<FieldReportKind>([
-  "avalanche",
-  "road_closed",
-  "steep",
-  "bridge_down",
-  "trail_blocked",
-  "water",
-  "other",
-]);
 
 export async function GET(req: Request) {
   const auth = await requireV2Beta();
@@ -52,7 +41,7 @@ export async function GET(req: Request) {
 type PostBody = {
   lng?: number;
   lat?: number;
-  kind?: FieldReportKind;
+  kind?: string;
   description?: string;
   route_id?: string | null;
 };
@@ -67,7 +56,7 @@ export async function POST(req: Request) {
   if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
     return NextResponse.json({ error: "lng e lat richiesti" }, { status: 400 });
   }
-  if (!body.kind || !VALID_KINDS.has(body.kind)) {
+  if (!body.kind || !isFieldReportKind(body.kind)) {
     return NextResponse.json({ error: "kind non valido" }, { status: 400 });
   }
   if (hasActiveReportNearby(auth.email, lng!, lat!)) {

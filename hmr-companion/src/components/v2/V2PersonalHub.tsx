@@ -3,13 +3,19 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import V2Nav from "@/components/v2/V2Nav";
+import V2ConnectedAccounts from "@/components/v2/V2ConnectedAccounts";
 import V2PhotoCapture from "@/components/v2/V2PhotoCapture";
 import type { UserRouteActivity, UserRouteVisibility } from "@/lib/db";
 import { avatarUrl } from "@/lib/social-labels";
 import { formatOutingDate } from "@/lib/outings-types";
 import type { OutingDto } from "@/lib/outings-types";
 import { REPORT_KIND_LABELS } from "@/lib/field-reports";
+import {
+  activityLabel,
+  exploreActivityOptions,
+  routeEditorHref,
+  USER_ROUTE_ACTIVITIES,
+} from "@/lib/sports";
 
 type Props = {
   isAdmin?: boolean;
@@ -74,14 +80,6 @@ type ReportItem = {
   created_at: number;
 };
 
-const ACTIVITY_LABELS: Record<UserRouteActivity, string> = {
-  road: "Strada",
-  mtb: "MTB",
-  hike: "Escursione",
-  gravel: "Gravel",
-  ski: "Scialpinismo",
-};
-
 const SOURCE_LABELS: Record<string, string> = {
   camptocamp: "camptocamp.org",
   gulliver: "Gulliver",
@@ -95,12 +93,6 @@ const TABS: { id: HubTab; label: string }[] = [
   { id: "photos", label: "Foto" },
   { id: "reports", label: "Segnalazioni" },
 ];
-
-function routeHref(activity: UserRouteActivity, id: string): string {
-  return activity === "ski"
-    ? `/v2/scialpinismo?route=${encodeURIComponent(id)}`
-    : `/v2/plan?route=${encodeURIComponent(id)}`;
-}
 
 export default function V2PersonalHub({ isAdmin = false, username }: Props) {
   const router = useRouter();
@@ -219,7 +211,6 @@ export default function V2PersonalHub({ isAdmin = false, username }: Props) {
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto">
-      <V2Nav isAdmin={isAdmin} username={username} />
       <div className="mx-auto w-full max-w-3xl flex-1 p-4">
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -259,7 +250,7 @@ export default function V2PersonalHub({ isAdmin = false, username }: Props) {
           <p className="mt-6 text-sm text-[color:var(--hmr-muted)]">Caricamento…</p>
         ) : tab === "overview" && stats ? (
           <div className="mt-4 grid gap-4">
-            <div className="hmr-panel flex items-center gap-4 rounded-2xl border border-[color:var(--hmr-border)]/80 p-4">
+            <div className="hmr-panel flex items-center gap-4 rounded-lg border border-[color:var(--hmr-border)]/80 p-4">
               {avatarSrc ? (
                 <img src={avatarSrc} alt="" className="h-16 w-16 rounded-full object-cover" />
               ) : (
@@ -292,7 +283,7 @@ export default function V2PersonalHub({ isAdmin = false, username }: Props) {
               ))}
             </div>
 
-            <div className="hmr-panel rounded-2xl border border-[color:var(--hmr-border)]/80 p-4">
+            <div className="hmr-panel rounded-lg border border-[color:var(--hmr-border)]/80 p-4">
               <h2 className="text-sm font-medium">Affidabilità</h2>
               <p className="mt-1 text-xs text-[color:var(--hmr-muted)]">
                 {stats.reports_verified} segnalazioni verificate · {stats.confirmations_received}{" "}
@@ -300,15 +291,17 @@ export default function V2PersonalHub({ isAdmin = false, username }: Props) {
               </p>
             </div>
 
-            <div className="hmr-panel rounded-2xl border border-[color:var(--hmr-border)]/80 p-4">
+            <V2ConnectedAccounts />
+
+            <div className="hmr-panel rounded-lg border border-[color:var(--hmr-border)]/80 p-4">
               <h2 className="text-sm font-medium">Percorsi per sport</h2>
               <div className="mt-2 flex flex-wrap gap-2">
-                {(Object.keys(ACTIVITY_LABELS) as UserRouteActivity[]).map((a) => (
+                {USER_ROUTE_ACTIVITIES.map((a) => (
                   <span
                     key={a}
                     className="rounded-full border border-[color:var(--hmr-border)] px-2 py-0.5 text-[10px]"
                   >
-                    {ACTIVITY_LABELS[a]}: {stats.by_activity[a]}
+                    {activityLabel(a)}: {stats.by_activity[a]}
                   </span>
                 ))}
               </div>
@@ -383,18 +376,18 @@ export default function V2PersonalHub({ isAdmin = false, username }: Props) {
               </Link>
             </div>
             <div className="mt-3 flex flex-wrap gap-1">
-              {(["all", "ski", "hike", "road", "mtb", "gravel"] as const).map((a) => (
+              {exploreActivityOptions().map((opt) => (
                 <button
-                  key={a}
+                  key={opt.value}
                   type="button"
-                  onClick={() => setActivityFilter(a)}
+                  onClick={() => setActivityFilter(opt.value)}
                   className={
-                    activityFilter === a
+                    activityFilter === opt.value
                       ? "rounded-lg bg-[color:var(--hmr-accent)]/20 px-2 py-0.5 text-[10px] text-[color:var(--hmr-accent)]"
                       : "rounded-lg border border-[color:var(--hmr-border)] px-2 py-0.5 text-[10px] text-[color:var(--hmr-muted)]"
                   }
                 >
-                  {a === "all" ? "Tutti" : ACTIVITY_LABELS[a]}
+                  {opt.label}
                 </button>
               ))}
             </div>
@@ -405,12 +398,12 @@ export default function V2PersonalHub({ isAdmin = false, username }: Props) {
                 {visibleRoutes.map((r) => (
                   <li
                     key={r.id}
-                    className="hmr-panel flex flex-col gap-3 rounded-2xl border border-[color:var(--hmr-border)]/80 p-4 sm:flex-row sm:items-center"
+                    className="hmr-panel flex flex-col gap-3 rounded-lg border border-[color:var(--hmr-border)]/80 p-4 sm:flex-row sm:items-center"
                   >
                     <div className="min-w-0 flex-1">
                       <h2 className="truncate font-medium">{r.name}</h2>
                       <p className="mt-0.5 text-xs text-[color:var(--hmr-muted)]">
-                        {ACTIVITY_LABELS[r.activity]} · {r.length_km.toFixed(1)} km
+                        {activityLabel(r.activity)} · {r.length_km.toFixed(1)} km
                       </p>
                       <span
                         className={
@@ -422,14 +415,14 @@ export default function V2PersonalHub({ isAdmin = false, username }: Props) {
                         {r.visibility === "public" ? "Pubblico" : "Privato"}
                       </span>
                       {r.source ? (
-                        <span className="ml-1 inline-block rounded-full bg-sky-500/10 px-2 py-0.5 text-[10px] text-sky-300">
+                        <span className="ml-1 inline-block rounded-full bg-[color:var(--hmr-accent-2)]/15 px-2 py-0.5 text-[10px] text-[color:var(--hmr-accent-2)]">
                           {SOURCE_LABELS[r.source] ?? r.source}
                         </span>
                       ) : null}
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <Link
-                        href={routeHref(r.activity, r.id)}
+                        href={routeEditorHref(r.activity, r.id)}
                         className="rounded-lg bg-[color:var(--hmr-accent)] px-3 py-2 text-xs font-medium text-[color:var(--hmr-bg)]"
                       >
                         Apri
@@ -447,7 +440,7 @@ export default function V2PersonalHub({ isAdmin = false, username }: Props) {
                             type="button"
                             disabled={deletingId === r.id}
                             onClick={() => void deleteRoute(r)}
-                            className="rounded-lg border border-red-500/40 px-3 py-2 text-xs text-red-400 disabled:opacity-50"
+                            className="rounded-lg border border-[color:var(--hmr-danger)]/40 px-3 py-2 text-xs text-[color:var(--hmr-danger)] disabled:opacity-50"
                           >
                             Elimina
                           </button>
@@ -471,13 +464,13 @@ export default function V2PersonalHub({ isAdmin = false, username }: Props) {
                     className="hmr-panel rounded-xl border border-[color:var(--hmr-border)]/60 p-3"
                   >
                     <Link
-                      href={routeHref(o.activity, o.route_id)}
+                      href={routeEditorHref(o.activity, o.route_id)}
                       className="font-medium hover:text-[color:var(--hmr-accent)]"
                     >
                       {o.title}
                     </Link>
                     <p className="mt-0.5 text-xs text-[color:var(--hmr-muted)]">
-                      {ACTIVITY_LABELS[o.activity]} · {formatOutingDate(o.outing_date)}
+                      {activityLabel(o.activity)} · {formatOutingDate(o.outing_date)}
                     </p>
                     {o.notes ? (
                       <p className="mt-1 text-xs text-[color:var(--hmr-text)]">{o.notes}</p>
@@ -557,7 +550,7 @@ export default function V2PersonalHub({ isAdmin = false, username }: Props) {
           </div>
         ) : null}
 
-        {err ? <p className="mt-4 text-xs text-red-400">{err}</p> : null}
+        {err ? <p className="mt-4 text-xs text-[color:var(--hmr-danger)]">{err}</p> : null}
       </div>
 
       {showPhotoCapture ? (

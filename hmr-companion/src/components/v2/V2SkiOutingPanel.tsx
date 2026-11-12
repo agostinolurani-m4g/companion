@@ -1,8 +1,9 @@
 "use client";
+/** @deprecated Non più usato: sostituito da V2OutingList + V2OutingPlanPanel. Può essere eliminato. */
 
 import { useCallback, useEffect, useState } from "react";
 import { fetchJson } from "@/lib/fetch-json";
-import { formatOutingDate, type SkiOutingDto } from "@/lib/ski-outings-types";
+import { formatOutingDate, type OutingDto as SkiOutingDto } from "@/lib/outings-types";
 
 type GroupItem = { id: string; name: string };
 
@@ -90,10 +91,10 @@ export default function V2SkiOutingPanel({
           route_id: routeId,
           title: title.trim() || routeName || "Gita scialpinismo",
           outing_date: outingDate || null,
-          snow_notes: snowNotes,
+          story: snowNotes, status: "done",
           participants,
           group_ids: selectedGroupIds,
-          make_route_public: true,
+          make_route_public: false,
         }),
       });
       const data = (await res.json()) as { error?: string };
@@ -148,9 +149,9 @@ export default function V2SkiOutingPanel({
                   {formatOutingDate(o.outing_date)}
                 </span>
               </div>
-              {o.snow_notes ? (
+              {o.story ? (
                 <p className="mt-0.5 line-clamp-2 text-[10px] text-[color:var(--hmr-muted)]">
-                  {o.snow_notes}
+                  {o.story}
                 </p>
               ) : null}
               {o.participants.length > 0 ? (
@@ -228,7 +229,7 @@ export default function V2SkiOutingPanel({
         </div>
       ) : null}
 
-      {err ? <p className="mt-2 text-xs text-red-400">{err}</p> : null}
+      {err ? <p className="mt-2 text-xs text-[color:var(--hmr-danger)]">{err}</p> : null}
     </section>
   );
 }

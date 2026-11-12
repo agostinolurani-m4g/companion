@@ -96,6 +96,22 @@ livelli. Se anche le sotto-celle falliscono, la cella viene scartata con un
 warning e lo snapshot continua: puoi rilanciare dopo (la cache si
 preserva e le celle mancanti verranno ri-richieste).
 
+## v2 · Percorsi importati e mappe
+
+```bash
+npm run db:migrate          # applica le migrazioni SQLite (nuovi sport, bbox percorsi)
+npm run import:osm-routes   # itinerari OSM: sentieri segnati, ciclovie, MTB (ODbL)
+npm run import:c2c:all      # camptocamp: escursionismo, MTB, ferrate, ciaspole, alpinismo (CC-BY-SA)
+npm run import:c2c          # camptocamp: scialpinismo
+```
+
+- Gli import sono idempotenti (saltano ciò che esiste già). Area OSM configurabile con
+  `OSM_ROUTES_BBOX="s,w,n,e"`; limite camptocamp per attività con `C2C_MAX_PER_ACT`.
+- Dislivelli calcolati dai tile DEM Terrarium (AWS) anche lato import.
+- Esplora carica solo i percorsi dell'area visibile (colonne `bbox_*` indicizzate).
+- Mappe: Topo (stile cartografico svizzero su OpenFreeMap), carta swisstopo e ortofoto
+  SWISSIMAGE (© swisstopo, CH e confini), Esri World Imagery fuori dalla Svizzera.
+
 ## Variabili d'ambiente
 
 | Nome | Obbligatoria | Default | Note |

@@ -4,9 +4,13 @@ import path from "node:path";
 import { NextResponse } from "next/server";
 import { requireV2Beta } from "@/lib/auth";
 import {
+  canViewOuting,
   countUserPhotos,
+  getOuting,
+  listOutingParticipants,
   insertUserPhoto,
   listUserPhotos,
+  listUserPhotosForOuting,
   listUserPhotosInBbox,
 } from "@/lib/db";
 import { avatarUrl } from "@/lib/social-labels";
@@ -23,6 +27,26 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const owner = (url.searchParams.get("owner") ?? "").trim().toLowerCase();
   const bbox = url.searchParams.get("bbox");
+  const outingId = (url.searchParams.get("outing_id") ?? "").trim();
+
+  if (outingId) {
+    if (!canViewOuting(outingId, auth.email)) {
+      return NextResponse.json({ error: "Non autorizzato" }, { status: 403 });
+    }
+    return NextResponse.json({
+      photos: listUserPhotosForOuting(outingId).map((p) => ({
+        id: p.id,
+        owner: p.owner,
+        lng: p.lng,
+        lat: p.lat,
+        caption: p.caption,
+        url: avatarUrl(p.photo_path),
+        route_id: p.route_id,
+        outing_id: p.outing_id,
+        created_at: p.created_at,
+      })),
+    });
+  }
 
   if (bbox) {
     const parts = bbox.split(",").map(Number);
@@ -74,7 +98,18 @@ export async function POST(req: Request) {
   const lng = Number(form.get("lng"));
   const lat = Number(form.get("lat"));
   const caption = String(form.get("caption") ?? "").trim();
-  const routeId = String(form.get("route_id") ?? "").trim() || null;
+  let routeId = String(form.get("route_id") ?? "").trim() || null;
+  const outingId = String(form.get("outing_id") ?? "").trim() || null;
+  if (outingId) {
+    const outing = getOuting(outingId);
+    if (!outing) return NextResponse.json({ error: "Gita non trovata" }, { status: 404 });
+    // Possono aggiungere foto solo creatore e partecipanti.
+    const me = auth.email.trim().toLowerCase();
+    if (outing.owner !== me && !listOutingParticipants(outingId).includes(me)) {
+      return NextResponse.json({ error: "Solo i partecipanti possono aggiungere foto" }, { status: 403 });
+    }
+    routeId = outing.route_id;
+  }
 
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "file richiesto" }, { status: 400 });
@@ -106,6 +141,7 @@ export async function POST(req: Request) {
     caption,
     photo_path: relPath,
     route_id: routeId,
+    outing_id: outingId,
     created_at: Date.now(),
   });
 

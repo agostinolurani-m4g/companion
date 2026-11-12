@@ -3,9 +3,11 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import V2Nav from "@/components/v2/V2Nav";
 import V2PlanMap, { type V2MapClickTarget, type V2Waypoint } from "@/components/v2/V2PlanMap";
-import V2SkiOutingPanel from "@/components/v2/V2SkiOutingPanel";
+import V2OutingList, { outingHref } from "@/components/v2/V2OutingList";
+import V2OutingPlanPanel from "@/components/v2/V2OutingPlanPanel";
+import { useOutingDraft } from "@/lib/use-outing-draft";
+import { outingPlanHref } from "@/lib/sports";
 import V2SkiRouteBanner from "@/components/v2/V2SkiRouteBanner";
 import ElevationChart from "@/components/ElevationChart";
 import type { UserRouteVisibility } from "@/lib/db";
@@ -15,6 +17,8 @@ import type { StoredCoord } from "@/lib/track-coords";
 import { elevationGainLossSmoothed, smoothElevationProfile } from "@/lib/track-geometry";
 import { lineLengthKm } from "@/lib/osrm-route";
 import type { RouteColoredSegment } from "@/lib/ors-route-tech";
+import type { RouteFacts } from "@/lib/route-facts";
+import { routeAvalancheCheckUrl, type RouteAvalancheNote } from "@/lib/route-avalanche-query";
 import {
   AVALANCHE_LEGEND,
   buildSkiGeoJson,
@@ -55,6 +59,13 @@ export default function V2SkiTour({ isAdmin = false, username }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const routeId = searchParams.get("route");
+  const outingId = searchParams.get("outing");
+  const [outingPlanning, setOutingPlanning] = useState(
+    () => searchParams.get("tab") === "outing" || !!searchParams.get("outing"),
+  );
+  useEffect(() => {
+    setOutingPlanning(searchParams.get("tab") === "outing" || !!searchParams.get("outing"));
+  }, [searchParams]);
 
   const [trackMode, setTrackMode] = useState<SkiTrackMode>("ascent");
   const [ascentWaypoints, setAscentWaypoints] = useState<V2Waypoint[]>([]);
@@ -79,12 +90,6 @@ export default function V2SkiTour({ isAdmin = false, username }: Props) {
   const [saveBusy, setSaveBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [name, setName] = useState("");
-  const [registerOuting, setRegisterOuting] = useState(true);
-  const [outingDate, setOutingDate] = useState("");
-  const [snowNotes, setSnowNotes] = useState("");
-  const [participantsText, setParticipantsText] = useState("");
-  const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
-  const [groups, setGroups] = useState<{ id: string; name: string }[]>([]);
   const [flyTo, setFlyTo] = useState<{ lng: number; lat: number; zoom?: number; key?: number } | null>(
     null,
   );
@@ -93,6 +98,7 @@ export default function V2SkiTour({ isAdmin = false, username }: Props) {
     source: string | null;
     source_url: string | null;
     license: string | null;
+    facts: RouteFacts | null;
   } | null>(null);
   const descentAnchoredRef = useRef(false);
 
@@ -101,21 +107,10 @@ export default function V2SkiTour({ isAdmin = false, username }: Props) {
   const [avalancheGeoJson, setAvalancheGeoJson] = useState<GeoJSON.FeatureCollection | null>(null);
   const [avalancheMeta, setAvalancheMeta] = useState<{
     publicationTime: string | null;
+    validUntil?: string | null;
     message: string | null;
     available: boolean;
   } | null>(null);
-
-  useEffect(() => {
-    void (async () => {
-      try {
-        const res = await fetch("/api/v2/groups");
-        const data = (await res.json()) as { groups?: { id: string; name: string }[] };
-        if (data.groups) setGroups(data.groups.map((g) => ({ id: g.id, name: g.name })));
-      } catch {
-        /* optional */
-      }
-    })();
-  }, []);
 
   useEffect(() => {
     void (async () => {
@@ -125,6 +120,7 @@ export default function V2SkiTour({ isAdmin = false, username }: Props) {
           features?: GeoJSON.Feature[];
           meta?: {
             publicationTime: string | null;
+            validUntil?: string | null;
             message: string | null;
             available: boolean;
           };
@@ -138,6 +134,27 @@ export default function V2SkiTour({ isAdmin = false, username }: Props) {
       }
     })();
   }, []);
+
+  // Esposizioni del percorso (route-facts) confrontate con il bollettino nel punto di partenza.
+  const [avalancheNote, setAvalancheNote] = useState<RouteAvalancheNote | null>(null);
+  const avalancheCheckUrl = routeAvalancheCheckUrl(ascentCoords?.[0] ?? descentCoords?.[0] ?? null, loadedMeta?.facts);
+  useEffect(() => {
+    if (!avalancheCheckUrl) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(avalancheCheckUrl);
+        const data = (await res.json()) as { point?: { aspectCheck?: RouteAvalancheNote } };
+        const check = data.point?.aspectCheck;
+        if (!cancelled && check?.text) setAvalancheNote({ status: check.status, text: check.text });
+      } catch {
+        /* opzionale */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [avalancheCheckUrl]);
 
   const activeWaypoints = trackMode === "ascent" ? ascentWaypoints : descentWaypoints;
 
@@ -380,6 +397,7 @@ export default function V2SkiTour({ isAdmin = false, username }: Props) {
             source: string | null;
             source_url: string | null;
             license: string | null;
+            facts?: RouteFacts;
           };
         };
         if (!res.ok || !data.route) throw new Error(data.error ?? "Caricamento fallito");
@@ -405,6 +423,7 @@ export default function V2SkiTour({ isAdmin = false, username }: Props) {
           source: r.source,
           source_url: r.source_url,
           license: r.license,
+          facts: r.facts ?? null,
         });
       } catch (e) {
         setErr(e instanceof Error ? e.message : String(e));
@@ -492,6 +511,28 @@ export default function V2SkiTour({ isAdmin = false, username }: Props) {
     }
   };
 
+  /* ── Gita su questo percorso: la traccia è salita + discesa ── */
+  const skiAllCoords = useMemo<[number, number][] | null>(() => {
+    const all = [...(ascentCoords ?? []), ...(descentCoords ?? [])];
+    return all.length >= 2 ? all : null;
+  }, [ascentCoords, descentCoords]);
+  const outingDraft = useOutingDraft(routeId ? skiAllCoords : null, outingId);
+
+  const closeOutingPlanner = () => {
+    setOutingPlanning(false);
+    if (routeId) router.replace(`/v2/scialpinismo?route=${encodeURIComponent(routeId)}`);
+  };
+
+  const saveOuting = async () => {
+    if (!routeId) return;
+    try {
+      const id = await outingDraft.save(routeId, name.trim() || "Gita scialpinismo");
+      router.push(outingHref(id));
+    } catch {
+      /* errore mostrato nel pannello */
+    }
+  };
+
   const clearAll = () => {
     descentAnchoredRef.current = false;
     setAscentWaypoints([]);
@@ -536,30 +577,8 @@ export default function V2SkiTour({ isAdmin = false, username }: Props) {
       });
       const data = (await res.json()) as { error?: string; id?: string };
       if (!res.ok || !data.id) throw new Error(data.error ?? "Salvataggio fallito");
-
-      if (registerOuting) {
-        const participants = participantsText
-          .split(/[,;\s]+/)
-          .map((s) => s.trim().toLowerCase())
-          .filter(Boolean);
-        const outingRes = await fetch("/api/v2/ski/outings", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            route_id: data.id,
-            title: name.trim() || "Gita scialpinismo",
-            outing_date: outingDate || null,
-            snow_notes: snowNotes,
-            participants,
-            group_ids: selectedGroupIds,
-            make_route_public: true,
-          }),
-        });
-        const outingData = (await outingRes.json()) as { error?: string };
-        if (!outingRes.ok) throw new Error(outingData.error ?? "Registrazione gita fallita");
-      }
-
-      router.push(`/v2/scialpinismo/esplora`);
+      // Solo la traccia: le gite si pianificano dopo, sul percorso salvato.
+      router.push(`/v2/scialpinismo?route=${encodeURIComponent(data.id)}`);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -569,7 +588,6 @@ export default function V2SkiTour({ isAdmin = false, username }: Props) {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <V2Nav isAdmin={isAdmin} username={username} />
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
         <aside className="hmr-panel z-10 flex max-h-[50vh] shrink-0 flex-col gap-3 overflow-y-auto border-b border-[color:var(--hmr-border)]/60 p-3 lg:max-h-none lg:w-80 lg:border-b-0 lg:border-r">
           <div>
@@ -627,7 +645,9 @@ export default function V2SkiTour({ isAdmin = false, username }: Props) {
             {avalancheMeta ? (
               <p className="mt-1 text-[10px] text-[color:var(--hmr-muted)]">
                 {avalancheMeta.available && avalancheMeta.publicationTime
-                  ? `Bollettino del ${new Date(avalancheMeta.publicationTime).toLocaleString("it-IT")}`
+                  ? `Bollettino del ${new Date(avalancheMeta.publicationTime).toLocaleString("it-IT")}${
+                      avalancheMeta.validUntil ? ` · valido fino a ${new Date(avalancheMeta.validUntil).toLocaleString("it-IT")}` : ""
+                    }`
                   : (avalancheMeta.message ?? "Fonte AINEVA / avalanche.report")}
               </p>
             ) : null}
@@ -722,15 +742,15 @@ export default function V2SkiTour({ isAdmin = false, username }: Props) {
                 ascentWaypoints.length === 0 &&
                 descentWaypoints.length === 0
               }
-              className="rounded-lg border border-red-500/40 px-3 py-1.5 text-xs text-red-400 disabled:opacity-40"
+              className="rounded-lg border border-[color:var(--hmr-danger)]/40 px-3 py-1.5 text-xs text-[color:var(--hmr-danger)] disabled:opacity-40"
             >
               Pulisci tutto
             </button>
           </div>
 
           {(ascentSteep.length > 0 || descentSteep.length > 0) && (
-            <section className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-2.5 text-xs">
-              <p className="font-medium text-amber-200">Tratti ripidi</p>
+            <section className="rounded-lg border border-[color:var(--hmr-warn)]/40 bg-[color:var(--hmr-warn)]/10 p-2.5 text-xs">
+              <p className="font-medium text-[color:var(--hmr-warn)]">Tratti ripidi</p>
               {ascentSteep.length > 0 ? (
                 <ul className="mt-1 space-y-0.5 text-[color:var(--hmr-muted)]">
                   {ascentSteep.map((s, i) => (
@@ -766,73 +786,40 @@ export default function V2SkiTour({ isAdmin = false, username }: Props) {
               className="w-full rounded-lg border border-[color:var(--hmr-border)] bg-[color:var(--hmr-bg)] px-3 py-2 text-sm"
             />
 
-            {!routeId ? (
-              <label className="flex items-center gap-2 text-xs">
-                <input
-                  type="checkbox"
-                  checked={registerOuting}
-                  onChange={(e) => setRegisterOuting(e.target.checked)}
-                />
-                Registra anche la gita di oggi
-              </label>
-            ) : null}
-
-            {registerOuting && !routeId ? (
-              <div className="space-y-2 rounded-lg border border-[color:var(--hmr-border)]/70 bg-[color:var(--hmr-elev)] p-2.5">
-                <p className="text-[10px] text-[color:var(--hmr-muted)]">
-                  La gita è l&apos;uscita (data, neve, compagni). Il percorso resta pubblico e riusabile.
-                </p>
-                <input
-                  type="date"
-                  value={outingDate}
-                  onChange={(e) => setOutingDate(e.target.value)}
-                  className="w-full rounded-lg border border-[color:var(--hmr-border)] bg-[color:var(--hmr-bg)] px-2 py-1.5 text-xs"
-                />
-                <textarea
-                  value={snowNotes}
-                  onChange={(e) => setSnowNotes(e.target.value)}
-                  rows={2}
-                  placeholder="Condizioni neve, valanghe, note…"
-                  className="w-full rounded-lg border border-[color:var(--hmr-border)] bg-[color:var(--hmr-bg)] px-2 py-1.5 text-xs"
-                />
-                <input
-                  type="text"
-                  value={participantsText}
-                  onChange={(e) => setParticipantsText(e.target.value)}
-                  placeholder="Compagni (username separati da virgola)"
-                  className="w-full rounded-lg border border-[color:var(--hmr-border)] bg-[color:var(--hmr-bg)] px-2 py-1.5 text-xs"
-                />
-                {groups.length > 0 ? (
-                  <div className="flex flex-wrap gap-1.5">
-                    {groups.map((g) => {
-                      const on = selectedGroupIds.includes(g.id);
-                      return (
-                        <button
-                          key={g.id}
-                          type="button"
-                          onClick={() =>
-                            setSelectedGroupIds((ids) =>
-                              on ? ids.filter((id) => id !== g.id) : [...ids, g.id],
-                            )
-                          }
-                          className={
-                            on
-                              ? "rounded-lg bg-[color:var(--hmr-accent)] px-2 py-0.5 text-[10px] text-[color:var(--hmr-bg)]"
-                              : "rounded-lg border border-[color:var(--hmr-border)] px-2 py-0.5 text-[10px] text-[color:var(--hmr-muted)]"
-                          }
-                        >
-                          {g.name}
-                        </button>
-                      );
-                    })}
-                  </div>
+            {routeId ? (
+              <div className="space-y-2">
+                <V2OutingList routeId={routeId} planHref={outingPlanning ? undefined : outingPlanHref("ski", routeId)} />
+                {outingPlanning ? (
+                  <section className="rounded-lg border border-[color:var(--hmr-accent)]/40 p-2.5">
+                    <div className="mb-2 flex items-center justify-between">
+                      <p className="text-[10px] font-medium uppercase tracking-wide text-[color:var(--hmr-faint)]">
+                        {outingId ? "Modifica gita" : "Pianifica gita"}
+                      </p>
+                      <button type="button" className="text-[11px] text-[color:var(--hmr-muted)]" onClick={closeOutingPlanner}>
+                        Chiudi
+                      </button>
+                    </div>
+                    <V2OutingPlanPanel
+                      api={outingDraft}
+                      hasRoute={!!skiAllCoords && skiAllCoords.length >= 2}
+                      onFocusStop={(lng, lat) => setFlyTo({ lng, lat, zoom: 15, key: Date.now() })}
+                    />
+                    <button
+                      type="button"
+                      disabled={outingDraft.saving}
+                      onClick={() => void saveOuting()}
+                      className="mt-3 w-full rounded-lg bg-[color:var(--hmr-accent)] px-3 py-2 text-sm font-medium text-[color:var(--hmr-bg)] disabled:opacity-50"
+                    >
+                      {outingDraft.saving ? "Salvo…" : "Salva gita"}
+                    </button>
+                  </section>
                 ) : null}
               </div>
-            ) : null}
-
-            {routeId ? (
-              <V2SkiOutingPanel routeId={routeId} routeName={name || "Percorso scialpinismo"} />
-            ) : null}
+            ) : (
+              <p className="text-[11px] text-[color:var(--hmr-muted)]">
+                Salva la traccia: poi potrai pianificare una o più gite su questo percorso (data, compagni, rifugi, soste).
+              </p>
+            )}
 
             <button
               type="button"
@@ -840,11 +827,11 @@ export default function V2SkiTour({ isAdmin = false, username }: Props) {
               onClick={() => void saveRoute()}
               className="w-full rounded-lg bg-[color:var(--hmr-accent)] px-3 py-2 text-sm font-medium text-[color:var(--hmr-bg)] disabled:opacity-50"
             >
-              {saveBusy ? "Salvo…" : routeId ? "Salva percorso" : registerOuting ? "Salva percorso e gita" : "Salva percorso"}
+              {saveBusy ? "Salvo…" : routeId ? "Salva come nuovo percorso" : "Salva percorso"}
             </button>
           </div>
 
-          {err ? <p className="text-xs text-red-400">{err}</p> : null}
+          {err ? <p className="text-xs text-[color:var(--hmr-danger)]">{err}</p> : null}
         </aside>
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -865,6 +852,8 @@ export default function V2SkiTour({ isAdmin = false, username }: Props) {
               avalancheVisible={avalancheVisible}
               avalancheOpacity={SKI_AVALANCHE_DEFAULT_OPACITY}
               terrain3d
+              mapSport="ski"
+              outingStopsGeoJson={outingPlanning ? outingDraft.stopsGeoJson : null}
             />
             {showTrackBanner ? (
               <V2SkiRouteBanner
@@ -876,6 +865,8 @@ export default function V2SkiTour({ isAdmin = false, username }: Props) {
                 source={loadedMeta?.source}
                 sourceUrl={loadedMeta?.source_url}
                 license={loadedMeta?.license}
+                facts={loadedMeta?.facts}
+                avalancheNote={avalancheCheckUrl ? avalancheNote : null}
               />
             ) : null}
           </div>

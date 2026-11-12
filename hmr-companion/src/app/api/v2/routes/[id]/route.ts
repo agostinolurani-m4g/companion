@@ -7,12 +7,14 @@ import {
   type UserRouteActivity,
   type UserRouteVisibility,
 } from "@/lib/db";
+import { computeRouteFacts } from "@/lib/route-facts";
+import { USER_ROUTE_ACTIVITIES } from "@/lib/sports";
 
 export const runtime = "nodejs";
 
 type Ctx = { params: Promise<{ id: string }> };
 
-const VALID_ACTIVITIES = new Set<UserRouteActivity>(["road", "mtb", "hike", "gravel", "ski"]);
+const VALID_ACTIVITIES = new Set<UserRouteActivity>(USER_ROUTE_ACTIVITIES);
 const VALID_VISIBILITY = new Set<UserRouteVisibility>(["private", "public"]);
 
 function canReadRoute(route: NonNullable<ReturnType<typeof getUserRoute>>, username: string): boolean {
@@ -48,12 +50,14 @@ function serializeRoute(row: NonNullable<ReturnType<typeof getUserRoute>>) {
     license: row.license,
     external_id: row.external_id,
     meta_json,
+    facts: computeRouteFacts(row),
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
 }
 
-export async function GET(_req: Request, ctx: Ctx) {
+/** GET /api/v2/routes/[id] — `?only=facts` restituisce solo i fatti (senza geometria). */
+export async function GET(req: Request, ctx: Ctx) {
   const auth = await requireV2Beta();
   if (!auth) return NextResponse.json({ error: "Non autorizzato" }, { status: 403 });
 
@@ -64,6 +68,9 @@ export async function GET(_req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "Non autorizzato" }, { status: 403 });
   }
 
+  if (new URL(req.url).searchParams.get("only") === "facts") {
+    return NextResponse.json({ id: route.id, facts: computeRouteFacts(route) });
+  }
   return NextResponse.json({ route: serializeRoute(route) });
 }
 

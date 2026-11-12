@@ -4,11 +4,14 @@ import {
   countOutingsVisibleForRoute,
   getGroupMember,
   listOutingsVisibleForRoute,
+  listPublicRoutesInBbox,
   listRoutesForExplore,
   type UserRouteActivity,
 } from "@/lib/db";
 import { parseActivityFilter, parseExploreScope, routeEndpoints, routesToExploreGeoJson } from "@/lib/explore";
 import { serializeOutings } from "@/lib/outings";
+import { computeRouteFacts, routeFactsBrief } from "@/lib/route-facts";
+import { isAffinityMatch } from "@/lib/sport-affinity";
 
 export const runtime = "nodejs";
 
@@ -25,8 +28,21 @@ export async function GET(req: Request) {
 
   const activity = parseActivityFilter(url.searchParams.get("activity"));
 
+  const bboxRaw = url.searchParams.get("bbox");
+  const bboxParts = bboxRaw?.split(",").map(Number);
+  const bbox =
+    bboxParts && bboxParts.length === 4 && bboxParts.every(Number.isFinite)
+      ? { south: bboxParts[0]!, west: bboxParts[1]!, north: bboxParts[2]!, east: bboxParts[3]! }
+      : null;
+  const zoom = Number(url.searchParams.get("zoom") ?? "12");
+
   let routes;
-  if (scope === "public") {
+  let total: number | null = null;
+  if (scope === "public" && bbox) {
+    const res = listPublicRoutesInBbox(activity, bbox, 400);
+    routes = res.rows;
+    total = res.total;
+  } else if (scope === "public") {
     routes = listRoutesForExplore(activity, "public", auth.email);
   } else if (scope === "mine") {
     routes = listRoutesForExplore(activity, "mine", auth.email);
@@ -38,12 +54,15 @@ export async function GET(req: Request) {
     routes = listRoutesForExplore(activity, "group", auth.email, groupId);
   }
 
-  const geojson = routesToExploreGeoJson(routes);
+  // Geometrie alleggerite: a zoom basso bastano pochi vertici per tracciato.
+  const maxPts = zoom >= 14 ? 800 : zoom >= 12 ? 300 : zoom >= 10 ? 120 : 60;
+  const geojson = routesToExploreGeoJson(routes, maxPts);
   const includeOutings = scope !== "public";
   return NextResponse.json({
     scope,
     activity: activity ?? "all",
     count: routes.length,
+    total: total ?? routes.length,
     geojson,
     routes: routes.map((r) => {
       let parsed: GeoJSON.GeoJSON;
@@ -71,6 +90,8 @@ export async function GET(req: Request) {
         source: r.source,
         source_url: r.source_url,
         license: r.license,
+        ...routeFactsBrief(computeRouteFacts(r)),
+        affinity: isAffinityMatch(activity, r.activity),
         start: ep.start,
         end: ep.end,
         outing_count: outingCount,

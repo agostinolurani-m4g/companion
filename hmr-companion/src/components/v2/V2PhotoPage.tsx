@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import V2Nav from "@/components/v2/V2Nav";
 import V2PhotoCapture from "@/components/v2/V2PhotoCapture";
 
 type Props = {
@@ -14,7 +13,6 @@ export default function V2PhotoPage({ isAdmin = false, username }: Props) {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <V2Nav isAdmin={isAdmin} username={username} />
       <div className="mx-auto w-full max-w-lg flex-1 p-4">
         <h1 className="text-xl font-semibold">Carica una foto</h1>
         <p className="mt-1 text-sm text-[color:var(--hmr-muted)]">

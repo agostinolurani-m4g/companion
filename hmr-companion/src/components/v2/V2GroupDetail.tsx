@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import V2Nav from "@/components/v2/V2Nav";
 import type { GroupMemberRole, GroupType } from "@/lib/db";
 
 type Props = {
@@ -240,7 +239,6 @@ export default function V2GroupDetail({ groupId, username, isAdmin = false }: Pr
   if (busy) {
     return (
       <div className="flex h-full min-h-0 flex-col">
-        <V2Nav isAdmin={isAdmin} username={username} />
         <p className="p-4 text-sm text-[color:var(--hmr-muted)]">Caricamento…</p>
       </div>
     );
@@ -249,8 +247,7 @@ export default function V2GroupDetail({ groupId, username, isAdmin = false }: Pr
   if (!group) {
     return (
       <div className="flex h-full min-h-0 flex-col">
-        <V2Nav isAdmin={isAdmin} username={username} />
-        <p className="p-4 text-sm text-red-400">{err ?? "Gruppo non trovato"}</p>
+        <p className="p-4 text-sm text-[color:var(--hmr-danger)]">{err ?? "Gruppo non trovato"}</p>
         <Link href="/v2/groups" className="px-4 text-xs text-[color:var(--hmr-accent)]">
           ← Torna ai gruppi
         </Link>
@@ -260,7 +257,6 @@ export default function V2GroupDetail({ groupId, username, isAdmin = false }: Pr
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <V2Nav isAdmin={isAdmin} username={username} />
       <div className="mx-auto flex w-full max-w-3xl min-h-0 flex-1 flex-col p-4">
         <div className="shrink-0">
           <Link href="/v2/groups" className="text-xs text-[color:var(--hmr-muted)] hover:text-[color:var(--hmr-text)]">
@@ -288,7 +284,7 @@ export default function V2GroupDetail({ groupId, username, isAdmin = false }: Pr
               <button
                 type="button"
                 onClick={() => void deleteGroup()}
-                className="shrink-0 text-xs text-red-400"
+                className="shrink-0 text-xs text-[color:var(--hmr-danger)]"
               >
                 Elimina
               </button>
@@ -350,7 +346,7 @@ export default function V2GroupDetail({ groupId, username, isAdmin = false }: Pr
 
         {tab === "chat" ? (
           <>
-            <div className="mt-3 min-h-0 flex-1 overflow-y-auto rounded-2xl border border-[color:var(--hmr-border)]/60 bg-[color:var(--hmr-elev)]/30 p-3">
+            <div className="mt-3 min-h-0 flex-1 overflow-y-auto rounded-lg border border-[color:var(--hmr-border)]/60 bg-[color:var(--hmr-elev)]/30 p-3">
               {messages.length === 0 ? (
                 <p className="text-center text-sm text-[color:var(--hmr-muted)]">
                   Nessun messaggio. Scrivi il primo!
@@ -367,8 +363,8 @@ export default function V2GroupDetail({ groupId, username, isAdmin = false }: Pr
                         <div
                           className={
                             mine
-                              ? "max-w-[85%] rounded-2xl rounded-br-md bg-[color:var(--hmr-accent)] px-3 py-2 text-sm text-[color:var(--hmr-bg)]"
-                              : "max-w-[85%] rounded-2xl rounded-bl-md border border-[color:var(--hmr-border)]/60 bg-[color:var(--hmr-panel)] px-3 py-2 text-sm"
+                              ? "max-w-[85%] rounded-lg rounded-br-md bg-[color:var(--hmr-accent)] px-3 py-2 text-sm text-[color:var(--hmr-bg)]"
+                              : "max-w-[85%] rounded-lg rounded-bl-md border border-[color:var(--hmr-border)]/60 bg-[color:var(--hmr-panel)] px-3 py-2 text-sm"
                           }
                         >
                           {!mine ? (
@@ -463,7 +459,7 @@ export default function V2GroupDetail({ groupId, username, isAdmin = false }: Pr
                       <button
                         type="button"
                         onClick={() => void removeMember(m.username)}
-                        className="text-xs text-red-400"
+                        className="text-xs text-[color:var(--hmr-danger)]"
                       >
                         {m.username === username ? "Esci" : "Rimuovi"}
                       </button>
@@ -536,7 +532,7 @@ export default function V2GroupDetail({ groupId, username, isAdmin = false }: Pr
           </div>
         )}
 
-        {err ? <p className="mt-2 shrink-0 text-xs text-red-400">{err}</p> : null}
+        {err ? <p className="mt-2 shrink-0 text-xs text-[color:var(--hmr-danger)]">{err}</p> : null}
       </div>
     </div>
   );

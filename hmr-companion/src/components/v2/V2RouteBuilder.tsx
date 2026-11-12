@@ -2,12 +2,25 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import V2Nav from "@/components/v2/V2Nav";
+import V2ExploreAside from "@/components/v2/V2ExploreAside";
+import V2PhotoCapture from "@/components/v2/V2PhotoCapture";
+import V2RoutePopularity, {
+  untroddenFeatureCollection,
+  type RouteAlternativeDto,
+  type RoutePopularityDto,
+} from "@/components/v2/V2RoutePopularity";
+import V2ReportSheet, { V2ReportCreateSheet } from "@/components/v2/V2ReportSheet";
+import V2SkiRouteBanner from "@/components/v2/V2SkiRouteBanner";
 import V2PlanMap, { type V2MapClickTarget, type V2Waypoint } from "@/components/v2/V2PlanMap";
-import V2PoiBanner from "@/components/v2/V2PoiBanner";
+import V2PoiBanner, { targetFromMapPlace, targetFromSearchPoi } from "@/components/v2/V2PoiBanner";
+import V2FeatureSheet from "@/components/v2/V2FeatureSheet";
+import V2AreaDataPanel from "@/components/v2/V2AreaDataPanel";
+import V2AlongRoutePanel from "@/components/v2/V2AlongRoutePanel";
 import V2WaypointList from "@/components/v2/V2WaypointList";
 import V2PlaceSearch, { type PlaceSearchResult } from "@/components/v2/V2PlaceSearch";
-import ElevationChart from "@/components/ElevationChart";
+import ElevationProfile from "@/components/v2/ui/ElevationProfile";
+import MapPanel, { DESKTOP_PANEL_W, type PanelSnap } from "@/components/v2/ui/MapPanel";
+import Icon from "@/components/v2/ui/Icon";
 import type { PoiCategory } from "@/lib/db";
 import type { UserRouteActivity, UserRouteVisibility } from "@/lib/db";
 import {
@@ -27,9 +40,31 @@ import type { ViewBbox } from "@/lib/overpass";
 import { sampleElevationsForLine } from "@/lib/elevation";
 import type { StoredCoord } from "@/lib/track-coords";
 import { elevationGainLossSmoothed, smoothElevationProfile } from "@/lib/track-geometry";
+import { coordAtKm } from "@/lib/track-measure";
 import type { RouteTech } from "@/lib/ors-route-tech";
-import { formatSurfacePctSummary, formatTerrainIt, SURFACE_COLORS } from "@/lib/ors-route-tech";
+import {
+  formatTerrainIt,
+  SURFACE_COLORS,
+  WAY_CATEGORY_COLORS,
+  WAY_CATEGORY_LABELS,
+  WAY_CATEGORY_ORDER,
+} from "@/lib/ors-route-tech";
+import type { RoutePreference } from "@/lib/openrouteservice-route";
 import type { TrackSurfaceKind } from "@/lib/surface-osm";
+import { isUserRouteActivity, outingPlanHref, routeEditorHref, SPORTS } from "@/lib/sports";
+import V2ConditionsPanel from "@/components/v2/V2ConditionsPanel";
+import V2SportChips from "@/components/v2/V2SportChips";
+import { useFieldReportsOnMap } from "@/lib/use-field-reports-map";
+import { useOutdoorFeaturesOnMap } from "@/lib/use-outdoor-features-map";
+import type { OutdoorGroup } from "@/lib/outdoor/groups";
+import type { V2MapPlacePick, V2OutdoorFeaturePick } from "@/components/v2/map/types";
+import { featuresAlongRoute } from "@/lib/outdoor/along";
+import { planFeatureCollection } from "@/lib/outdoor/plan-relevance";
+import { useV2ExploreState } from "@/lib/use-v2-explore-state";
+import { SKI_AVALANCHE_DEFAULT_OPACITY, SKI_SLOPE_DEFAULT_OPACITY } from "@/lib/ski-overlays";
+import { estimateDurationMin, formatDuration } from "@/lib/route-time";
+import { geojsonLineToGpx } from "@/lib/gpx";
+import { insertIndexForPoint } from "@/lib/route-insert";
 
 type Props = {
   isAdmin?: boolean;
@@ -41,125 +76,263 @@ type MapAction =
   | { kind: "waypoint"; index: number; lng: number; lat: number }
   | { kind: "poi"; poi: V2SearchPoi };
 
-const ACTIVITY_LABELS: Record<UserRouteActivity, string> = {
-  road: "Bici da strada",
-  mtb: "MTB",
-  hike: "Escursione",
-  gravel: "Gravel",
-  ski: "Scialpinismo",
-};
-
-const PLAN_ACTIVITIES: UserRouteActivity[] = ["road", "mtb", "hike", "gravel"];
+type PlanTab = "route" | "nearby" | "conditions";
 
 const POI_RADIUS_PRESETS: PoiKindMeta[] = SEARCH_KINDS;
-
 const POI_SEARCH_RADIUS_M = 3000;
+/** Larghezza card desktop + margini (allineare con MapPanel). */
+const DESKTOP_PANEL_SPACE = DESKTOP_PANEL_W;
+const DESKTOP_PROFILE_H = 150;
 
-function sqDistToSegment(
-  px: number,
-  py: number,
-  ax: number,
-  ay: number,
-  bx: number,
-  by: number
-): number {
-  const dx = bx - ax;
-  const dy = by - ay;
-  if (dx === 0 && dy === 0) {
-    const ddx = px - ax;
-    const ddy = py - ay;
-    return ddx * ddx + ddy * ddy;
-  }
-  let t = ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy);
-  t = Math.max(0, Math.min(1, t));
-  const ddx = px - (ax + t * dx);
-  const ddy = py - (ay + t * dy);
-  return ddx * ddx + ddy * ddy;
+const PREFERENCE_LABELS: Record<RoutePreference, { foot: string; bike: string; hint: string }> = {
+  recommended: { foot: "Consigliato", bike: "Consigliato", hint: "Bilancia distanza, tipo di via e sicurezza" },
+  shortest: { foot: "Più breve", bike: "Più breve", hint: "Distanza minima" },
+  quiet: { foot: "Nel verde", bike: "Meno salite", hint: "A piedi: vie tranquille e nel verde · In bici: pendenze più dolci" },
+};
+
+function metersBetween(a: { lng: number; lat: number }, b: { lng: number; lat: number }): number {
+  const kx = 111_320 * Math.cos((((a.lat + b.lat) / 2) * Math.PI) / 180);
+  return Math.hypot((b.lng - a.lng) * kx, (b.lat - a.lat) * 110_540);
 }
 
-/** Indice dove inserire il nuovo punto (tra wp[i-1] e wp[i]). */
-function findInsertIndex(wps: V2Waypoint[], lng: number, lat: number): number {
-  if (wps.length < 2) return wps.length;
-
-  let bestIdx = 1;
-  let bestDist = Infinity;
-  for (let i = 0; i < wps.length - 1; i++) {
-    const d = sqDistToSegment(lng, lat, wps[i].lng, wps[i].lat, wps[i + 1].lng, wps[i + 1].lat);
-    if (d < bestDist) {
-      bestDist = d;
-      bestIdx = i + 1;
-    }
-  }
-  return bestIdx;
+function routeKey(wps: V2Waypoint[], act: string, pref: string, cw = false): string {
+  return `${act}|${pref}${cw ? "+cw" : ""}|${wps.map((w) => `${w.lng.toFixed(6)},${w.lat.toFixed(6)}`).join(";")}`;
 }
 
 /** Aggiunge un nuovo punto di arrivo; il precedente resta come tappa intermedia. */
 function applyArrivalPoint(wps: V2Waypoint[], lng: number, lat: number, label?: string): V2Waypoint[] {
-  const p: V2Waypoint = { lng, lat, label };
-  return [...wps, p];
+  return [...wps, { lng, lat, label }];
 }
 
-/** Inserisce il punto nel segmento più vicino del percorso. */
+/** Inserisce il punto nel tratto giusto del tracciato calcolato (vedi route-insert). */
 function applyInsertInRoute(
   wps: V2Waypoint[],
   lng: number,
   lat: number,
-  label: string | undefined
+  label: string | undefined,
+  route: [number, number][] | null,
 ): V2Waypoint[] {
   const p: V2Waypoint = { lng, lat, label };
   if (wps.length === 0) return [p];
   if (wps.length === 1) return [...wps, p];
-  const idx = findInsertIndex(wps, lng, lat);
-  return [...wps.slice(0, idx), p, ...wps.slice(idx)];
+  const { index } = insertIndexForPoint(wps, p, route);
+  return [...wps.slice(0, index), p, ...wps.slice(index)];
 }
 
-export default function V2RouteBuilder({ isAdmin = false, username }: Props) {
+function bboxOfCoords(coords: [number, number][]): [number, number, number, number] | null {
+  if (coords.length === 0) return null;
+  let w = Infinity;
+  let s = Infinity;
+  let e = -Infinity;
+  let n = -Infinity;
+  for (const [x, y] of coords) {
+    if (x < w) w = x;
+    if (x > e) e = x;
+    if (y < s) s = y;
+    if (y > n) n = y;
+  }
+  return [w, s, e, n];
+}
+
+function slugify(s: string): string {
+  return (
+    s
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 60) || "percorso"
+  );
+}
+
+function StatCell({ label, value, unit, icon }: { label: string; value: string; unit?: string; icon?: React.ReactNode }) {
+  return (
+    <div className="min-w-0 flex-1">
+      <div className="flex items-center gap-1 text-[10.5px] font-semibold uppercase tracking-wide text-[color:var(--hmr-faint)]">
+        {icon}
+        {label}
+      </div>
+      <div className="truncate">
+        <span className="ui-stat-value">{value}</span>
+        {unit ? <span className="ui-stat-unit">{unit}</span> : null}
+      </div>
+    </div>
+  );
+}
+
+function SectionTitle({ children, right }: { children: React.ReactNode; right?: React.ReactNode }) {
+  return (
+    <div className="mb-2 mt-5 flex items-center justify-between gap-2 first:mt-1">
+      <h3 className="ui-eyebrow">{children}</h3>
+      {right}
+    </div>
+  );
+}
+
+export default function V2RouteBuilder({ username }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const routeId = searchParams.get("route");
+  const activityParam = searchParams.get("activity");
+  const isExplore = searchParams.get("mode") === "explore";
+  const explore = useV2ExploreState(isExplore, username);
 
-  const [activity, setActivity] = useState<UserRouteActivity>("hike");
+  const [activity, setActivity] = useState<UserRouteActivity>(() =>
+    activityParam && isUserRouteActivity(activityParam) ? activityParam : "hike",
+  );
   const [waypoints, setWaypoints] = useState<V2Waypoint[]>([]);
   const [routeCoords, setRouteCoords] = useState<[number, number][] | null>(null);
   const [routeTech, setRouteTech] = useState<RouteTech | null>(null);
+  const [popularity, setPopularity] = useState<RoutePopularityDto | null>(null);
+  const [alternatives, setAlternatives] = useState<RouteAlternativeDto[]>([]);
   const [lengthKm, setLengthKm] = useState(0);
   const [elevGainM, setElevGainM] = useState(0);
   const [elevLossM, setElevLossM] = useState(0);
+  const [elevAvailable, setElevAvailable] = useState(true);
   const [pois, setPois] = useState<V2SearchPoi[]>([]);
   const [poiSearchCenter, setPoiSearchCenter] = useState<{ lng: number; lat: number } | null>(null);
   const [poiSearchBbox, setPoiSearchBbox] = useState<ViewBbox | null>(null);
   const [mapViewport, setMapViewport] = useState<ViewBbox | null>(null);
+  const [mapZoom, setMapZoom] = useState<number>(DEFAULT_MAP_VIEW_CENTER.zoom ?? 12);
+  const [mapCenter] = useState<{ lng: number; lat: number; zoom?: number } | undefined>(
+    DEFAULT_MAP_VIEW_CENTER,
+  );
+  const { reports, reportsGeoJson } = useFieldReportsOnMap(mapViewport);
+  const [outdoorGroupFilter, setOutdoorGroupFilter] = useState<OutdoorGroup[] | null>(null);
+  const [selectedFeature, setSelectedFeature] = useState<V2OutdoorFeaturePick | null>(null);
+  const [selectedPlace, setSelectedPlace] = useState<V2MapPlacePick | null>(null);
+  const placeTarget = useMemo(() => (selectedPlace ? targetFromMapPlace(selectedPlace) : null), [selectedPlace]);
+  // I gruppi selezionati non filtrano più i dati: evidenziano i loro pallini sulla mappa.
+  const { featuresGeoJson: outdoorRawGeoJson, busy: outdoorBusy } = useOutdoorFeaturesOnMap(
+    mapViewport,
+    mapZoom,
+    activity,
+    null,
+    !isExplore,
+  );
   const [routing, setRouting] = useState(false);
   const [poiBusy, setPoiBusy] = useState(false);
   const [saveBusy, setSaveBusy] = useState(false);
   const [outingBusy, setOutingBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [visibility, setVisibility] = useState<UserRouteVisibility>("private");
   const [mapAction, setMapAction] = useState<MapAction | null>(null);
-  const [mapCenter, setMapCenter] = useState<{ lng: number; lat: number; zoom?: number } | undefined>(
-    DEFAULT_MAP_VIEW_CENTER
+  const poiTarget = useMemo(
+    () => (mapAction?.kind === "poi" ? targetFromSearchPoi(mapAction.poi) : null),
+    [mapAction],
   );
   const [profileCoords, setProfileCoords] = useState<StoredCoord[]>([]);
   const [hoverKm, setHoverKm] = useState<number | null>(null);
   const [selectedWaypointIndex, setSelectedWaypointIndex] = useState<number | null>(null);
   const [flyTo, setFlyTo] = useState<{ lng: number; lat: number; zoom?: number; key: number } | null>(null);
+  const [fitTo, setFitTo] = useState<{ bbox: [number, number, number, number]; key: number } | null>(null);
   const flyKeyRef = useRef(0);
   const [selectedViewportKinds, setSelectedViewportKinds] = useState<Set<PoiKind>>(
-    () => new Set(VIEWPORT_SEARCH_KINDS.map((k) => k.id))
+    () => new Set(VIEWPORT_SEARCH_KINDS.map((k) => k.id)),
   );
+  const [tab, setTab] = useState<PlanTab>("route");
+  const [preference, setPreference] = useState<RoutePreference>("recommended");
+  /** Solo bici da strada: prende le ciclabili asfaltate quando non allungano troppo. */
+  const [preferCycleways, setPreferCycleways] = useState(false);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("v2.preferCycleways") === "1") setPreferCycleways(true);
+    } catch {}
+  }, []);
+  const togglePreferCycleways = useCallback(() => {
+    setPreferCycleways((v) => {
+      try {
+        localStorage.setItem("v2.preferCycleways", v ? "0" : "1");
+      } catch {}
+      return !v;
+    });
+  }, []);
+  const cyclewaysOn = preferCycleways && activity === "road";
+  const [colorBy, setColorBy] = useState<"surface" | "category">("category");
+  const [snap, setSnap] = useState<PanelSnap>("peek");
+  const [sheetH, setSheetH] = useState(0);
 
   const routeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const fetchRoute = useCallback(async (wps: V2Waypoint[], act: UserRouteActivity) => {
+  /* ─────────────── Cronologia tappe (annulla / ripeti) ─────────────── */
+  const waypointsRef = useRef<V2Waypoint[]>([]);
+  useEffect(() => {
+    waypointsRef.current = waypoints;
+  }, [waypoints]);
+  const historyRef = useRef<{ past: V2Waypoint[][]; future: V2Waypoint[][]; lastMoveAt: number }>({
+    past: [],
+    future: [],
+    lastMoveAt: 0,
+  });
+  const [historyLen, setHistoryLen] = useState({ past: 0, future: 0 });
+  const syncHistory = useCallback(() => {
+    const h = historyRef.current;
+    setHistoryLen({ past: h.past.length, future: h.future.length });
+  }, []);
+
+  const commitWaypoints = useCallback((updater: (wps: V2Waypoint[]) => V2Waypoint[]) => {
+    const cur = waypointsRef.current;
+    const next = updater(cur);
+    if (next === cur) return;
+    const h = historyRef.current;
+    h.past.push(cur);
+    if (h.past.length > 100) h.past.shift();
+    h.future = [];
+    waypointsRef.current = next;
+    setWaypoints(next);
+    syncHistory();
+  }, [syncHistory]);
+
+  const undo = useCallback(() => {
+    const h = historyRef.current;
+    const prev = h.past.pop();
+    if (!prev) return;
+    h.future.push(waypointsRef.current);
+    waypointsRef.current = prev;
+    setWaypoints(prev);
+    setSelectedWaypointIndex(null);
+    setMapAction(null);
+    syncHistory();
+  }, [syncHistory]);
+
+  const redo = useCallback(() => {
+    const h = historyRef.current;
+    const next = h.future.pop();
+    if (!next) return;
+    h.past.push(waypointsRef.current);
+    waypointsRef.current = next;
+    setWaypoints(next);
+    syncHistory();
+  }, [syncHistory]);
+
+  const canUndo = historyLen.past > 0;
+  const canRedo = historyLen.future > 0;
+
+  /* ─────────────── Routing ─────────────── */
+  const routeAbortRef = useRef<AbortController | null>(null);
+  /** Tappe appena agganciate al sentiero: il percorso è già quello giusto, niente nuovo calcolo. */
+  const skipRouteKeyRef = useRef<string | null>(null);
+
+  const fetchRoute = useCallback(async (wps: V2Waypoint[], act: UserRouteActivity, pref: RoutePreference, cw: boolean) => {
+    routeAbortRef.current?.abort();
     if (wps.length < 2) {
+      setRouting(false);
       setRouteCoords(null);
       setRouteTech(null);
+      setPopularity(null);
+      setAlternatives([]);
       setLengthKm(0);
       setElevGainM(0);
       setElevLossM(0);
       return;
     }
+    // Una richiesta superata (tappa spostata di nuovo) viene annullata: niente risposte vecchie
+    // che arrivano dopo e sovrascrivono il percorso nuovo.
+    const ctrl = new AbortController();
+    routeAbortRef.current = ctrl;
     setRouting(true);
     setErr(null);
     try {
@@ -167,39 +340,73 @@ export default function V2RouteBuilder({ isAdmin = false, username }: Props) {
       const res = await fetch("/api/v2/route", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ coordinates, activity: act }),
+        body: JSON.stringify({
+          coordinates,
+          activity: act,
+          preference: pref,
+          preferCycleways: cw,
+          alternatives: coordinates.length === 2,
+        }),
+        signal: ctrl.signal,
       });
       const data = (await res.json()) as {
         error?: string;
         feature?: GeoJSON.Feature<GeoJSON.LineString>;
         length_km?: number;
         tech?: RouteTech | null;
+        snapped?: [number, number][] | null;
+        popularity?: RoutePopularityDto | null;
+        alternatives?: RouteAlternativeDto[];
       };
+      if (ctrl.signal.aborted) return;
       if (!res.ok || !data.feature) throw new Error(data.error ?? "Routing fallito");
       setRouteCoords(data.feature.geometry.coordinates as [number, number][]);
       setRouteTech(data.tech ?? null);
       setLengthKm(data.length_km ?? 0);
+      setPopularity(data.popularity ?? null);
+      setAlternatives(data.alternatives ?? []);
+
+      // Pallini sul sentiero: le tappe prendono la posizione dove ORS le ha agganciate.
+      const snapped = data.snapped;
+      const cur = waypointsRef.current;
+      if (snapped && snapped.length === cur.length && cur === wps) {
+        const moved = snapped.some(([lng, lat], i) => metersBetween(cur[i]!, { lng, lat }) > 3);
+        if (moved) {
+          const next = cur.map((w, i) => ({ ...w, lng: snapped[i]![0], lat: snapped[i]![1] }));
+          skipRouteKeyRef.current = routeKey(next, act, pref, cw);
+          waypointsRef.current = next;
+          setWaypoints(next);
+        }
+      }
     } catch (e) {
+      if (ctrl.signal.aborted) return;
       setErr(e instanceof Error ? e.message : String(e));
       setRouteCoords(null);
       setRouteTech(null);
+      setPopularity(null);
+      setAlternatives([]);
       setLengthKm(0);
       setElevGainM(0);
       setElevLossM(0);
     } finally {
-      setRouting(false);
+      if (routeAbortRef.current === ctrl) setRouting(false);
     }
   }, []);
 
   useEffect(() => {
     if (routeTimer.current) clearTimeout(routeTimer.current);
+    if (skipRouteKeyRef.current && skipRouteKeyRef.current === routeKey(waypoints, activity, preference, cyclewaysOn)) {
+      skipRouteKeyRef.current = null;
+      return;
+    }
+    skipRouteKeyRef.current = null;
     routeTimer.current = setTimeout(() => {
-      void fetchRoute(waypoints, activity);
-    }, 400);
+      void fetchRoute(waypoints, activity, preference, cyclewaysOn);
+    }, 200);
     return () => {
       if (routeTimer.current) clearTimeout(routeTimer.current);
     };
-  }, [waypoints, activity, fetchRoute]);
+  }, [waypoints, activity, preference, cyclewaysOn, fetchRoute]);
 
   useEffect(() => {
     if (!routeCoords || routeCoords.length < 2) {
@@ -211,24 +418,29 @@ export default function V2RouteBuilder({ isAdmin = false, username }: Props) {
     let cancelled = false;
     void (async () => {
       const positions = routeCoords.map((c) => [c[0], c[1]] as [number, number]);
-      const { distanceKm, elevationM, sampled } = await sampleElevationsForLine(positions);
+      const { distanceKm, elevationM, sampled, available } = await sampleElevationsForLine(positions);
       if (cancelled) return;
+      setElevAvailable(available);
+      if (!available) {
+        // Niente profilo inventato: meglio "—" che un dislivello falso.
+        setElevGainM(0);
+        setElevLossM(0);
+        setProfileCoords([]);
+        return;
+      }
       const { gain, loss } = elevationGainLossSmoothed(elevationM);
       setElevGainM(gain);
       setElevLossM(loss);
       const displayWindow = Math.max(3, Math.min(7, Math.round(elevationM.length / 20)));
       const smoothed = smoothElevationProfile(elevationM, displayWindow);
-      setProfileCoords(
-        sampled.map(
-          (p, i) => [p[0], p[1], smoothed[i] ?? null, distanceKm[i] ?? 0] as StoredCoord,
-        ),
-      );
+      setProfileCoords(sampled.map((p, i) => [p[0], p[1], smoothed[i] ?? null, distanceKm[i] ?? 0] as StoredCoord));
     })();
     return () => {
       cancelled = true;
     };
   }, [routeCoords]);
 
+  /* ─────────────── Caricamento percorso salvato ─────────────── */
   useEffect(() => {
     if (!routeId) return;
     void (async () => {
@@ -250,62 +462,255 @@ export default function V2RouteBuilder({ isAdmin = false, username }: Props) {
         setName(r.name);
         setActivity(r.activity);
         setVisibility(r.visibility);
-        setWaypoints(r.waypoints.map(([lng, lat]) => ({ lng, lat })));
-        setRouteCoords(r.geojson.geometry.coordinates as [number, number][]);
+        const wps = r.waypoints.map(([lng, lat]) => ({ lng, lat }));
+        waypointsRef.current = wps;
+        historyRef.current = { past: [], future: [], lastMoveAt: 0 };
+        syncHistory();
+        setWaypoints(wps);
+        const coords = r.geojson.geometry.coordinates as [number, number][];
+        setRouteCoords(coords);
         setLengthKm(r.length_km);
-        const first = r.waypoints[0];
-        if (first) setMapCenter({ lng: first[0], lat: first[1], zoom: 12 });
+        const bb = bboxOfCoords(coords);
+        if (bb) setFitTo({ bbox: bb, key: Date.now() });
+        setSnap("half");
       } catch (e) {
         setErr(e instanceof Error ? e.message : String(e));
       }
     })();
-  }, [routeId]);
+  }, [routeId, syncHistory]);
 
+  /* ─────────────── Interazione mappa ─────────────── */
   const onMapInteraction = useCallback((target: V2MapClickTarget) => {
     if (target.kind === "map") {
+      // Primo punto: diventa subito la partenza (niente popup inutile).
+      if (waypointsRef.current.length === 0) {
+        commitWaypoints((wps) => [...wps, { lng: target.lng, lat: target.lat }]);
+        setMapAction(null);
+        return;
+      }
       setMapAction({ kind: "new_point", lng: target.lng, lat: target.lat });
       return;
     }
     if (target.kind === "waypoint") {
-      setMapAction({
-        kind: "waypoint",
-        index: target.index,
-        lng: target.lng,
-        lat: target.lat,
-      });
+      setSelectedWaypointIndex(target.index);
+      setMapAction({ kind: "waypoint", index: target.index, lng: target.lng, lat: target.lat });
       return;
     }
+    if (target.kind === "feature") {
+      setMapAction(null);
+      setSelectedPlace(null);
+      setSelectedFeature(target.feature);
+      return;
+    }
+    if (target.kind === "place") {
+      setMapAction(null);
+      setSelectedFeature(null);
+      setSelectedPlace(target.place);
+      return;
+    }
+    setSelectedPlace(null);
     setMapAction({ kind: "poi", poi: target.poi });
+  }, [commitWaypoints]);
+
+  const exploreOnMap = explore.onMapInteraction;
+  const onExploreMapInteraction = useCallback(
+    (target: V2MapClickTarget) => {
+      if (target.kind === "place") {
+        setSelectedPlace(target.place);
+        return;
+      }
+      setSelectedPlace(null);
+      exploreOnMap(target);
+    },
+    [exploreOnMap],
+  );
+
+  const toggleOutdoorGroup = useCallback((grp: OutdoorGroup) => {
+    setOutdoorGroupFilter((prev) => {
+      const cur = prev ?? [];
+      const next = cur.includes(grp) ? cur.filter((g) => g !== grp) : [...cur, grp];
+      return next.length === 0 ? null : next;
+    });
   }, []);
 
-  const dismissAction = () => setMapAction(null);
+  // Cancelli solo sul tracciato, parcheggi/stazioni solo vicino alla partenza.
+  const featuresGeoJson = useMemo(
+    () =>
+      planFeatureCollection(
+        outdoorRawGeoJson,
+        { route: routeCoords, start: waypoints[0] ? { lng: waypoints[0].lng, lat: waypoints[0].lat } : null },
+        outdoorGroupFilter,
+      ),
+    [outdoorRawGeoJson, routeCoords, waypoints, outdoorGroupFilter],
+  );
+  // Conteggi dei chip sui punti davvero mostrati (senza i cancelli fuori percorso & co.).
+  const groupCounts = useMemo(() => {
+    const n = new Map<string, number>();
+    for (const f of featuresGeoJson?.features ?? []) {
+      const grp = (f.properties as { grp?: string } | null)?.grp;
+      if (grp) n.set(grp, (n.get(grp) ?? 0) + 1);
+    }
+    return [...n].map(([grp, count]) => ({ grp, n: count }));
+  }, [featuresGeoJson]);
+
+  const routeReportWarning = useMemo(() => {
+    if (!routeCoords || routeCoords.length < 2 || reports.length === 0) return null;
+    const pseudoFeatures = reports.map((r) => ({
+      id: r.id,
+      osm_type: "node",
+      osm_id: 0,
+      grp: "hazard",
+      kind: "access_no",
+      name: r.kind,
+      lat: r.lat,
+      lng: r.lng,
+      ele: null,
+      tags_json: "{}",
+      geom_json: null,
+      source: "report",
+      updated_at: 0,
+    }));
+    const hits = featuresAlongRoute(routeCoords, pseudoFeatures, 300);
+    return hits.length > 0 ? hits.length : null;
+  }, [routeCoords, reports]);
+
+  const dismissAction = useCallback(() => {
+    setMapAction(null);
+    setSelectedWaypointIndex(null);
+  }, []);
+
+  const routeCoordsRef = useRef<[number, number][] | null>(null);
+  useEffect(() => {
+    routeCoordsRef.current = routeCoords;
+  }, [routeCoords]);
 
   const insertInRoute = (lng: number, lat: number, label?: string) => {
-    setWaypoints((wps) => applyInsertInRoute(wps, lng, lat, label));
+    commitWaypoints((wps) => applyInsertInRoute(wps, lng, lat, label, routeCoordsRef.current));
     dismissAction();
   };
 
+  /**
+   * Inizio trascinamento della linea del percorso: crea una tappa nel tratto afferrato e
+   * ne restituisce l'indice; i movimenti successivi passano da moveWaypoint (stesso gesto
+   * = un solo passo di annulla).
+   */
+  const startRouteDrag = useCallback(
+    (lng: number, lat: number): number | null => {
+      const wps = waypointsRef.current;
+      if (wps.length < 2) return null;
+      const { index } = insertIndexForPoint(wps, { lng, lat }, routeCoordsRef.current);
+      const next = [...wps.slice(0, index), { lng, lat }, ...wps.slice(index)];
+      const h = historyRef.current;
+      h.past.push(wps);
+      if (h.past.length > 100) h.past.shift();
+      h.future = [];
+      h.lastMoveAt = Date.now();
+      waypointsRef.current = next;
+      setWaypoints(next);
+      syncHistory();
+      setMapAction(null);
+      setSelectedWaypointIndex(null);
+      return index;
+    },
+    [syncHistory],
+  );
+
   const setNewDestination = (lng: number, lat: number, label?: string) => {
-    setWaypoints((wps) => applyArrivalPoint(wps, lng, lat, label));
+    commitWaypoints((wps) => applyArrivalPoint(wps, lng, lat, label));
+    dismissAction();
+  };
+
+  const setAsStart = (lng: number, lat: number, label?: string) => {
+    commitWaypoints((wps) => [{ lng, lat, label }, ...wps]);
     dismissAction();
   };
 
   const removeWaypoint = (index: number) => {
-    setWaypoints((wps) => wps.filter((_, i) => i !== index));
-    setSelectedWaypointIndex(null);
+    commitWaypoints((wps) => wps.filter((_, i) => i !== index));
     dismissAction();
   };
 
+  /** Drag sulla mappa: un solo passo di cronologia per gesto. */
   const moveWaypoint = useCallback((index: number, lng: number, lat: number) => {
-    setWaypoints((wps) => wps.map((w, i) => (i === index ? { ...w, lng, lat } : w)));
-  }, []);
+    const h = historyRef.current;
+    const now = Date.now();
+    if (now - h.lastMoveAt > 900) {
+      h.past.push(waypointsRef.current);
+      h.future = [];
+      syncHistory();
+    }
+    h.lastMoveAt = now;
+    const next = waypointsRef.current.map((w, i) => (i === index ? { ...w, lng, lat } : w));
+    waypointsRef.current = next;
+    setWaypoints(next);
+  }, [syncHistory]);
 
   const reorderWaypoints = (next: V2Waypoint[]) => {
-    setWaypoints(next);
+    commitWaypoints(() => next);
     setSelectedWaypointIndex(null);
   };
 
+  const reverseRoute = () => commitWaypoints((wps) => (wps.length < 2 ? wps : [...wps].reverse()));
+  const closeLoop = () =>
+    commitWaypoints((wps) => {
+      if (wps.length < 2) return wps;
+      const first = wps[0];
+      const last = wps[wps.length - 1];
+      if (Math.abs(first.lng - last.lng) < 1e-6 && Math.abs(first.lat - last.lat) < 1e-6) return wps;
+      return [...wps, { lng: first.lng, lat: first.lat, label: first.label ? `${first.label} (ritorno)` : "Ritorno al via" }];
+    });
+
+  const clearAll = () => {
+    commitWaypoints(() => []);
+    setRouteCoords(null);
+    setRouteTech(null);
+    setLengthKm(0);
+    setElevGainM(0);
+    setElevLossM(0);
+    setPois([]);
+    setPoiSearchCenter(null);
+    setPoiSearchBbox(null);
+    setMapAction(null);
+  };
+
+  /* Scorciatoie tastiera: Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y / Esc */
+  useEffect(() => {
+    if (isExplore) return;
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+      } else if (mod && e.key.toLowerCase() === "y") {
+        e.preventDefault();
+        redo();
+      } else if (e.key === "Escape") {
+        dismissAction();
+        setSelectedFeature(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isExplore, undo, redo, dismissAction]);
+
   const onPlaceSelect = (place: PlaceSearchResult, searchKind: PlaceSearchKind) => {
+    if (place.type === "outdoor" && place.category) {
+      flyKeyRef.current += 1;
+      setFlyTo({ lng: place.lng, lat: place.lat, zoom: 15, key: flyKeyRef.current });
+      setSelectedFeature({
+        id: place.category,
+        name: place.display_name.split("·")[0]?.trim() ?? place.display_name,
+        kind: "",
+        lat: place.lat,
+        lng: place.lng,
+      });
+      setMapAction(null);
+      setErr(null);
+      return;
+    }
     const poi: V2SearchPoi = geocodeToPoi(place, searchKind);
     setPois((prev) => {
       const idx = prev.findIndex((p) => p.id === poi.id);
@@ -321,16 +726,21 @@ export default function V2RouteBuilder({ isAdmin = false, username }: Props) {
     setMapAction({ kind: "poi", poi });
     setSelectedWaypointIndex(null);
     setErr(null);
+    setSnap("peek");
   };
 
   const mapViewCenter = useMemo(() => {
+    if (mapViewport) {
+      return { lat: (mapViewport.north + mapViewport.south) / 2, lng: (mapViewport.east + mapViewport.west) / 2 };
+    }
     if (waypoints.length > 0) {
       const w = waypoints[waypoints.length - 1];
       return { lat: w.lat, lng: w.lng };
     }
     return mapCenter ? { lat: mapCenter.lat, lng: mapCenter.lng } : undefined;
-  }, [waypoints, mapCenter]);
+  }, [mapViewport, waypoints, mapCenter]);
 
+  /* ─────────────── Ricerca POI ─────────────── */
   const searchPoisAtByKind = async (lng: number, lat: number, kind: PoiKindMeta) => {
     setPoiBusy(true);
     setErr(null);
@@ -340,21 +750,13 @@ export default function V2RouteBuilder({ isAdmin = false, username }: Props) {
       const res = await fetch("/api/v2/pois/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          lat,
-          lng,
-          radiusM: POI_SEARCH_RADIUS_M,
-          categories: [kind.category],
-          refresh: false,
-        }),
+        body: JSON.stringify({ lat, lng, radiusM: POI_SEARCH_RADIUS_M, categories: [kind.category], refresh: false }),
       });
       const data = (await res.json()) as { error?: string; pois?: V2SearchPoi[]; count?: number };
       if (!res.ok) throw new Error(data.error ?? "Ricerca POI fallita");
       const found = (data.pois ?? []).filter((p) => poiMatchesKind(p.category, p.sub_kind, kind));
       setPois(found);
-      if (found.length === 0) {
-        setErr(`Nessun ${kind.label.toLowerCase()} in un raggio di 3 km. Prova un'altra zona.`);
-      }
+      if (found.length === 0) setErr(`Nessun ${kind.label.toLowerCase()} in un raggio di 3 km. Prova un'altra zona.`);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
       setPois([]);
@@ -378,19 +780,13 @@ export default function V2RouteBuilder({ isAdmin = false, username }: Props) {
       if (!res.ok) throw new Error(data.error ?? "Ricerca POI fallita");
       const found = data.pois ?? [];
       setPois(found);
-      if (found.length === 0) {
-        setErr("Nessun POI in un raggio di 3 km da questo punto. Prova un'altra zona o categoria.");
-      }
+      if (found.length === 0) setErr("Nessun POI in un raggio di 3 km da questo punto. Prova un'altra zona o categoria.");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
       setPois([]);
     } finally {
       setPoiBusy(false);
     }
-  };
-
-  const searchPoisInViewportByKind = async (kind: PoiKindMeta) => {
-    await searchPoisInViewport([kind]);
   };
 
   const searchPoisInViewport = async (kinds: PoiKindMeta[]) => {
@@ -429,6 +825,11 @@ export default function V2RouteBuilder({ isAdmin = false, username }: Props) {
     }
   };
 
+  const searchPoisInViewportByKind = async (kind: PoiKindMeta) => {
+    setTab("nearby");
+    await searchPoisInViewport([kind]);
+  };
+
   const toggleViewportKind = (id: PoiKind) => {
     setSelectedViewportKinds((prev) => {
       const next = new Set(prev);
@@ -445,6 +846,7 @@ export default function V2RouteBuilder({ isAdmin = false, username }: Props) {
 
   const searchPoisNearby = async (lng: number, lat: number) => {
     dismissAction();
+    setTab("nearby");
     await searchPoisAt(lng, lat, [...CATEGORY_ORDER]);
   };
 
@@ -455,13 +857,22 @@ export default function V2RouteBuilder({ isAdmin = false, username }: Props) {
     if (mapAction?.kind === "poi") setMapAction(null);
   };
 
-  const onViewportChange = useCallback((bbox: ViewBbox) => {
-    setMapViewport(bbox);
-  }, []);
+  const onViewportChange = useCallback(
+    (bbox: ViewBbox, meta?: { zoom: number }) => {
+      setMapViewport(bbox);
+      if (meta) setMapZoom(meta.zoom);
+      if (isExplore) {
+        explore.setMapBbox(bbox);
+        if (meta) explore.setMapZoom(meta.zoom);
+      }
+    },
+    [isExplore, explore.setMapBbox, explore.setMapZoom], // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
+  /* ─────────────── Salvataggio / export ─────────────── */
   const saveRoute = async () => {
     if (!routeCoords || routeCoords.length < 2) {
-      setErr("Serve almeno 2 waypoint con percorso calcolato");
+      setErr("Serve almeno 2 tappe con percorso calcolato");
       return;
     }
     setSaveBusy(true);
@@ -478,11 +889,7 @@ export default function V2RouteBuilder({ isAdmin = false, username }: Props) {
           elev_gain_m: elevGainM,
           elev_loss_m: elevLossM,
           waypoints: waypoints.map((w) => [w.lng, w.lat]),
-          geojson: {
-            type: "Feature",
-            properties: {},
-            geometry: { type: "LineString", coordinates: routeCoords },
-          },
+          geojson: { type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: routeCoords } },
         }),
       });
       const data = (await res.json()) as { error?: string; id?: string };
@@ -494,6 +901,31 @@ export default function V2RouteBuilder({ isAdmin = false, username }: Props) {
     } finally {
       setSaveBusy(false);
     }
+  };
+
+  const exportGpx = () => {
+    if (!routeCoords || routeCoords.length < 2) return;
+    const coords3d =
+      profileCoords.length >= 2
+        ? profileCoords.map((c) => (c[2] != null ? [c[0], c[1], Math.round(c[2])] : [c[0], c[1]]))
+        : routeCoords;
+    const title = name.trim() || "Percorso HMR";
+    const gpx = geojsonLineToGpx(title, {
+      type: "Feature",
+      properties: {},
+      geometry: { type: "LineString", coordinates: coords3d },
+    });
+    const blob = new Blob([gpx], { type: "application/gpx+xml" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${slugify(title)}.gpx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setNotice("GPX scaricato");
+    setTimeout(() => setNotice(null), 2200);
   };
 
   const registerOuting = async () => {
@@ -520,24 +952,32 @@ export default function V2RouteBuilder({ isAdmin = false, username }: Props) {
     }
   };
 
-  const stats = useMemo(
-    () => ({ waypoints: waypoints.length, km: lengthKm, elevGainM, elevLossM }),
-    [waypoints.length, lengthKm, elevGainM, elevLossM],
-  );
+  /* ─────────────── Derivati ─────────────── */
+  const durationMin = estimateDurationMin(activity, lengthKm, elevGainM, elevLossM);
+  const hasRoute = !!routeCoords && routeCoords.length >= 2;
+  const hasProfile = profileCoords.length >= 2;
+  const maxElev = useMemo(() => {
+    let m = -Infinity;
+    for (const c of profileCoords) if (c[2] != null && c[2] > m) m = c[2];
+    return Number.isFinite(m) ? Math.round(m) : null;
+  }, [profileCoords]);
 
-  const pendingPoint =
-    mapAction?.kind === "new_point"
-      ? { lng: mapAction.lng, lat: mapAction.lat }
-      : null;
+  const hoverPoint = useMemo(() => {
+    if (hoverKm == null || !hasProfile) return null;
+    const c = coordAtKm(profileCoords, hoverKm);
+    return c ? { lng: c.lng, lat: c.lat } : null;
+  }, [hoverKm, hasProfile, profileCoords]);
+
+  const pendingPoint = mapAction?.kind === "new_point" ? { lng: mapAction.lng, lat: mapAction.lat } : null;
 
   const insertPreview = useMemo(() => {
     if (!mapAction || mapAction.kind === "waypoint") return null;
     const lng = mapAction.kind === "poi" ? mapAction.poi.lng : mapAction.lng;
     const lat = mapAction.kind === "poi" ? mapAction.poi.lat : mapAction.lat;
     if (waypoints.length < 2) return null;
-    const idx = findInsertIndex(waypoints, lng, lat);
-    return { after: idx - 1, before: idx, insertAt: idx };
-  }, [mapAction, waypoints]);
+    const { index: idx, nearRoute } = insertIndexForPoint(waypoints, { lng, lat }, routeCoords);
+    return { after: idx - 1, before: idx, insertAt: idx, nearRoute };
+  }, [mapAction, waypoints, routeCoords]);
 
   const actionCenter =
     mapAction?.kind === "new_point" || mapAction?.kind === "waypoint"
@@ -546,472 +986,911 @@ export default function V2RouteBuilder({ isAdmin = false, username }: Props) {
         ? { lng: mapAction.poi.lng, lat: mapAction.poi.lat }
         : null;
 
-  return (
-    <div className="flex h-full min-h-0 flex-col">
-      <V2Nav isAdmin={isAdmin} username={username} />
-      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-        <aside className="hmr-panel z-10 flex max-h-[45vh] shrink-0 flex-col gap-3 overflow-y-auto border-b border-[color:var(--hmr-border)]/60 p-3 lg:max-h-none lg:w-80 lg:border-b-0 lg:border-r">
-          <div>
-            <h1 className="text-base font-semibold">Pianifica percorso</h1>
-            <p className="mt-0.5 text-xs text-[color:var(--hmr-muted)]">
-              Trascina tappe in elenco o sulla mappa. Arrivo = nuova tappa finale.
-            </p>
-          </div>
+  const mapActivity = isExplore ? (explore.activity === "all" ? "hike" : explore.activity) : activity;
+  const sport = SPORTS[activity];
 
-          <V2PlaceSearch
-            onSelect={onPlaceSelect}
-            onCategorySearch={(kind) => void searchPoisInViewportByKind(kind)}
-            mapCenter={mapViewCenter}
-            viewportReady={!!mapViewport}
-            poiBusy={poiBusy}
+  /** Pannelli che coprono la mappa: la camera centra nell'area libera. */
+  const viewPadding = useMemo(
+    () =>
+      sheetH > 0
+        ? { bottom: sheetH }
+        : { left: DESKTOP_PANEL_SPACE, bottom: !isExplore && hasProfile ? DESKTOP_PROFILE_H : 0 },
+    [sheetH, isExplore, hasProfile],
+  );
+
+  /** Zona mappa libera da pannello/profilo: lì vivono popup e banner. */
+  const overlayZoneStyle: React.CSSProperties = {
+    bottom: sheetH > 0 ? sheetH : !isExplore && hasProfile ? DESKTOP_PROFILE_H : 0,
+  };
+
+  /* ─────────────── Render: header / contenuti pannello ─────────────── */
+  const planHeader = (
+    <div>
+      <div className="mb-3 hidden items-start justify-between gap-2 lg:flex">
+        <div className="min-w-0">
+          <p className="ui-eyebrow" style={{ color: sport.color }}>
+            {sport.label}
+          </p>
+          <h1 className="truncate text-[18px] font-bold tracking-tight">{name.trim() || (routeId ? "Percorso" : "Nuovo percorso")}</h1>
+        </div>
+        <div className="flex shrink-0 gap-0.5">
+          <button type="button" className="ui-icon-btn !h-9 !w-9" onClick={undo} disabled={!canUndo} title="Annulla (Ctrl+Z)" aria-label="Annulla">
+            <Icon name="undo" size={18} />
+          </button>
+          <button type="button" className="ui-icon-btn !h-9 !w-9" onClick={redo} disabled={!canRedo} title="Ripeti (Ctrl+Shift+Z)" aria-label="Ripeti">
+            <Icon name="redo" size={18} />
+          </button>
+        </div>
+      </div>
+      <V2PlaceSearch
+        onSelect={onPlaceSelect}
+        onCategorySearch={(kind) => void searchPoisInViewportByKind(kind)}
+        mapCenter={mapViewCenter}
+        viewportReady={!!mapViewport}
+        poiBusy={poiBusy}
+      />
+      <div className="mt-3 flex items-end gap-3 px-0.5">
+        {lengthKm > 0 ? (
+          <>
+            <StatCell label="Distanza" value={lengthKm.toFixed(lengthKm < 10 ? 2 : 1)} unit="km" />
+            <StatCell label="Salita" value={elevAvailable ? Math.round(elevGainM).toLocaleString("it") : "—"} unit={elevAvailable ? "m" : undefined} />
+            <StatCell label="Discesa" value={elevAvailable ? Math.round(elevLossM).toLocaleString("it") : "—"} unit={elevAvailable ? "m" : undefined} />
+            <StatCell label="Tempo" value={formatDuration(durationMin)} />
+          </>
+        ) : (
+          <p className="flex min-h-[42px] items-center gap-2 text-[12.5px] text-[color:var(--hmr-muted)]">
+            {routing ? (
+              <>
+                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-[color:var(--hmr-accent)]/25 border-t-[color:var(--hmr-accent)]" />
+                Calcolo il percorso…
+              </>
+            ) : waypoints.length === 1 ? (
+              "Partenza fissata. Tocca la mappa per aggiungere l'arrivo."
+            ) : (
+              "Tocca la mappa per fissare la partenza."
+            )}
+          </p>
+        )}
+      </div>
+      {lengthKm > 0 ? (
+        <V2RoutePopularity
+          popularity={popularity}
+          alternatives={alternatives}
+          currentLengthKm={lengthKm}
+          onPickAlternative={(alt) => {
+            // Variante scelta: sostituisce la linea (le tappe restano le stesse due).
+            setRouteCoords(alt.coordinates);
+            setRouteTech(null);
+            setLengthKm(alt.length_km);
+            setPopularity(alt.popularity);
+          }}
+        />
+      ) : null}
+    </div>
+  );
+
+  const planFooterNode = (
+    <div className="space-y-2">
+      <div className="flex gap-2">
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Nome del percorso"
+          aria-label="Nome percorso"
+          className="ui-input !min-h-[38px] flex-1 !text-[13px]"
+        />
+        <button
+          type="button"
+          disabled={saveBusy || !hasRoute}
+          onClick={() => void saveRoute()}
+          className="ui-btn ui-btn-primary"
+        >
+          <Icon name="save" size={16} />
+          {saveBusy ? "Salvo…" : "Salva"}
+        </button>
+      </div>
+      <div className="flex items-center gap-2">
+        <label className="flex flex-1 cursor-pointer items-center gap-2 text-[12.5px] text-[color:var(--hmr-muted)]">
+          <input
+            type="checkbox"
+            className="h-4 w-4 accent-[color:var(--hmr-accent)]"
+            checked={visibility === "public"}
+            onChange={(e) => setVisibility(e.target.checked ? "public" : "private")}
           />
+          Pubblico
+        </label>
+        {routeId ? (
+          <button type="button" disabled={outingBusy} onClick={() => void registerOuting()} className="ui-btn ui-btn-sm ui-btn-ghost">
+            <Icon name="flag" size={15} />
+            {outingBusy ? "…" : "Registra gita"}
+          </button>
+        ) : null}
+        <button type="button" disabled={!hasRoute} onClick={exportGpx} className="ui-btn ui-btn-sm">
+          <Icon name="download" size={15} />
+          GPX
+        </button>
+      </div>
+    </div>
+  );
 
-          <section>
-            <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-[color:var(--hmr-faint)]">
-              Tappe ({waypoints.length})
-            </p>
-            <V2WaypointList
-              waypoints={waypoints}
-              onReorder={reorderWaypoints}
-              onRemove={removeWaypoint}
-              onSelect={(i) => {
-                setSelectedWaypointIndex(i);
-                const wp = waypoints[i];
-                if (wp) setMapAction({ kind: "waypoint", index: i, lng: wp.lng, lat: wp.lat });
-              }}
-              selectedIndex={selectedWaypointIndex}
-            />
-          </section>
+  const tabs: { id: PlanTab; label: string; badge?: number }[] = [
+    { id: "route", label: "Percorso", badge: waypoints.length || undefined },
+    { id: "nearby", label: "Dintorni", badge: pois.length || undefined },
+    { id: "conditions", label: "Condizioni", badge: routeReportWarning ?? undefined },
+  ];
 
-          <div className="flex flex-wrap gap-1">
-            {PLAN_ACTIVITIES.map((a) => (
-              <button
-                key={a}
-                type="button"
-                onClick={() => setActivity(a)}
-                className={
-                  activity === a
-                    ? "rounded-lg bg-[color:var(--hmr-accent)] px-2.5 py-1.5 text-xs font-medium text-[color:var(--hmr-bg)]"
-                    : "rounded-lg border border-[color:var(--hmr-border)] px-2.5 py-1.5 text-xs text-[color:var(--hmr-muted)]"
-                }
+  const terrain = routeTech?.summary;
+  const untroddenGeo = useMemo(() => untroddenFeatureCollection(popularity), [popularity]);
+  // Colori applicati lato client (le risposte in cache possono avere una palette precedente).
+  const routeSegments = useMemo(() => {
+    if (!routeTech) return null;
+    if (colorBy === "category" && routeTech.category_segments?.length) {
+      return routeTech.category_segments.map((seg) => ({ ...seg, color: WAY_CATEGORY_COLORS[seg.category ?? "other"] }));
+    }
+    return routeTech.colored_segments.map((seg) => ({ ...seg, color: SURFACE_COLORS[seg.surface] }));
+  }, [routeTech, colorBy]);
+  const categoryRows = useMemo(() => {
+    const km = terrain?.category_km ?? {};
+    const total = Object.values(km).reduce((a, b) => a + (b ?? 0), 0);
+    if (total <= 0) return [];
+    return WAY_CATEGORY_ORDER.filter((c) => (km[c] ?? 0) / total >= 0.005).map((c) => ({
+      cat: c,
+      km: km[c] ?? 0,
+      pct: ((km[c] ?? 0) / total) * 100,
+    }));
+  }, [terrain]);
+  const surfaceKinds = ["asphalt", "gravel", "single", "unknown"] as TrackSurfaceKind[];
+
+  const planBody = (
+    <div>
+      <div
+        className="ui-seg sticky top-0 z-10 mb-3 mt-0.5 backdrop-blur"
+        role="tablist"
+        aria-label="Sezioni planner"
+      >
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            aria-selected={tab === t.id}
+            onClick={() => {
+              setTab(t.id);
+              if (snap === "peek") setSnap("half");
+            }}
+          >
+            {t.label}
+            {t.badge ? (
+              <span
+                className={`min-w-[18px] rounded-full px-1.5 text-[10.5px] font-bold leading-[18px] ${
+                  t.id === "conditions"
+                    ? "bg-[color:var(--hmr-warn)]/10 text-[color:var(--hmr-warn)]"
+                    : "bg-[color:var(--hmr-accent-dim)] text-[color:var(--hmr-accent)]"
+                }`}
               >
-                {ACTIVITY_LABELS[a]}
+                {t.badge}
+              </span>
+            ) : null}
+          </button>
+        ))}
+      </div>
+
+      {tab === "route" ? (
+        <div className="v2-anim-in">
+          <SectionTitle>Attività</SectionTitle>
+          <V2SportChips value={activity} onChange={(a) => setActivity(a)} />
+
+          <SectionTitle>Percorso</SectionTitle>
+          <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Preferenza di percorso">
+            {(["recommended", "shortest", "quiet"] as RoutePreference[]).map((p) => (
+              <button
+                key={p}
+                type="button"
+                role="radio"
+                aria-checked={preference === p}
+                onClick={() => setPreference(p)}
+                className="ui-chip"
+                title={PREFERENCE_LABELS[p].hint}
+              >
+                {sport.usesCyclingOrs ? PREFERENCE_LABELS[p].bike : PREFERENCE_LABELS[p].foot}
               </button>
             ))}
           </div>
-
-          <div className="grid grid-cols-4 gap-2 text-center text-xs">
-            <div className="rounded-lg bg-[color:var(--hmr-elev)] p-2">
-              <div className="text-[9px] uppercase text-[color:var(--hmr-faint)]">Tappe</div>
-              <div className="font-medium">{stats.waypoints}</div>
-            </div>
-            <div className="rounded-lg bg-[color:var(--hmr-elev)] p-2">
-              <div className="text-[9px] uppercase text-[color:var(--hmr-faint)]">Km</div>
-              <div className="font-medium">{stats.km.toFixed(1)}</div>
-            </div>
-            <div className="rounded-lg bg-[color:var(--hmr-elev)] p-2">
-              <div className="text-[9px] uppercase text-[color:var(--hmr-faint)]">D+</div>
-              <div className="font-medium">{Math.round(stats.elevGainM)}</div>
-            </div>
-            <div className="rounded-lg bg-[color:var(--hmr-elev)] p-2">
-              <div className="text-[9px] uppercase text-[color:var(--hmr-faint)]">D-</div>
-              <div className="font-medium">{Math.round(stats.elevLossM)}</div>
-            </div>
-          </div>
-
-          {routeTech?.summary ? (
-            <section className="rounded-lg border border-[color:var(--hmr-border)]/70 bg-[color:var(--hmr-elev)] p-2.5 text-xs">
-              <p className="text-[10px] font-medium uppercase tracking-wide text-[color:var(--hmr-faint)]">
-                Terreno sul percorso
-              </p>
-              <p className="mt-1 text-[color:var(--hmr-text)]">
-                {formatSurfacePctSummary(routeTech.summary.surface_pct)}
-              </p>
-              <div className="mt-1.5 flex flex-wrap gap-2 text-[10px] text-[color:var(--hmr-muted)]">
-                {routeTech.summary.max_difficulty ? (
-                  <span>Difficoltà max: {routeTech.summary.max_difficulty}</span>
-                ) : null}
-                {routeTech.summary.max_steepness ? (
-                  <span>Ripidità max: {routeTech.summary.max_steepness}</span>
-                ) : null}
-              </div>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {(["asphalt", "gravel", "single", "unknown"] as TrackSurfaceKind[]).map((k) => {
-                  const pct = routeTech.summary.surface_pct[k];
-                  if (pct < 1) return null;
-                  return (
-                    <span key={k} className="inline-flex items-center gap-1 text-[10px]">
-                      <span
-                        className="inline-block h-2 w-2 rounded-full"
-                        style={{ background: SURFACE_COLORS[k] }}
-                      />
-                      {formatTerrainIt(k)} {pct.toFixed(0)}%
-                    </span>
-                  );
-                })}
-              </div>
-            </section>
+          {activity === "road" ? (
+            <label className="mt-2 flex cursor-pointer items-center gap-2 text-sm">
+              <input type="checkbox" checked={preferCycleways} onChange={togglePreferCycleways} />
+              <span title="Usa le piste ciclabili asfaltate quando non allungano più del 25%">Preferisci ciclabili</span>
+            </label>
           ) : null}
 
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => setWaypoints((wps) => wps.slice(0, -1))}
-              disabled={waypoints.length === 0}
-              className="rounded-lg border border-[color:var(--hmr-border)] px-3 py-1.5 text-xs disabled:opacity-40"
-            >
-              Annulla ultima tappa
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setWaypoints([]);
-                setRouteCoords(null);
-                setRouteTech(null);
-                setLengthKm(0);
-                setElevGainM(0);
-                setElevLossM(0);
-                setPois([]);
-                setPoiSearchCenter(null);
-                setPoiSearchBbox(null);
-                setMapAction(null);
-              }}
-              disabled={waypoints.length === 0 && pois.length === 0}
-              className="rounded-lg border border-red-500/40 px-3 py-1.5 text-xs text-red-400 disabled:opacity-40"
-            >
-              Pulisci tutto
-            </button>
-          </div>
-
-          <div>
-            <div className="mb-1 flex items-center justify-between gap-2">
-              <p className="text-[10px] uppercase tracking-wide text-[color:var(--hmr-faint)]">
-                Nella mappa visibile
-              </p>
-              {poiBusy ? <span className="text-[10px] text-[color:var(--hmr-muted)]">Cerco…</span> : null}
+          {hasProfile ? (
+            <div className="mt-4 h-[128px] lg:hidden">
+              <ElevationProfile coords={profileCoords} hoverKm={hoverKm} onHoverKm={setHoverKm} />
             </div>
-            <div className="flex flex-wrap gap-1">
-              {VIEWPORT_SEARCH_KINDS.map((k) => {
-                const on = selectedViewportKinds.has(k.id);
-                return (
-                  <button
-                    key={k.id}
-                    type="button"
-                    disabled={poiBusy}
-                    onClick={() => toggleViewportKind(k.id)}
-                    className={
-                      on
-                        ? "rounded-lg border px-2 py-1 text-[11px] disabled:opacity-50"
-                        : "rounded-lg border border-[color:var(--hmr-border)] px-2 py-1 text-[11px] text-[color:var(--hmr-muted)] disabled:opacity-50"
-                    }
-                    style={
-                      on
-                        ? { borderColor: `${k.color}88`, background: `${k.color}22`, color: k.color }
-                        : undefined
-                    }
-                  >
-                    {k.label}
-                  </button>
-                );
-              })}
-            </div>
-            <button
-              type="button"
-              disabled={poiBusy || !mapViewport || selectedViewportKinds.size === 0}
-              onClick={runViewportSearch}
-              className="mt-1.5 w-full rounded-lg border border-orange-500/35 bg-orange-500/10 px-2 py-1.5 text-[11px] font-medium text-orange-200/90 hover:bg-orange-500/15 disabled:opacity-50"
-            >
-              Cerca nell&apos;area
-            </button>
-            <p className="mt-1 text-[10px] text-[color:var(--hmr-muted)]">
-              Sposta e ingrandisci la mappa, scegli le categorie, poi cerca (max ~55 km di lato)
-            </p>
-          </div>
+          ) : null}
 
-          <div>
-            <div className="mb-1 flex items-center justify-between gap-2">
-              <p className="text-[10px] uppercase tracking-wide text-[color:var(--hmr-faint)]">
-                Categorie POI {actionCenter ? "(sul punto selezionato)" : "(ultima tappa o Chiavenna)"}
-              </p>
-              {poiBusy ? <span className="text-[10px] text-[color:var(--hmr-muted)]">Cerco…</span> : null}
-              {pois.length > 0 || poiSearchCenter || poiSearchBbox ? (
+          <SectionTitle
+            right={
+              <div className="flex gap-0.5">
                 <button
                   type="button"
-                  onClick={clearPois}
-                  className="text-[10px] text-orange-300/90 underline"
+                  className="ui-icon-btn !h-8 !w-8 lg:!hidden"
+                  onClick={undo}
+                  disabled={!canUndo}
+                  aria-label="Annulla"
+                  title="Annulla"
                 >
-                  Nascondi POI
+                  <Icon name="undo" size={16} />
                 </button>
-              ) : null}
-            </div>
-            <div className="flex flex-wrap gap-1">
-              {POI_RADIUS_PRESETS.map((k) => (
+                <button
+                  type="button"
+                  className="ui-icon-btn !h-8 !w-8"
+                  onClick={reverseRoute}
+                  disabled={waypoints.length < 2}
+                  title="Inverti senso"
+                  aria-label="Inverti senso"
+                >
+                  <Icon name="swap" size={16} />
+                </button>
+                <button
+                  type="button"
+                  className="ui-icon-btn !h-8 !w-8"
+                  onClick={closeLoop}
+                  disabled={waypoints.length < 2}
+                  title="Chiudi ad anello (torna al via)"
+                  aria-label="Chiudi ad anello"
+                >
+                  <Icon name="loop" size={16} />
+                </button>
+                <button
+                  type="button"
+                  className="ui-icon-btn !h-8 !w-8 hover:!text-[color:var(--hmr-danger)]"
+                  onClick={clearAll}
+                  disabled={waypoints.length === 0 && pois.length === 0}
+                  title="Pulisci tutto"
+                  aria-label="Pulisci tutto"
+                >
+                  <Icon name="trash" size={16} />
+                </button>
+              </div>
+            }
+          >
+            Tappe
+          </SectionTitle>
+          <V2WaypointList
+            waypoints={waypoints}
+            onReorder={reorderWaypoints}
+            onRemove={removeWaypoint}
+            onSelect={(i) => {
+              setSelectedWaypointIndex(i);
+              const wp = waypoints[i];
+              if (wp) {
+                setMapAction({ kind: "waypoint", index: i, lng: wp.lng, lat: wp.lat });
+                flyKeyRef.current += 1;
+                setFlyTo({ lng: wp.lng, lat: wp.lat, key: flyKeyRef.current });
+              }
+            }}
+            selectedIndex={selectedWaypointIndex}
+          />
+
+          {hasRoute && (terrain || maxElev != null) ? (
+            <>
+              <SectionTitle
+                right={
+                  terrain ? (
+                    <div className="flex gap-3 text-[12px]" role="radiogroup" aria-label="Colora percorso">
+                      {(["category", "surface"] as const).map((c) => (
+                        <button
+                          key={c}
+                          type="button"
+                          role="radio"
+                          aria-checked={colorBy === c}
+                          onClick={() => setColorBy(c)}
+                          className={colorBy === c ? "font-semibold text-[color:var(--hmr-text)] underline underline-offset-4" : "text-[color:var(--hmr-faint)] hover:text-[color:var(--hmr-text)]"}
+                        >
+                          {c === "category" ? "Per tipo" : "Per fondo"}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null
+                }
+              >
+                Terreno
+              </SectionTitle>
+              <div className="rounded-lg border border-[color:var(--hmr-border)] p-3">
+                {terrain && colorBy === "category" && categoryRows.length > 0 ? (
+                  <ul className="space-y-1.5">
+                    {categoryRows.map((r) => (
+                      <li key={r.cat} className="grid grid-cols-[1fr_auto] items-center gap-x-3 gap-y-1 text-[12.5px]">
+                        <span className="flex items-center gap-2">
+                          <span className="h-[3px] w-4 rounded" style={{ background: WAY_CATEGORY_COLORS[r.cat] }} />
+                          {WAY_CATEGORY_LABELS[r.cat]}
+                        </span>
+                        <span className="tabular-nums text-[color:var(--hmr-muted)]">
+                          {r.km.toFixed(1)} km · <b className="font-semibold text-[color:var(--hmr-text)]">{r.pct.toFixed(0)}%</b>
+                        </span>
+                        <span className="col-span-2 h-1 overflow-hidden rounded bg-[color:var(--hmr-elev)]">
+                          <span className="block h-full" style={{ width: `${r.pct}%`, background: WAY_CATEGORY_COLORS[r.cat] }} />
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                {terrain && (colorBy === "surface" || categoryRows.length === 0) ? (
+                  <>
+                    <div className="flex h-2.5 overflow-hidden rounded-full bg-[color:var(--hmr-elev)]">
+                      {surfaceKinds.map((k) =>
+                        terrain.surface_pct[k] >= 0.5 ? (
+                          <span key={k} style={{ width: `${terrain.surface_pct[k]}%`, background: SURFACE_COLORS[k] }} />
+                        ) : null,
+                      )}
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
+                      {surfaceKinds.map((k) =>
+                        terrain.surface_pct[k] >= 1 ? (
+                          <span key={k} className="inline-flex items-center gap-1.5 text-[12px] text-[color:var(--hmr-muted)]">
+                            <span className="h-2 w-2 rounded-full" style={{ background: SURFACE_COLORS[k] }} />
+                            {formatTerrainIt(k)}
+                            <b className="font-semibold text-[color:var(--hmr-text)]">{terrain.surface_pct[k].toFixed(0)}%</b>
+                          </span>
+                        ) : null,
+                      )}
+                    </div>
+                  </>
+                ) : null}
+                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-[color:var(--hmr-muted)]">
+                  {maxElev != null ? (
+                    <span>
+                      Quota max <b className="font-semibold text-[color:var(--hmr-text)]">{maxElev.toLocaleString("it")} m</b>
+                    </span>
+                  ) : null}
+                  {terrain?.max_difficulty ? (
+                    <span>
+                      Difficoltà max <b className="font-semibold text-[color:var(--hmr-text)]">{terrain.max_difficulty}</b>
+                    </span>
+                  ) : null}
+                  {terrain?.max_steepness ? (
+                    <span>
+                      Pendenza max <b className="font-semibold text-[color:var(--hmr-text)]">{terrain.max_steepness}</b>
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+            </>
+          ) : null}
+
+          {routeReportWarning != null ? (
+            <button
+              type="button"
+              onClick={() => setTab("conditions")}
+              className="mt-3 flex w-full items-center gap-2.5 rounded-xl border border-[color:var(--hmr-warn)]/40 bg-[color:var(--hmr-warn)]/10 px-3 py-2.5 text-left text-[12.5px] text-[color:var(--hmr-warn)]"
+            >
+              <Icon name="alert" size={18} className="shrink-0 text-[color:var(--hmr-warn)]" />
+              <span>
+                <b>{routeReportWarning}</b> segnalazion{routeReportWarning === 1 ? "e" : "i"} entro 300 m dal percorso
+              </span>
+            </button>
+          ) : null}
+
+          <div className="lg:hidden">
+            <SectionTitle>Salva ed esporta</SectionTitle>
+            {planFooterNode}
+          </div>
+
+          {hasRoute ? (
+            <>
+              <SectionTitle>Lungo il percorso</SectionTitle>
+              <V2AlongRoutePanel
+                routeCoords={routeCoords}
+                onSelect={(it) => {
+                  setSelectedFeature({ id: it.id, name: it.name, kind: it.kindLabel, lat: it.lat, lng: it.lng });
+                  flyKeyRef.current += 1;
+                  setFlyTo({ lng: it.lng, lat: it.lat, zoom: 15, key: flyKeyRef.current });
+                }}
+              />
+            </>
+          ) : null}
+        </div>
+      ) : null}
+
+      {tab === "nearby" ? (
+        <div className="v2-anim-in">
+          {groupCounts.length > 0 || outdoorBusy ? (
+            <>
+              <SectionTitle>Sulla mappa</SectionTitle>
+              <V2AreaDataPanel counts={groupCounts} enabledGroups={outdoorGroupFilter} onToggleGroup={toggleOutdoorGroup} busy={outdoorBusy} />
+            </>
+          ) : null}
+
+          <SectionTitle right={poiBusy ? <span className="text-[11px] text-[color:var(--hmr-muted)]">Cerco…</span> : null}>
+            Cerca nell&apos;area visibile
+          </SectionTitle>
+          <div className="flex flex-wrap gap-1.5">
+            {VIEWPORT_SEARCH_KINDS.map((k) => {
+              const on = selectedViewportKinds.has(k.id);
+              return (
                 <button
                   key={k.id}
                   type="button"
                   disabled={poiBusy}
-                  onClick={() => {
-                    const center =
-                      actionCenter ??
-                      (waypoints.length > 0
-                        ? waypoints[waypoints.length - 1]
-                        : DEFAULT_MAP_VIEW_CENTER);
-                    void searchPoisAtByKind(center.lng, center.lat, k);
-                  }}
-                  className="rounded-lg border px-2 py-1 text-[11px] disabled:opacity-50"
-                  style={{
-                    borderColor: `${k.color}55`,
-                    color: k.color,
-                  }}
+                  onClick={() => toggleViewportKind(k.id)}
+                  aria-pressed={on}
+                  className="ui-chip"
+                  style={on ? { borderColor: `${k.color}99`, background: `${k.color}22`, color: k.color } : undefined}
                 >
+                  <span className="h-2 w-2 rounded-full" style={{ background: k.color }} />
                   {k.label}
                 </button>
-              ))}
+              );
+            })}
+          </div>
+          <button
+            type="button"
+            disabled={poiBusy || !mapViewport || selectedViewportKinds.size === 0}
+            onClick={runViewportSearch}
+            className="ui-btn ui-btn-primary mt-2.5 w-full"
+          >
+            <Icon name="search" size={16} />
+            Cerca qui
+          </button>
+          <p className="mt-1.5 text-[11.5px] text-[color:var(--hmr-faint)]">Inquadra la zona (max ~55 km di lato), poi cerca.</p>
+
+          <SectionTitle>
+            Vicino a {actionCenter ? "punto selezionato" : waypoints.length > 0 ? "ultima tappa" : "centro mappa"}
+          </SectionTitle>
+          <div className="flex flex-wrap gap-1.5">
+            {POI_RADIUS_PRESETS.map((k) => (
               <button
+                key={k.id}
                 type="button"
                 disabled={poiBusy}
                 onClick={() => {
                   const center =
                     actionCenter ??
-                    (waypoints.length > 0
-                      ? waypoints[waypoints.length - 1]
-                      : DEFAULT_MAP_VIEW_CENTER);
-                  void searchPoisAt(center.lng, center.lat, [...CATEGORY_ORDER]);
+                    (waypoints.length > 0 ? waypoints[waypoints.length - 1] : mapViewCenter ?? DEFAULT_MAP_VIEW_CENTER);
+                  void searchPoisAtByKind(center.lng, center.lat, k);
                 }}
-                className="rounded-lg border border-[color:var(--hmr-border)] px-2 py-1 text-[11px] text-[color:var(--hmr-muted)] hover:text-[color:var(--hmr-text)] disabled:opacity-50"
+                className="ui-chip"
               >
-                Tutti
+                <span className="h-2 w-2 rounded-full" style={{ background: k.color }} />
+                {k.label}
               </button>
-            </div>
-            {poiSearchBbox ? (
-              <p className="mt-1 text-[10px] text-[color:var(--hmr-muted)]">
-                Rettangolo arancione = area cercata · {pois.length} POI · nuova ricerca sostituisce i risultati
-              </p>
-            ) : poiSearchCenter ? (
-              <p className="mt-1 text-[10px] text-[color:var(--hmr-muted)]">
-                Cerchio arancione = raggio 3 km · {pois.length} POI
-              </p>
-            ) : (
-              <p className="mt-1 text-[10px] text-[color:var(--hmr-muted)]">
-                Oppure scrivi nella barra (es. bivacco) e cerca nell&apos;area visibile
-              </p>
-            )}
+            ))}
+            <button
+              type="button"
+              disabled={poiBusy}
+              onClick={() => {
+                const center =
+                  actionCenter ??
+                  (waypoints.length > 0 ? waypoints[waypoints.length - 1] : mapViewCenter ?? DEFAULT_MAP_VIEW_CENTER);
+                void searchPoisAt(center.lng, center.lat, [...CATEGORY_ORDER]);
+              }}
+              className="ui-chip"
+            >
+              Tutto entro 3 km
+            </button>
           </div>
 
           {pois.length > 0 ? (
-            <ul className="max-h-36 space-y-1 overflow-y-auto text-[11px]">
-              {pois.slice(0, 12).map((p) => {
-                const kindMeta = resolvePoiKind(p.category, p.sub_kind);
-                return (
-                <li key={p.id}>
-                  <button
-                    type="button"
-                    onClick={() => setMapAction({ kind: "poi", poi: p })}
-                    className="w-full rounded-lg px-2 py-1 text-left hover:bg-[color:var(--hmr-elev)]"
-                  >
-                    <span
-                      className="mr-1.5 inline-block h-2 w-2 rounded-full"
-                      style={{ background: kindMeta.color }}
-                    />
-                    <span className="text-[color:var(--hmr-faint)]">{kindMeta.label} · </span>
-                    {p.name ?? p.sub_kind}
+            <>
+              <SectionTitle
+                right={
+                  <button type="button" onClick={clearPois} className="text-[12px] font-semibold text-[color:var(--hmr-accent)]">
+                    Nascondi
                   </button>
-                </li>
-                );
-              })}
-              {pois.length > 12 ? (
-                <li className="px-2 text-[color:var(--hmr-faint)]">+ altri {pois.length - 12} POI sulla mappa</li>
-              ) : null}
-            </ul>
-          ) : null}
-
-          <div className="mt-auto space-y-2 border-t border-[color:var(--hmr-border)]/60 pt-3">
-            <label className="block text-xs">
-              <span className="text-[color:var(--hmr-muted)]">Nome percorso</span>
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Es. Giro del Monte"
-                className="mt-1 w-full rounded-lg border border-[color:var(--hmr-border)] bg-[color:var(--hmr-elev)] px-2 py-2 text-sm"
-              />
-            </label>
-            <label className="flex items-center gap-2 text-xs text-[color:var(--hmr-muted)]">
-              <input
-                type="checkbox"
-                checked={visibility === "public"}
-                onChange={(e) => setVisibility(e.target.checked ? "public" : "private")}
-              />
-              Percorso pubblico
-            </label>
-            <button
-              type="button"
-              disabled={saveBusy || !routeCoords || routeCoords.length < 2}
-              onClick={() => void saveRoute()}
-              className="w-full rounded-lg bg-[color:var(--hmr-accent)] px-4 py-2.5 text-sm font-medium text-[color:var(--hmr-bg)] disabled:opacity-50"
-            >
-              {saveBusy ? "Salvo…" : "Salva percorso"}
-            </button>
-            {routeId ? (
-              <button
-                type="button"
-                disabled={outingBusy}
-                onClick={() => void registerOuting()}
-                className="w-full rounded-lg border border-[color:var(--hmr-border)] px-4 py-2.5 text-sm text-[color:var(--hmr-accent)] disabled:opacity-50"
+                }
               >
-                {outingBusy ? "Registro…" : "Registra gita"}
-              </button>
-            ) : null}
-            {err ? <p className="text-xs text-red-400">{err}</p> : null}
-          </div>
-        </aside>
-
-        <div className="relative flex min-h-[50vh] min-w-0 flex-1 flex-col lg:min-h-0">
-          <div className="relative min-h-0 flex-1">
-            <V2PlanMap
-              waypoints={waypoints}
-              routeCoords={routeCoords}
-              routeColoredSegments={routeTech?.colored_segments}
-              pois={pois}
-              poiSearchCenter={poiSearchCenter}
-              poiSearchBbox={poiSearchBbox}
-              pendingPoint={pendingPoint}
-              onMapInteraction={onMapInteraction}
-              onWaypointMove={moveWaypoint}
-              onViewportChange={onViewportChange}
-              initialCenter={mapCenter}
-              flyTo={flyTo}
-            />
-
-            {mapAction && mapAction.kind !== "poi" ? (
-            <div className="pointer-events-none absolute inset-x-2 bottom-2 z-20 flex justify-start sm:inset-x-auto sm:bottom-3 sm:left-3">
-              <div className="pointer-events-auto max-w-[min(18rem,calc(100vw-5rem))] rounded-lg border border-[color:var(--hmr-border)]/90 bg-[color:var(--hmr-surface)]/94 px-2 py-1.5 shadow-lg backdrop-blur-sm">
-                {mapAction.kind === "new_point" ? (
-                  <>
-                    <p className="truncate text-[10px] font-medium text-[color:var(--hmr-muted)]">
-                      Punto selezionato
-                      {insertPreview ? ` · tra ${insertPreview.after + 1}–${insertPreview.before + 1}` : null}
-                    </p>
-                    <div className="mt-1 flex flex-wrap gap-1">
+                Risultati · {pois.length}
+              </SectionTitle>
+              <ul className="-mx-1 space-y-0.5">
+                {pois.slice(0, 40).map((p) => {
+                  const kindMeta = resolvePoiKind(p.category, p.sub_kind);
+                  return (
+                    <li key={p.id}>
                       <button
                         type="button"
-                        onClick={() =>
-                          insertInRoute(mapAction.lng, mapAction.lat, mapAction.label)
-                        }
-                        className="rounded-md bg-[color:var(--hmr-accent)] px-2 py-1 text-[10px] font-medium text-[color:var(--hmr-bg)]"
+                        onClick={() => {
+                          setMapAction({ kind: "poi", poi: p });
+                          flyKeyRef.current += 1;
+                          setFlyTo({ lng: p.lng, lat: p.lat, zoom: Math.max(14, mapZoom), key: flyKeyRef.current });
+                        }}
+                        className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-[color:var(--hmr-elev)]"
                       >
-                        A metà
+                        <span className="h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-white/70" style={{ background: kindMeta.color }} />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[13px] font-semibold">{p.name ?? kindMeta.label}</span>
+                          <span className="block truncate text-[11.5px] text-[color:var(--hmr-faint)]">{kindMeta.label}</span>
+                        </span>
+                        <Icon name="chevronRight" size={16} className="text-[color:var(--hmr-faint)]" />
                       </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setNewDestination(mapAction.lng, mapAction.lat, mapAction.label)
-                        }
-                        className="rounded-md border border-[color:var(--hmr-border)] px-2 py-1 text-[10px]"
-                      >
-                        Arrivo
-                      </button>
-                      <button
-                        type="button"
-                        disabled={poiBusy}
-                        onClick={() => void searchPoisNearby(mapAction.lng, mapAction.lat)}
-                        className="rounded-md border border-orange-500/35 px-2 py-1 text-[10px] text-orange-300/90 disabled:opacity-50"
-                      >
-                        {poiBusy ? "…" : "POI"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={dismissAction}
-                        className="rounded-md px-1.5 py-1 text-[10px] text-[color:var(--hmr-faint)]"
-                        aria-label="Annulla"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  </>
+                    </li>
+                  );
+                })}
+                {pois.length > 40 ? (
+                  <li className="px-2 py-1 text-[12px] text-[color:var(--hmr-faint)]">+ altri {pois.length - 40} sulla mappa</li>
                 ) : null}
+              </ul>
+            </>
+          ) : null}
+        </div>
+      ) : null}
 
-                {mapAction.kind === "waypoint" ? (
-                  <>
-                    <p className="truncate text-[10px] font-medium">
-                      Tappa {mapAction.index + 1}
-                      {waypoints[mapAction.index]?.label ? ` · ${waypoints[mapAction.index].label}` : ""}
-                    </p>
-                    <div className="mt-1 flex flex-wrap gap-1">
-                      <button
-                        type="button"
-                        onClick={() => removeWaypoint(mapAction.index)}
-                        className="rounded-md border border-red-500/40 px-2 py-1 text-[10px] text-red-400"
-                      >
-                        Elimina
-                      </button>
-                      <button
-                        type="button"
-                        disabled={poiBusy}
-                        onClick={() => void searchPoisNearby(mapAction.lng, mapAction.lat)}
-                        className="rounded-md border border-orange-500/35 px-2 py-1 text-[10px] text-orange-300/90 disabled:opacity-50"
-                      >
-                        {poiBusy ? "…" : "POI"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={dismissAction}
-                        className="rounded-md px-1.5 py-1 text-[10px] text-[color:var(--hmr-faint)]"
-                        aria-label="Annulla"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  </>
-                ) : null}
-              </div>
+      {tab === "conditions" ? (
+        <div className="v2-anim-in">
+          {routeReportWarning != null ? (
+            <div className="mt-3 flex items-start gap-2.5 rounded-xl border border-[color:var(--hmr-warn)]/40 bg-[color:var(--hmr-warn)]/10 px-3 py-2.5 text-[12.5px] text-[color:var(--hmr-warn)]">
+              <Icon name="alert" size={18} className="mt-px shrink-0 text-[color:var(--hmr-warn)]" />
+              <span>
+                <b>{routeReportWarning}</b> segnalazion{routeReportWarning === 1 ? "e attiva" : "i attive"} entro 300 m dal percorso.
+                Controlla i punti colorati sulla mappa prima di partire.
+              </span>
             </div>
           ) : null}
-
-            {mapAction?.kind === "poi" ? (
-              <V2PoiBanner
-                poi={mapAction.poi}
-                onClose={dismissAction}
-                onInsertInRoute={() =>
-                  insertInRoute(
-                    mapAction.poi.lng,
-                    mapAction.poi.lat,
-                    mapAction.poi.name ?? mapAction.poi.sub_kind
-                  )
-                }
-                onSetDestination={() =>
-                  setNewDestination(
-                    mapAction.poi.lng,
-                    mapAction.poi.lat,
-                    mapAction.poi.name ?? mapAction.poi.sub_kind
-                  )
-                }
-              />
-            ) : null}
-          </div>
-
-          <div
-            className="shrink-0 border-t border-[color:var(--hmr-border)] bg-[color:var(--hmr-surface)]/97"
-            style={{ height: "var(--hmr-profile-strip)" }}
-          >
-            {profileCoords.length >= 2 ? (
-              <ElevationChart
-                coords={profileCoords}
-                sections={[]}
-                checkpoints={[]}
-                atKm={null}
-                hoverKm={hoverKm}
-                onHoverKm={setHoverKm}
-                surfaceBands={routeTech?.surface_bands}
-                wrapperClassName="!rounded-none !border-0 !bg-transparent !shadow-none h-full min-h-0 w-full min-w-0"
-              />
-            ) : (
-              <div className="flex h-full items-center justify-center px-3 text-[11px] text-[color:var(--hmr-muted)]">
-                Profilo altimetrico disponibile con almeno 2 tappe e percorso calcolato
-              </div>
-            )}
-          </div>
+          <SectionTitle>Meteo {waypoints[0] ? "alla partenza" : "al centro mappa"}</SectionTitle>
+          <V2ConditionsPanel
+            lat={waypoints[0]?.lat ?? mapViewCenter?.lat ?? null}
+            lng={waypoints[0]?.lng ?? mapViewCenter?.lng ?? null}
+            activity={activity}
+            profile={waypoints[0] ? profileCoords : null}
+          />
         </div>
+      ) : null}
+
+      {err ? (
+        <p className="mt-4 flex items-start gap-2 rounded-xl bg-[color:var(--hmr-danger)]/10 px-3 py-2 text-[12.5px] text-[color:var(--hmr-danger)]">
+          <Icon name="alert" size={16} className="mt-px shrink-0" />
+          {err}
+        </p>
+      ) : null}
+    </div>
+  );
+
+  const exploreHeader = (
+    <div>
+      <p className="ui-eyebrow">Esplora</p>
+      <h1 className="text-[18px] font-bold tracking-tight">Percorsi e gite</h1>
+      <p className="mt-0.5 text-[12.5px] text-[color:var(--hmr-muted)]">Itinerari della community sulla mappa · {explore.scopeLabel}</p>
+    </div>
+  );
+
+  return (
+    <div className="relative min-h-0 flex-1 overflow-hidden">
+      <div className="absolute inset-0">
+        <V2PlanMap
+          waypoints={isExplore ? [] : waypoints}
+          routeCoords={isExplore ? null : routeCoords}
+          routeColoredSegments={isExplore ? null : routeSegments}
+          pois={isExplore ? [] : pois}
+          poiSearchCenter={isExplore ? null : poiSearchCenter}
+          poiSearchBbox={isExplore ? null : poiSearchBbox}
+          pendingPoint={isExplore ? null : pendingPoint}
+          onMapInteraction={isExplore ? onExploreMapInteraction : onMapInteraction}
+          onWaypointMove={isExplore ? undefined : moveWaypoint}
+          onRouteDragStart={isExplore ? undefined : startRouteDrag}
+          onViewportChange={onViewportChange}
+          initialCenter={mapCenter}
+          flyTo={isExplore ? explore.flyTo : flyTo}
+          fitTo={isExplore ? null : fitTo}
+          hoverPoint={isExplore ? null : hoverPoint}
+          viewPadding={viewPadding}
+          busy={routing || poiBusy || (isExplore && explore.busy)}
+          mapSport={mapActivity}
+          reportsGeoJson={isExplore ? (explore.reportsVisible ? explore.reportsGeoJson : null) : reportsGeoJson}
+          featuresGeoJson={isExplore ? null : featuresGeoJson}
+          pickOutdoorFeatures
+          pickMapLabels={!isExplore || !explore.reportMode}
+          untroddenGeoJson={isExplore ? null : untroddenGeo}
+          exploreGeoJson={isExplore ? explore.displayGeoJson : undefined}
+          routeMarkersGeoJson={isExplore ? explore.routeMarkersGeoJson : undefined}
+          photosGeoJson={isExplore ? (explore.photosVisible ? explore.photosGeoJson : null) : undefined}
+          onRouteSelect={isExplore ? explore.setSelectedRouteId : undefined}
+          showWaypoints={!isExplore}
+          slopeVisible={isExplore && explore.activity === "ski" && explore.slopeVisible}
+          slopeOpacity={SKI_SLOPE_DEFAULT_OPACITY}
+          avalancheGeoJson={isExplore ? explore.avalancheGeoJson : undefined}
+          avalancheVisible={isExplore && explore.activity === "ski" && explore.avalancheVisible}
+          avalancheOpacity={SKI_AVALANCHE_DEFAULT_OPACITY}
+          terrain3d={isExplore && explore.activity === "ski"}
+          onReportSelect={
+            isExplore
+              ? (reportId) => {
+                  const f = explore.reportsGeoJson?.features.find(
+                    (x) => (x.properties as { reportId?: string }).reportId === reportId,
+                  );
+                  if (!f) return;
+                  const p = f.properties as {
+                    reportId: string;
+                    kind: import("@/lib/field-reports").FieldReportKind;
+                    kindLabel: string;
+                    author: string;
+                    description: string;
+                    verified: boolean;
+                    confirmationCount: number;
+                  };
+                  explore.setSelectedReport({
+                    id: p.reportId,
+                    author: p.author,
+                    kind: p.kind,
+                    kind_label: p.kindLabel,
+                    description: p.description,
+                    confirmation_count: p.confirmationCount,
+                    verified: p.verified,
+                    status: "active",
+                  });
+                }
+              : undefined
+          }
+        />
       </div>
+
+      <MapPanel
+        header={isExplore ? exploreHeader : planHeader}
+        footer={isExplore ? undefined : planFooterNode}
+        snap={snap}
+        onSnapChange={setSnap}
+        peekHeight={isExplore ? 112 : 150}
+        onMobileHeight={setSheetH}
+      >
+        {isExplore ? (
+          <div className="flex flex-col gap-3 pt-1">
+            <V2ExploreAside explore={explore} />
+          </div>
+        ) : (
+          planBody
+        )}
+      </MapPanel>
+
+      {/* Profilo altimetrico agganciato in basso (desktop) */}
+      {!isExplore && hasProfile ? (
+        <div
+          className="absolute bottom-0 right-0 z-20 hidden border-t border-[color:var(--hmr-border)] bg-[color:var(--hmr-surface)] px-3 pt-2 lg:block"
+          style={{ left: DESKTOP_PANEL_SPACE, height: DESKTOP_PROFILE_H }}
+        >
+          <ElevationProfile coords={profileCoords} hoverKm={hoverKm} onHoverKm={setHoverKm} />
+        </div>
+      ) : null}
+
+      {/* Zona overlay: area di mappa libera (sopra il foglio mobile / a destra del pannello desktop) */}
+      <div
+        className="pointer-events-none absolute inset-x-0 top-0 z-40 lg:left-[384px]"
+        style={overlayZoneStyle}
+      >
+        {notice ? (
+          <div className="v2-anim-in absolute left-1/2 top-3 -translate-x-1/2 rounded-full bg-[color:var(--hmr-text)] px-4 py-2 text-[12.5px] font-semibold text-[color:var(--hmr-bg)] shadow-lg">
+            {notice}
+          </div>
+        ) : null}
+
+        {!isExplore && mapAction && mapAction.kind !== "poi" ? (
+          <div className="absolute inset-x-2 bottom-2 flex justify-center sm:bottom-3">
+            <div className="ui-glass v2-anim-in pointer-events-auto w-full max-w-[420px] rounded-lg p-3">
+              {mapAction.kind === "new_point" ? (
+                <>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-[13.5px] font-bold">Punto selezionato</p>
+                      <p className="truncate text-[11.5px] text-[color:var(--hmr-muted)]">
+                        {mapAction.lat.toFixed(5)}, {mapAction.lng.toFixed(5)}
+                        {insertPreview ? ` · tra tappa ${insertPreview.after + 1} e ${insertPreview.before + 1}` : ""}
+                      </p>
+                    </div>
+                    <button type="button" onClick={dismissAction} className="ui-icon-btn !h-8 !w-8 shrink-0" aria-label="Annulla">
+                      <Icon name="x" size={17} />
+                    </button>
+                  </div>
+                  <div className="mt-2.5 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    <button
+                      type="button"
+                      onClick={() => setNewDestination(mapAction.lng, mapAction.lat, mapAction.label)}
+                      className={`ui-btn ui-btn-sm ${insertPreview?.nearRoute ? "" : "ui-btn-primary"}`}
+                    >
+                      <Icon name="flag" size={15} />
+                      Arrivo
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => insertInRoute(mapAction.lng, mapAction.lat, mapAction.label)}
+                      disabled={waypoints.length < 2}
+                      className={`ui-btn ui-btn-sm ${insertPreview?.nearRoute ? "ui-btn-primary" : ""}`}
+                    >
+                      <Icon name="plus" size={15} />
+                      Tappa
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAsStart(mapAction.lng, mapAction.lat, mapAction.label)}
+                      className="ui-btn ui-btn-sm"
+                    >
+                      <Icon name="pin" size={15} />
+                      Partenza
+                    </button>
+                    <button
+                      type="button"
+                      disabled={poiBusy}
+                      onClick={() => void searchPoisNearby(mapAction.lng, mapAction.lat)}
+                      className="ui-btn ui-btn-sm"
+                    >
+                      <Icon name="search" size={15} />
+                      Vicino
+                    </button>
+                  </div>
+                </>
+              ) : null}
+
+              {mapAction.kind === "waypoint" ? (
+                <>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-[13.5px] font-bold">
+                        Tappa {mapAction.index + 1}
+                        {waypoints[mapAction.index]?.label ? ` · ${waypoints[mapAction.index].label}` : ""}
+                      </p>
+                      <p className="text-[11.5px] text-[color:var(--hmr-muted)]">Trascinala sulla mappa per spostarla</p>
+                    </div>
+                    <button type="button" onClick={dismissAction} className="ui-icon-btn !h-8 !w-8 shrink-0" aria-label="Chiudi">
+                      <Icon name="x" size={17} />
+                    </button>
+                  </div>
+                  <div className="mt-2.5 grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      disabled={poiBusy}
+                      onClick={() => void searchPoisNearby(mapAction.lng, mapAction.lat)}
+                      className="ui-btn ui-btn-sm"
+                    >
+                      <Icon name="search" size={15} />
+                      Cosa c&apos;è vicino
+                    </button>
+                    <button type="button" onClick={() => removeWaypoint(mapAction.index)} className="ui-btn ui-btn-sm ui-btn-danger">
+                      <Icon name="trash" size={15} />
+                      Elimina
+                    </button>
+                  </div>
+                </>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+
+        {placeTarget && selectedPlace ? (
+          <V2PoiBanner
+            target={placeTarget}
+            sport={mapActivity}
+            onClose={() => setSelectedPlace(null)}
+            onInsertInRoute={
+              !isExplore && waypoints.length >= 2
+                ? () => {
+                    insertInRoute(selectedPlace.lng, selectedPlace.lat, selectedPlace.name);
+                    setSelectedPlace(null);
+                  }
+                : undefined
+            }
+            onSetDestination={
+              !isExplore
+                ? () => {
+                    setNewDestination(selectedPlace.lng, selectedPlace.lat, selectedPlace.name);
+                    setSelectedPlace(null);
+                  }
+                : undefined
+            }
+            destinationLabel={waypoints.length === 0 ? "Parti da qui" : "Arrivo qui"}
+          />
+        ) : null}
+
+        {!isExplore && !selectedPlace && mapAction?.kind === "poi" && poiTarget ? (
+          <V2PoiBanner
+            target={poiTarget}
+            sport={mapActivity}
+            onClose={dismissAction}
+            onInsertInRoute={() => insertInRoute(mapAction.poi.lng, mapAction.poi.lat, mapAction.poi.name ?? mapAction.poi.sub_kind)}
+            onSetDestination={() => setNewDestination(mapAction.poi.lng, mapAction.poi.lat, mapAction.poi.name ?? mapAction.poi.sub_kind)}
+          />
+        ) : null}
+
+        {!isExplore && selectedFeature ? (
+          <div className="absolute inset-x-2 bottom-2 flex justify-center sm:bottom-3">
+            <div className="pointer-events-auto max-h-[60vh] w-full max-w-md overflow-y-auto">
+              <V2FeatureSheet
+                pick={selectedFeature}
+                onClose={() => setSelectedFeature(null)}
+                onFlyTo={(lng, lat) => {
+                  flyKeyRef.current += 1;
+                  setFlyTo({ lng, lat, zoom: 15, key: flyKeyRef.current });
+                }}
+              />
+              <div className="ui-glass mt-1.5 grid grid-cols-2 gap-2 rounded-lg p-2">
+                <button
+                  type="button"
+                  className="ui-btn ui-btn-primary ui-btn-sm"
+                  onClick={() => {
+                    setNewDestination(selectedFeature.lng, selectedFeature.lat, selectedFeature.name);
+                    setSelectedFeature(null);
+                  }}
+                >
+                  <Icon name="flag" size={15} />
+                  {waypoints.length === 0 ? "Parti da qui" : "Arrivo qui"}
+                </button>
+                <button
+                  type="button"
+                  className="ui-btn ui-btn-sm"
+                  disabled={waypoints.length < 2}
+                  onClick={() => {
+                    insertInRoute(selectedFeature.lng, selectedFeature.lat, selectedFeature.name);
+                    setSelectedFeature(null);
+                  }}
+                >
+                  <Icon name="plus" size={15} />
+                  Aggiungi come tappa
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {isExplore && explore.selectedRoute ? (
+          <div className="absolute inset-x-2 bottom-2 flex justify-center sm:bottom-3">
+            <div className="pointer-events-auto relative w-full max-w-lg">
+              <V2SkiRouteBanner
+                name={explore.selectedRoute.name}
+                lengthKm={explore.selectedRoute.length_km}
+                elevGainM={explore.selectedRoute.elev_gain_m}
+                elevLossM={explore.selectedRoute.elev_loss_m}
+                owner={explore.selectedRoute.owner}
+                source={explore.selectedRoute.source}
+                sourceUrl={explore.selectedRoute.source_url}
+                license={explore.selectedRoute.license}
+                facts={explore.selectedFacts}
+                avalancheNote={explore.selectedAvalancheNote}
+                onOpen={() => router.push(routeEditorHref(explore.selectedRoute!.activity, explore.selectedRoute!.id))}
+                onRegisterOuting={() =>
+                  router.push(outingPlanHref(explore.selectedRoute!.activity, explore.selectedRoute!.id))
+                }
+                onDismiss={() => explore.setSelectedRouteId(null)}
+              />
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      {isExplore && explore.createReportAt ? (
+        <V2ReportCreateSheet
+          lng={explore.createReportAt.lng}
+          lat={explore.createReportAt.lat}
+          onClose={() => explore.setCreateReportAt(null)}
+          onCreated={() => {
+            explore.setCreateReportAt(null);
+            if (explore.mapBbox) void explore.loadOverlays(explore.mapBbox);
+          }}
+        />
+      ) : null}
+
+      {isExplore && explore.selectedReport ? (
+        <V2ReportSheet
+          report={explore.selectedReport}
+          isSelf={explore.selectedReport.author === username}
+          onClose={() => explore.setSelectedReport(null)}
+          onConfirm={async (id) => {
+            await fetch(`/api/v2/reports/${encodeURIComponent(id)}/confirm`, { method: "POST" });
+            explore.setSelectedReport(null);
+            if (explore.mapBbox) void explore.loadOverlays(explore.mapBbox);
+          }}
+          onResolve={async (id) => {
+            await fetch(`/api/v2/reports/${encodeURIComponent(id)}/resolve`, { method: "POST" });
+            explore.setSelectedReport(null);
+            if (explore.mapBbox) void explore.loadOverlays(explore.mapBbox);
+          }}
+        />
+      ) : null}
+
+      {isExplore && explore.showPhotoCapture ? (
+        <V2PhotoCapture
+          onClose={() => explore.setShowPhotoCapture(false)}
+          onUploaded={() => {
+            explore.setShowPhotoCapture(false);
+            if (explore.mapBbox) void explore.loadOverlays(explore.mapBbox);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

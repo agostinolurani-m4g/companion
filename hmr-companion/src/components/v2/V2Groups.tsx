@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import V2Nav from "@/components/v2/V2Nav";
 import type { GroupType } from "@/lib/db";
 
 type Props = {
@@ -144,7 +143,6 @@ export default function V2Groups({ username, isAdmin = false }: Props) {
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto">
-      <V2Nav isAdmin={isAdmin} username={username} />
       <div className="mx-auto w-full max-w-3xl flex-1 p-4">
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -163,7 +161,7 @@ export default function V2Groups({ username, isAdmin = false }: Props) {
         </div>
 
         {pendingInvites.length > 0 ? (
-          <div className="mt-4 hmr-panel rounded-2xl border border-amber-500/30 p-4">
+          <div className="mt-4 hmr-panel rounded-lg border border-[color:var(--hmr-warn)]/40 p-4">
             <h2 className="text-sm font-medium">Inviti in sospeso</h2>
             <ul className="mt-2 grid gap-2">
               {pendingInvites.map((inv) => (
@@ -209,7 +207,7 @@ export default function V2Groups({ username, isAdmin = false }: Props) {
         ) : null}
 
         {showCreate ? (
-          <div className="mt-4 hmr-panel rounded-2xl border border-[color:var(--hmr-border)]/80 p-4">
+          <div className="mt-4 hmr-panel rounded-lg border border-[color:var(--hmr-border)]/80 p-4">
             <h2 className="text-sm font-medium">Crea un gruppo</h2>
             <div className="mt-3 grid gap-3">
               <label className="grid gap-1 text-xs">
@@ -330,7 +328,7 @@ export default function V2Groups({ username, isAdmin = false }: Props) {
               <li key={g.id}>
                 <Link
                   href={`/v2/groups/${encodeURIComponent(g.id)}`}
-                  className="hmr-panel flex items-center gap-3 rounded-2xl border border-[color:var(--hmr-border)]/80 p-4 hover:border-[color:var(--hmr-accent)]/40"
+                  className="hmr-panel flex items-center gap-3 rounded-lg border border-[color:var(--hmr-border)]/80 p-4 hover:border-[color:var(--hmr-accent)]/40"
                 >
                   <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[color:var(--hmr-accent)]/20 text-lg font-semibold text-[color:var(--hmr-accent)]">
                     {groupInitial(g.name)}
@@ -357,7 +355,7 @@ export default function V2Groups({ username, isAdmin = false }: Props) {
           </ul>
         )}
 
-        {err ? <p className="mt-4 text-xs text-red-400">{err}</p> : null}
+        {err ? <p className="mt-4 text-xs text-[color:var(--hmr-danger)]">{err}</p> : null}
       </div>
     </div>
   );

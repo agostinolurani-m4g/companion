@@ -1,29 +1,24 @@
 import crypto from "node:crypto";
 import { NextResponse } from "next/server";
-import { isKnownHmrUser, normalizeUsername, requireV2Beta } from "@/lib/auth";
+import { normalizeUsername, requireV2Beta } from "@/lib/auth";
 import {
-  addOutingGroup,
   addOutingParticipant,
-  canViewOuting,
-  getGroupMember,
+  getDb,
+  getOuting,
   getUserRoute,
   insertOuting,
   listOutingsVisibleForRoute,
   listOutingsVisibleForUser,
   updateUserRoute,
 } from "@/lib/db";
-import { serializeOutings } from "@/lib/outings";
+import { serializeOuting, serializeOutings } from "@/lib/outings";
+import { applyOutingRelations, outingPatchFromBody, type OutingBody } from "@/lib/outings-server";
 
 export const runtime = "nodejs";
 
-type PostBody = {
+type PostBody = OutingBody & {
   route_id?: string;
-  title?: string;
-  outing_date?: string | null;
-  notes?: string;
-  snow_notes?: string;
-  participants?: string[];
-  group_ids?: string[];
+  /** Opt-in esplicito: registrare una gita non pubblica più il percorso. */
   make_route_public?: boolean;
 };
 
@@ -34,6 +29,9 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const routeId = (url.searchParams.get("route_id") ?? "").trim();
   const scope = url.searchParams.get("scope") ?? "";
+  const status = url.searchParams.get("status");
+  const filter = <T extends { status: string }>(rows: T[]) =>
+    status === "planned" || status === "done" ? rows.filter((r) => r.status === status) : rows;
 
   if (routeId) {
     const route = getUserRoute(routeId);
@@ -43,19 +41,16 @@ export async function GET(req: Request) {
     if (!canReadRoute) {
       return NextResponse.json({ error: "Non autorizzato" }, { status: 403 });
     }
-    const rows = listOutingsVisibleForRoute(routeId, auth.email);
+    const rows = filter(listOutingsVisibleForRoute(routeId, auth.email));
     return NextResponse.json({ route_id: routeId, outings: serializeOutings(rows) });
   }
 
   if (scope === "mine") {
-    const rows = listOutingsVisibleForUser(auth.email);
+    const rows = filter(listOutingsVisibleForUser(auth.email));
     return NextResponse.json({ scope: "mine", outings: serializeOutings(rows) });
   }
 
-  return NextResponse.json(
-    { error: "Specificare route_id o scope=mine" },
-    { status: 400 },
-  );
+  return NextResponse.json({ error: "Specificare route_id o scope=mine" }, { status: 400 });
 }
 
 export async function POST(req: Request) {
@@ -68,54 +63,37 @@ export async function POST(req: Request) {
 
   const route = getUserRoute(routeId);
   if (!route) return NextResponse.json({ error: "Percorso non trovato" }, { status: 404 });
-
-  if (body.make_route_public !== false && route.visibility !== "public") {
-    updateUserRoute(routeId, { visibility: "public", updated_at: Date.now() });
+  const me = normalizeUsername(auth.email);
+  if (route.owner !== me && route.visibility !== "public") {
+    return NextResponse.json({ error: "Non autorizzato" }, { status: 403 });
   }
 
+  const patch = outingPatchFromBody(body);
   const now = Date.now();
   const outingId = crypto.randomUUID();
-  const title = (body.title ?? route.name).trim() || route.name;
-  const notes = (body.notes ?? body.snow_notes ?? "").trim();
 
-  insertOuting({
-    id: outingId,
-    route_id: routeId,
-    owner: auth.email,
-    title,
-    outing_date: body.outing_date ?? null,
-    notes,
-    created_at: now,
-    updated_at: now,
-  });
-
-  addOutingParticipant(outingId, auth.email);
-
-  const participants = new Set<string>([auth.email]);
-  for (const raw of body.participants ?? []) {
-    const u = raw.trim().toLowerCase();
-    if (!u || participants.has(u)) continue;
-    if (!isKnownHmrUser(u)) continue;
-    addOutingParticipant(outingId, u);
-    participants.add(u);
-  }
-
-  for (const groupId of body.group_ids ?? []) {
-    const gid = groupId.trim();
-    if (!gid) continue;
-    if (!getGroupMember(gid, auth.email)) continue;
-    addOutingGroup(outingId, gid);
-  }
-
-  return NextResponse.json(
-    {
+  getDb().transaction(() => {
+    if (body.make_route_public === true && route.owner === me && route.visibility !== "public") {
+      updateUserRoute(routeId, { visibility: "public", updated_at: now });
+    }
+    insertOuting({
       id: outingId,
       route_id: routeId,
-      title,
-      outing_date: body.outing_date ?? null,
-      notes,
-      activity: route.activity,
-    },
-    { status: 201 },
-  );
+      owner: auth.email,
+      title: patch.title ?? route.name,
+      outing_date: patch.outing_date ?? null,
+      start_time: patch.start_time ?? null,
+      status: patch.status ?? "planned",
+      visibility: patch.visibility ?? "participants",
+      notes: patch.notes ?? "",
+      story: patch.story ?? "",
+      conditions_json: patch.conditions_json ?? null,
+      created_at: now,
+      updated_at: now,
+    });
+    addOutingParticipant(outingId, auth.email);
+    applyOutingRelations(outingId, auth.email, body);
+  })();
+
+  return NextResponse.json({ outing: serializeOuting(getOuting(outingId)!), id: outingId }, { status: 201 });
 }

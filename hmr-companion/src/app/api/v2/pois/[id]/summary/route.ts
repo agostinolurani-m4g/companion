@@ -22,9 +22,10 @@ export async function POST(req: Request, ctx: Ctx) {
   if (!id?.trim()) return NextResponse.json({ error: "ID POI mancante" }, { status: 400 });
 
   const body = (await req.json().catch(() => ({}))) as Body;
-  const category = body.category;
-  if (typeof category !== "string" || !VALID_CATEGORY.has(category)) {
-    return NextResponse.json({ error: "Categoria POI non valida" }, { status: 400 });
+  const category = typeof body.category === "string" && VALID_CATEGORY.has(body.category) ? body.category : null;
+  const kindLabel = typeof body.kind_label === "string" ? body.kind_label.trim().slice(0, 60) : "";
+  if (!category && !kindLabel) {
+    return NextResponse.json({ error: "Serve una categoria POI valida o kind_label" }, { status: 400 });
   }
   if (typeof body.sub_kind !== "string" || !body.sub_kind.trim()) {
     return NextResponse.json({ error: "sub_kind mancante" }, { status: 400 });
@@ -32,8 +33,11 @@ export async function POST(req: Request, ctx: Ctx) {
 
   const input: PoiSummaryInput = {
     name: typeof body.name === "string" ? body.name : null,
-    category: category as PoiCategory,
+    category: category as PoiCategory | null,
     sub_kind: body.sub_kind,
+    kind_label: kindLabel || null,
+    sport: typeof body.sport === "string" ? body.sport.trim().slice(0, 40) || null : null,
+    ele: typeof body.ele === "number" && Number.isFinite(body.ele) ? body.ele : null,
     description: body.description ?? null,
     extract: body.extract ?? null,
     opening_hours: body.opening_hours ?? null,

@@ -6,6 +6,21 @@ import type { StreetViewAlongItem } from "./along-media-types";
 import { googleMapsStreetViewLayerUrl } from "./gmaps-url";
 import type { RacePlanItemKind } from "./race-plan-types";
 import type { TrackSurfaceKind } from "./surface-osm";
+import {
+  emptyActivityCounts,
+  USER_ROUTE_ACTIVITIES,
+  USER_ROUTE_ACTIVITY_CHECK_IN,
+  type UserRouteActivity,
+} from "./sports";
+import {
+  expiresAtForKind,
+  renewExpiresAt,
+  REPORT_KIND_SEVERITY,
+  type FieldReportKind,
+} from "./field-reports";
+import { migrateOutdoorStore } from "./outdoor/store";
+import { migrateActivitiesStore } from "./activities/store";
+import { activityFilterSql } from "./sport-affinity";
 
 const DEFAULT_FILENAME = "hmr.db";
 
@@ -39,6 +54,8 @@ export function getDb(): Database.Database {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   const db = new Database(target);
   db.pragma("journal_mode = WAL");
+  // Più processi (server + script di import) possono scrivere: attendi invece di fallire.
+  db.pragma("busy_timeout = 15000");
   db.pragma("foreign_keys = ON");
   initSchema(db);
   dbInstance = db;
@@ -248,7 +265,7 @@ function initSchema(db: Database.Database): void {
       id TEXT PRIMARY KEY,
       owner TEXT NOT NULL,
       name TEXT NOT NULL,
-      activity TEXT NOT NULL CHECK(activity IN ('road','mtb','hike','gravel','ski')),
+      activity TEXT NOT NULL CHECK(activity IN (${USER_ROUTE_ACTIVITY_CHECK_IN})),
       geojson TEXT NOT NULL,
       waypoints_json TEXT NOT NULL DEFAULT '[]',
       length_km REAL NOT NULL DEFAULT 0,
@@ -341,33 +358,6 @@ function initSchema(db: Database.Database): void {
       created_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_group_messages_group ON group_messages(group_id, created_at DESC);
-
-    CREATE TABLE IF NOT EXISTS ski_outings (
-      id TEXT PRIMARY KEY,
-      route_id TEXT NOT NULL REFERENCES user_routes(id) ON DELETE CASCADE,
-      owner TEXT NOT NULL,
-      title TEXT NOT NULL,
-      outing_date TEXT,
-      snow_notes TEXT NOT NULL DEFAULT '',
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_ski_outings_route ON ski_outings(route_id, updated_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_ski_outings_owner ON ski_outings(owner, updated_at DESC);
-
-    CREATE TABLE IF NOT EXISTS outing_participants (
-      outing_id TEXT NOT NULL REFERENCES ski_outings(id) ON DELETE CASCADE,
-      username TEXT NOT NULL,
-      PRIMARY KEY (outing_id, username)
-    );
-    CREATE INDEX IF NOT EXISTS idx_outing_participants_user ON outing_participants(username);
-
-    CREATE TABLE IF NOT EXISTS outing_groups (
-      outing_id TEXT NOT NULL REFERENCES ski_outings(id) ON DELETE CASCADE,
-      group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-      PRIMARY KEY (outing_id, group_id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_outing_groups_group ON outing_groups(group_id);
   `);
   migrateTracksElevProfileScales(db);
   migrateNotableSectionsDescriptionEn(db);
@@ -375,10 +365,18 @@ function initSchema(db: Database.Database): void {
   migratePoisCampsiteCategory(db);
   migrateUserRoutesGravelActivity(db);
   migrateUserRoutesSkiActivity(db);
+  migrateUserRoutesNineActivities(db);
   migrateUserRoutesSourceMeta(db);
+  migrateUserRoutesActivityCheck(db);
+  migrateUserRoutesBbox(db);
   migrateUserProfilesTrust(db);
   migrateV2SocialTables(db);
+  migrateFieldReportsExpanded(db);
+  migrateConditionsCache(db);
   migrateSkiOutingsToOutings(db);
+  migrateOutingsPlanReport(db);
+  migrateOutdoorStore(db);
+  migrateActivitiesStore(db);
   seedAppUsers(db);
 }
 
@@ -458,17 +456,171 @@ function migrateV2SocialTables(db: Database.Database): void {
   `);
 }
 
+function migrateFieldReportsExpanded(db: Database.Database): void {
+  const cols = db.prepare(`PRAGMA table_info(field_reports)`).all() as { name: string }[];
+  const names = new Set(cols.map((c) => c.name));
+  if (!names.has("severity")) {
+    db.exec(`ALTER TABLE field_reports ADD COLUMN severity INTEGER NOT NULL DEFAULT 1`);
+  }
+  if (!names.has("expires_at")) {
+    db.exec(`ALTER TABLE field_reports ADD COLUMN expires_at INTEGER`);
+  }
+  if (!names.has("photo_id")) {
+    db.exec(`ALTER TABLE field_reports ADD COLUMN photo_id TEXT`);
+  }
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS field_report_resolve_votes (
+      report_id TEXT NOT NULL REFERENCES field_reports(id) ON DELETE CASCADE,
+      username TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (report_id, username)
+    );
+  `);
+
+  const row = db
+    .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'field_reports'`)
+    .get() as { sql?: string } | undefined;
+  if (!row?.sql || row.sql.includes("'road_damaged'")) return;
+
+  db.exec(`
+    CREATE TABLE field_reports_kind_mig (
+      id TEXT PRIMARY KEY,
+      author TEXT NOT NULL,
+      lng REAL NOT NULL,
+      lat REAL NOT NULL,
+      kind TEXT NOT NULL CHECK(kind IN (
+        'avalanche','cornice','ice','snow_conditions','rockfall',
+        'road_closed','road_damaged','trail_decommissioned','trail_blocked',
+        'bridge_down','water','storm','ferrata_damage','livestock_dogs','steep','other'
+      )),
+      description TEXT NOT NULL DEFAULT '',
+      route_id TEXT,
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','resolved')),
+      confirmation_count INTEGER NOT NULL DEFAULT 0,
+      severity INTEGER NOT NULL DEFAULT 1,
+      expires_at INTEGER,
+      photo_id TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    INSERT INTO field_reports_kind_mig (
+      id, author, lng, lat, kind, description, route_id, status, confirmation_count,
+      severity, expires_at, photo_id, created_at, updated_at
+    )
+    SELECT
+      id, author, lng, lat, kind, description, route_id, status, confirmation_count,
+      COALESCE(severity, 1), expires_at, photo_id, created_at, updated_at
+    FROM field_reports;
+    DROP TABLE field_reports;
+    ALTER TABLE field_reports_kind_mig RENAME TO field_reports;
+    CREATE INDEX IF NOT EXISTS idx_field_reports_status ON field_reports(status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_field_reports_author ON field_reports(author);
+  `);
+}
+
+function migrateConditionsCache(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS conditions_cache (
+      cache_key TEXT PRIMARY KEY,
+      payload_json TEXT NOT NULL,
+      expires_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_conditions_cache_exp ON conditions_cache(expires_at);
+  `);
+}
+
 function migrateSkiOutingsToOutings(db: Database.Database): void {
   const tables = db
     .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name IN ('ski_outings','outings')`)
     .all() as { name: string }[];
   const names = new Set(tables.map((t) => t.name));
-  if (names.has("outings") || !names.has("ski_outings")) return;
-  db.exec(`ALTER TABLE ski_outings RENAME TO outings`);
-  const cols = db.prepare(`PRAGMA table_info(outings)`).all() as { name: string }[];
-  if (cols.some((c) => c.name === "snow_notes") && !cols.some((c) => c.name === "notes")) {
-    db.exec(`ALTER TABLE outings RENAME COLUMN snow_notes TO notes`);
+  if (names.has("ski_outings") && !names.has("outings")) {
+    db.exec(`ALTER TABLE ski_outings RENAME TO outings`);
+    const cols = db.prepare(`PRAGMA table_info(outings)`).all() as { name: string }[];
+    if (cols.some((c) => c.name === "snow_notes") && !cols.some((c) => c.name === "notes")) {
+      db.exec(`ALTER TABLE outings RENAME COLUMN snow_notes TO notes`);
+    }
+  } else if (names.has("ski_outings")) {
+    // Residuo: il vecchio DDL ricreava `ski_outings` vuota a ogni avvio.
+    const n = (db.prepare(`SELECT COUNT(*) AS n FROM ski_outings`).get() as { n: number }).n;
+    if (n === 0) db.exec(`DROP TABLE ski_outings`);
   }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS outings (
+      id TEXT PRIMARY KEY,
+      route_id TEXT NOT NULL REFERENCES user_routes(id) ON DELETE CASCADE,
+      owner TEXT NOT NULL,
+      title TEXT NOT NULL,
+      outing_date TEXT,
+      notes TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_ski_outings_route ON outings(route_id, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_ski_outings_owner ON outings(owner, updated_at DESC);
+
+    CREATE TABLE IF NOT EXISTS outing_participants (
+      outing_id TEXT NOT NULL REFERENCES outings(id) ON DELETE CASCADE,
+      username TEXT NOT NULL,
+      PRIMARY KEY (outing_id, username)
+    );
+    CREATE INDEX IF NOT EXISTS idx_outing_participants_user ON outing_participants(username);
+
+    CREATE TABLE IF NOT EXISTS outing_groups (
+      outing_id TEXT NOT NULL REFERENCES outings(id) ON DELETE CASCADE,
+      group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+      PRIMARY KEY (outing_id, group_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_outing_groups_group ON outing_groups(group_id);
+  `);
+}
+
+/**
+ * Gita = uscita su una traccia: piano (soste, note logistiche) + resoconto
+ * (condizioni, racconto, foto). Le righe preesistenti erano uscite già fatte:
+ * il loro testo libero diventa il racconto.
+ */
+function migrateOutingsPlanReport(db: Database.Database): void {
+  const cols = new Set(
+    (db.prepare(`PRAGMA table_info(outings)`).all() as { name: string }[]).map((c) => c.name),
+  );
+  if (!cols.has("status")) {
+    db.exec(
+      `ALTER TABLE outings ADD COLUMN status TEXT NOT NULL DEFAULT 'done' CHECK(status IN ('planned','done'))`,
+    );
+  }
+  if (!cols.has("story")) {
+    db.exec(`ALTER TABLE outings ADD COLUMN story TEXT NOT NULL DEFAULT ''`);
+    db.exec(`UPDATE outings SET story = notes, notes = '' WHERE notes != ''`);
+  }
+  if (!cols.has("conditions_json")) {
+    db.exec(`ALTER TABLE outings ADD COLUMN conditions_json TEXT`);
+  }
+  if (!cols.has("visibility")) {
+    db.exec(
+      `ALTER TABLE outings ADD COLUMN visibility TEXT NOT NULL DEFAULT 'participants' CHECK(visibility IN ('participants','public'))`,
+    );
+  }
+  if (!cols.has("start_time")) {
+    db.exec(`ALTER TABLE outings ADD COLUMN start_time TEXT`);
+  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS outing_stops (
+      id TEXT PRIMARY KEY,
+      outing_id TEXT NOT NULL REFERENCES outings(id) ON DELETE CASCADE,
+      position INTEGER NOT NULL,
+      role TEXT NOT NULL DEFAULT 'stop' CHECK(role IN ('start','end','stop')),
+      kind TEXT NOT NULL DEFAULT 'other',
+      name TEXT NOT NULL DEFAULT '',
+      lng REAL NOT NULL,
+      lat REAL NOT NULL,
+      along_km REAL,
+      ref TEXT,
+      note TEXT NOT NULL DEFAULT ''
+    );
+    CREATE INDEX IF NOT EXISTS idx_outing_stops_outing ON outing_stops(outing_id, position);
+  `);
 }
 
 /** OSM camp_site era in lodging; ora categoria dedicata. */
@@ -476,6 +628,177 @@ function migratePoisCampsiteCategory(db: Database.Database): void {
   db.prepare(
     `UPDATE pois SET category = 'campsite' WHERE category = 'lodging' AND sub_kind = 'camp_site'`
   ).run();
+}
+
+/** Bbox [w, s, e, n] di qualsiasi GeoJSON (coordinate annidate). */
+export function geojsonBbox(raw: string): [number, number, number, number] | null {
+  let g: unknown;
+  try {
+    g = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  let w = Infinity;
+  let so = Infinity;
+  let e = -Infinity;
+  let n = -Infinity;
+  const visit = (v: unknown): void => {
+    if (!Array.isArray(v)) {
+      if (v && typeof v === "object") {
+        const o = v as Record<string, unknown>;
+        if ("coordinates" in o) visit(o.coordinates);
+        if ("geometry" in o) visit(o.geometry);
+        if ("features" in o) visit(o.features);
+        if ("geometries" in o) visit(o.geometries);
+        for (const k of ["ascent", "descent"]) if (k in o) visit(o[k]);
+      }
+      return;
+    }
+    if (v.length >= 2 && typeof v[0] === "number" && typeof v[1] === "number") {
+      const x = v[0] as number;
+      const y = v[1] as number;
+      if (x < w) w = x;
+      if (x > e) e = x;
+      if (y < so) so = y;
+      if (y > n) n = y;
+      return;
+    }
+    for (const it of v) visit(it);
+  };
+  visit(g);
+  return Number.isFinite(w) ? [w, so, e, n] : null;
+}
+
+/** Colonne bbox su user_routes (query per area visibile in Esplora) + backfill. */
+function migrateUserRoutesBbox(db: Database.Database): void {
+  const cols = new Set((db.prepare(`PRAGMA table_info(user_routes)`).all() as { name: string }[]).map((c) => c.name));
+  if (!cols.has("bbox_w")) {
+    db.exec(`
+      ALTER TABLE user_routes ADD COLUMN bbox_w REAL;
+      ALTER TABLE user_routes ADD COLUMN bbox_s REAL;
+      ALTER TABLE user_routes ADD COLUMN bbox_e REAL;
+      ALTER TABLE user_routes ADD COLUMN bbox_n REAL;
+    `);
+  }
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_user_routes_bbox ON user_routes(visibility, bbox_w, bbox_e, bbox_s, bbox_n)`);
+  const todo = db.prepare(`SELECT id, geojson FROM user_routes WHERE bbox_w IS NULL`).all() as { id: string; geojson: string }[];
+  if (todo.length === 0) return;
+  const upd = db.prepare(`UPDATE user_routes SET bbox_w = ?, bbox_s = ?, bbox_e = ?, bbox_n = ? WHERE id = ?`);
+  db.transaction(() => {
+    for (const r of todo) {
+      const bb = geojsonBbox(r.geojson);
+      if (bb) upd.run(bb[0], bb[1], bb[2], bb[3], r.id);
+    }
+  })();
+}
+
+/**
+ * Allinea il CHECK su user_routes.activity a USER_ROUTE_ACTIVITIES (nuovi sport).
+ * Ricostruisce la tabella con foreign key disattivate: un DROP con FK attive
+ * cancellerebbe a cascata gite e collegamenti.
+ */
+function migrateUserRoutesActivityCheck(db: Database.Database): void {
+  const row = db
+    .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'user_routes'`)
+    .get() as { sql?: string } | undefined;
+  if (!row?.sql) return;
+  const missing = USER_ROUTE_ACTIVITIES.filter((a) => !row.sql!.includes(`'${a}'`));
+  if (missing.length === 0) return;
+
+  const cols = (db.prepare(`PRAGMA table_info(user_routes)`).all() as { name: string }[]).map((c) => c.name);
+  const newSql = row.sql
+    .replace(/CHECK\s*\(\s*activity\s+IN\s*\([^)]*\)\s*\)/i, `CHECK(activity IN (${USER_ROUTE_ACTIVITY_CHECK_IN}))`)
+    .replace(/CREATE TABLE\s+("?user_routes"?)/i, "CREATE TABLE user_routes_activity_mig");
+  if (!newSql.includes("user_routes_activity_mig")) return;
+  const colList = cols.map((c) => `"${c}"`).join(", ");
+
+  db.pragma("foreign_keys = OFF");
+  try {
+    db.exec("BEGIN");
+    db.exec(newSql);
+    db.exec(`INSERT INTO user_routes_activity_mig (${colList}) SELECT ${colList} FROM user_routes`);
+    db.exec(`DROP TABLE user_routes`);
+    db.exec(`ALTER TABLE user_routes_activity_mig RENAME TO user_routes`);
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_user_routes_owner ON user_routes(owner, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_user_routes_visibility ON user_routes(visibility, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_user_routes_source_ext ON user_routes(source, external_id);
+    `);
+    db.exec("COMMIT");
+  } catch (e) {
+    db.exec("ROLLBACK");
+    throw e;
+  } finally {
+    db.pragma("foreign_keys = ON");
+  }
+}
+
+/** Estende CHECK activity su user_routes per i 9 sport. */
+function migrateUserRoutesNineActivities(db: Database.Database): void {
+  const row = db
+    .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'user_routes'`)
+    .get() as { sql?: string } | undefined;
+  if (!row?.sql || row.sql.includes("'trail_run'")) return;
+
+  const cols = db.prepare(`PRAGMA table_info(user_routes)`).all() as { name: string }[];
+  const names = new Set(cols.map((c) => c.name));
+  const hasSource = names.has("source");
+
+  db.exec(`
+    CREATE TABLE user_routes_nine_mig (
+      id TEXT PRIMARY KEY,
+      owner TEXT NOT NULL,
+      name TEXT NOT NULL,
+      activity TEXT NOT NULL CHECK(activity IN (${USER_ROUTE_ACTIVITY_CHECK_IN})),
+      geojson TEXT NOT NULL,
+      waypoints_json TEXT NOT NULL DEFAULT '[]',
+      length_km REAL NOT NULL DEFAULT 0,
+      elev_gain_m REAL NOT NULL DEFAULT 0,
+      elev_loss_m REAL NOT NULL DEFAULT 0,
+      visibility TEXT NOT NULL DEFAULT 'private' CHECK(visibility IN ('private','public')),
+      source TEXT,
+      source_url TEXT,
+      license TEXT,
+      external_id TEXT,
+      meta_json TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+  `);
+
+  if (hasSource) {
+    db.exec(`
+      INSERT INTO user_routes_nine_mig (
+        id, owner, name, activity, geojson, waypoints_json, length_km, elev_gain_m,
+        elev_loss_m, visibility, source, source_url, license, external_id, meta_json,
+        created_at, updated_at
+      )
+      SELECT
+        id, owner, name, activity, geojson, waypoints_json, length_km, elev_gain_m,
+        elev_loss_m, visibility, source, source_url, license, external_id, meta_json,
+        created_at, updated_at
+      FROM user_routes;
+    `);
+  } else {
+    db.exec(`
+      INSERT INTO user_routes_nine_mig (
+        id, owner, name, activity, geojson, waypoints_json, length_km, elev_gain_m,
+        elev_loss_m, visibility, created_at, updated_at
+      )
+      SELECT
+        id, owner, name, activity, geojson, waypoints_json, length_km, elev_gain_m,
+        elev_loss_m, visibility, created_at, updated_at
+      FROM user_routes;
+    `);
+  }
+
+  db.exec(`
+    DROP TABLE user_routes;
+    ALTER TABLE user_routes_nine_mig RENAME TO user_routes;
+    CREATE INDEX IF NOT EXISTS idx_user_routes_owner ON user_routes(owner, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_user_routes_visibility ON user_routes(visibility, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_user_routes_source_ext ON user_routes(source, external_id);
+  `);
 }
 
 /** Estende CHECK activity su user_routes per includere ski. */
@@ -490,7 +813,7 @@ function migrateUserRoutesSkiActivity(db: Database.Database): void {
       id TEXT PRIMARY KEY,
       owner TEXT NOT NULL,
       name TEXT NOT NULL,
-      activity TEXT NOT NULL CHECK(activity IN ('road','mtb','hike','gravel','ski')),
+      activity TEXT NOT NULL CHECK(activity IN ('road','mtb','hike','gravel','ski','trail_run','snowshoe','nordic','ferrata')),
       geojson TEXT NOT NULL,
       waypoints_json TEXT NOT NULL DEFAULT '[]',
       length_km REAL NOT NULL DEFAULT 0,
@@ -534,7 +857,7 @@ function migrateUserRoutesGravelActivity(db: Database.Database): void {
       id TEXT PRIMARY KEY,
       owner TEXT NOT NULL,
       name TEXT NOT NULL,
-      activity TEXT NOT NULL CHECK(activity IN ('road','mtb','hike','gravel','ski')),
+      activity TEXT NOT NULL CHECK(activity IN ('road','mtb','hike','gravel','ski','trail_run','snowshoe','nordic','ferrata')),
       geojson TEXT NOT NULL,
       waypoints_json TEXT NOT NULL DEFAULT '[]',
       length_km REAL NOT NULL DEFAULT 0,
@@ -1324,7 +1647,7 @@ export type AppUserRow = {
   created_at: number;
 };
 
-export type UserRouteActivity = "road" | "mtb" | "hike" | "gravel" | "ski";
+export type { UserRouteActivity } from "@/lib/sports";
 
 export type UserRouteVisibility = "private" | "public";
 
@@ -1420,6 +1743,50 @@ export function getUserRouteByExternal(source: string, externalId: string): User
     .get(source, externalId) as UserRouteRow | undefined;
 }
 
+function bboxParams(geojson: string): { bbox_w: number | null; bbox_s: number | null; bbox_e: number | null; bbox_n: number | null } {
+  const bb = geojsonBbox(geojson);
+  return bb
+    ? { bbox_w: bb[0], bbox_s: bb[1], bbox_e: bb[2], bbox_n: bb[3] }
+    : { bbox_w: null, bbox_s: null, bbox_e: null, bbox_n: null };
+}
+
+/**
+ * Percorsi pubblici che intersecano l'area visibile. Prima i percorsi creati dagli utenti,
+ * poi quelli importati; esclude i tracciati molto più grandi dell'area (es. lunghe ciclovie
+ * a zoom alto restano, ma non saturano il limite).
+ */
+export function listPublicRoutesInBbox(
+  activity: UserRouteActivity | null,
+  bbox: { south: number; west: number; north: number; east: number },
+  limit = 400,
+): { rows: UserRouteRow[]; total: number } {
+  // Affinità tra sport (es. corsa → anche escursionismo): vedi src/lib/sport-affinity.ts.
+  const aff = activity ? activityFilterSql(activity) : null;
+  const where = `visibility = 'public' AND bbox_e >= @west AND bbox_w <= @east AND bbox_n >= @south AND bbox_s <= @north${
+    aff ? ` AND ${aff.sql}` : ""
+  }`;
+  const params = { ...bbox, activity, limit, ...(aff?.params ?? {}) };
+  const db = getDb();
+  const total = (db.prepare(`SELECT count(*) AS n FROM user_routes WHERE ${where}`).get(params) as { n: number }).n;
+  // Ordine: percorsi utente, sport esatto prima degli affini, poi declassa spezzoni corti e
+  // relazioni OSM parziali (coverage < 0.9) o con punteggio di qualità basso, infine scala dell'area.
+  const rows = db
+    .prepare(
+      `SELECT * FROM user_routes WHERE ${where}
+       ORDER BY (source IS NULL) DESC,
+                ${activity ? "(activity = @activity) DESC," : ""}
+                CASE
+                  WHEN source = 'osm' AND (length_km < 2 OR coalesce(json_extract(meta_json, '$.coverage'), 1) < 0.9) THEN 1
+                  WHEN coalesce(json_extract(meta_json, '$.quality'), 1) < 0.5 THEN 1
+                  ELSE 0
+                END ASC,
+                abs(((bbox_e - bbox_w) * (bbox_n - bbox_s)) - ((@east - @west) * (@north - @south)) * 0.05) ASC
+       LIMIT @limit`,
+    )
+    .all(params) as UserRouteRow[];
+  return { rows, total };
+}
+
 export function insertUserRoute(input: {
   id: string;
   owner: string;
@@ -1445,16 +1812,17 @@ export function insertUserRoute(input: {
         id, owner, name, activity, geojson, waypoints_json,
         length_km, elev_gain_m, elev_loss_m, visibility,
         source, source_url, license, external_id, meta_json,
-        created_at, updated_at
+        created_at, updated_at, bbox_w, bbox_s, bbox_e, bbox_n
       ) VALUES (
         @id, @owner, @name, @activity, @geojson, @waypoints_json,
         @length_km, @elev_gain_m, @elev_loss_m, @visibility,
         @source, @source_url, @license, @external_id, @meta_json,
-        @created_at, @updated_at
+        @created_at, @updated_at, @bbox_w, @bbox_s, @bbox_e, @bbox_n
       )`
     )
     .run({
       ...input,
+      ...bboxParams(input.geojson),
       owner: input.owner.trim().toLowerCase(),
       source: input.source ?? null,
       source_url: input.source_url ?? null,
@@ -1501,11 +1869,16 @@ export function updateUserRoute(
         license = @license,
         external_id = @external_id,
         meta_json = @meta_json,
-        updated_at = @updated_at
+        updated_at = @updated_at,
+        bbox_w = @bbox_w,
+        bbox_s = @bbox_s,
+        bbox_e = @bbox_e,
+        bbox_n = @bbox_n
       WHERE id = @id`
     )
     .run({
       id,
+      ...bboxParams(patch.geojson ?? row.geojson),
       name: patch.name ?? row.name,
       activity: patch.activity ?? row.activity,
       geojson: patch.geojson ?? row.geojson,
@@ -2063,19 +2436,26 @@ export function isGroupOwner(groupId: string, username: string): boolean {
 
 // --- Outings (gita vs percorso) ---
 
+export type OutingStatus = "planned" | "done";
+export type OutingVisibility = "participants" | "public";
+
 export type OutingRow = {
   id: string;
   route_id: string;
   owner: string;
   title: string;
   outing_date: string | null;
+  /** Note logistiche del piano. */
   notes: string;
+  status: OutingStatus;
+  /** Racconto della gita fatta. */
+  story: string;
+  conditions_json: string | null;
+  visibility: OutingVisibility;
+  start_time: string | null;
   created_at: number;
   updated_at: number;
 };
-
-/** @deprecated use OutingRow */
-export type SkiOutingRow = OutingRow;
 
 export function insertOuting(input: {
   id: string;
@@ -2084,35 +2464,145 @@ export function insertOuting(input: {
   title: string;
   outing_date?: string | null;
   notes?: string;
+  status?: OutingStatus;
+  story?: string;
+  conditions_json?: string | null;
+  visibility?: OutingVisibility;
+  start_time?: string | null;
   created_at: number;
   updated_at: number;
 }): void {
   getDb()
     .prepare(
-      `INSERT INTO outings (id, route_id, owner, title, outing_date, notes, created_at, updated_at)
-       VALUES (@id, @route_id, @owner, @title, @outing_date, @notes, @created_at, @updated_at)`,
+      `INSERT INTO outings (id, route_id, owner, title, outing_date, notes, status, story,
+         conditions_json, visibility, start_time, created_at, updated_at)
+       VALUES (@id, @route_id, @owner, @title, @outing_date, @notes, @status, @story,
+         @conditions_json, @visibility, @start_time, @created_at, @updated_at)`,
     )
     .run({
-      ...input,
+      id: input.id,
+      route_id: input.route_id,
+      title: input.title,
+      created_at: input.created_at,
+      updated_at: input.updated_at,
       owner: input.owner.trim().toLowerCase(),
       outing_date: input.outing_date ?? null,
       notes: input.notes ?? "",
+      status: input.status ?? "planned",
+      story: input.story ?? "",
+      conditions_json: input.conditions_json ?? null,
+      visibility: input.visibility ?? "participants",
+      start_time: input.start_time ?? null,
     });
 }
 
-/** @deprecated use insertOuting */
-export function insertSkiOuting(input: {
+export type OutingPatch = Partial<
+  Pick<
+    OutingRow,
+    "title" | "outing_date" | "notes" | "status" | "story" | "conditions_json" | "visibility" | "start_time"
+  >
+>;
+
+const OUTING_PATCH_COLS = [
+  "title",
+  "outing_date",
+  "notes",
+  "status",
+  "story",
+  "conditions_json",
+  "visibility",
+  "start_time",
+] as const;
+
+export function updateOuting(id: string, patch: OutingPatch): boolean {
+  const sets: string[] = [];
+  const params: Record<string, unknown> = { id, updated_at: Date.now() };
+  for (const col of OUTING_PATCH_COLS) {
+    if (patch[col] === undefined) continue;
+    sets.push(`${col} = @${col}`);
+    params[col] = patch[col];
+  }
+  if (sets.length === 0) return false;
+  const r = getDb()
+    .prepare(`UPDATE outings SET ${sets.join(", ")}, updated_at = @updated_at WHERE id = @id`)
+    .run(params);
+  return r.changes > 0;
+}
+
+export function deleteOuting(id: string): boolean {
+  const db = getDb();
+  return db.transaction(() => {
+    db.prepare(`UPDATE user_photos SET outing_id = NULL WHERE outing_id = ?`).run(id);
+    return db.prepare(`DELETE FROM outings WHERE id = ?`).run(id).changes > 0;
+  })();
+}
+
+export type OutingStopRole = "start" | "end" | "stop";
+
+export type OutingStopRow = {
   id: string;
-  route_id: string;
-  owner: string;
-  title: string;
-  outing_date?: string | null;
-  snow_notes?: string;
-  notes?: string;
-  created_at: number;
-  updated_at: number;
-}): void {
-  insertOuting({ ...input, notes: input.notes ?? input.snow_notes ?? "" });
+  outing_id: string;
+  position: number;
+  role: OutingStopRole;
+  kind: string;
+  name: string;
+  lng: number;
+  lat: number;
+  along_km: number | null;
+  ref: string | null;
+  note: string;
+};
+
+export function listOutingStops(outingId: string): OutingStopRow[] {
+  return getDb()
+    .prepare(`SELECT * FROM outing_stops WHERE outing_id = ? ORDER BY position`)
+    .all(outingId) as OutingStopRow[];
+}
+
+/** Sostituisce tutte le soste della gita (ordine = posizione nell'array). */
+export function replaceOutingStops(
+  outingId: string,
+  stops: Omit<OutingStopRow, "id" | "outing_id" | "position">[],
+): void {
+  const db = getDb();
+  const ins = db.prepare(
+    `INSERT INTO outing_stops (id, outing_id, position, role, kind, name, lng, lat, along_km, ref, note)
+     VALUES (@id, @outing_id, @position, @role, @kind, @name, @lng, @lat, @along_km, @ref, @note)`,
+  );
+  db.transaction(() => {
+    db.prepare(`DELETE FROM outing_stops WHERE outing_id = ?`).run(outingId);
+    stops.forEach((s, i) => {
+      ins.run({
+        id: crypto.randomUUID(),
+        outing_id: outingId,
+        position: i,
+        role: s.role,
+        kind: s.kind,
+        name: s.name,
+        lng: s.lng,
+        lat: s.lat,
+        along_km: s.along_km ?? null,
+        ref: s.ref ?? null,
+        note: s.note ?? "",
+      });
+    });
+  })();
+}
+
+export function setOutingParticipants(outingId: string, usernames: string[]): void {
+  const db = getDb();
+  db.transaction(() => {
+    db.prepare(`DELETE FROM outing_participants WHERE outing_id = ?`).run(outingId);
+    for (const u of new Set(usernames.map(normalizeUser))) addOutingParticipant(outingId, u);
+  })();
+}
+
+export function setOutingGroups(outingId: string, groupIds: string[]): void {
+  const db = getDb();
+  db.transaction(() => {
+    db.prepare(`DELETE FROM outing_groups WHERE outing_id = ?`).run(outingId);
+    for (const g of new Set(groupIds)) addOutingGroup(outingId, g);
+  })();
 }
 
 export function addOutingParticipant(outingId: string, username: string): void {
@@ -2129,11 +2619,6 @@ export function addOutingGroup(outingId: string, groupId: string): void {
 
 export function getOuting(id: string): OutingRow | undefined {
   return getDb().prepare(`SELECT * FROM outings WHERE id = ?`).get(id) as OutingRow | undefined;
-}
-
-/** @deprecated use getOuting */
-export function getSkiOuting(id: string): OutingRow | undefined {
-  return getOuting(id);
 }
 
 export function listPublicSkiRoutes(): UserRouteRow[] {
@@ -2188,7 +2673,8 @@ export function listOutingGroups(outingId: string): string[] {
 }
 
 const OUTING_VISIBLE_SQL = `
-  o.owner = @user
+  o.visibility = 'public'
+  OR o.owner = @user
   OR EXISTS (
     SELECT 1 FROM outing_participants p
     WHERE p.outing_id = o.id AND p.username = @user
@@ -2213,11 +2699,6 @@ export function canViewOuting(outingId: string, username: string): boolean {
     )
     .get({ outingId, user }) as { ok: number } | undefined;
   return row?.ok === 1;
-}
-
-/** @deprecated use canViewOuting */
-export function canViewSkiOuting(outingId: string, username: string): boolean {
-  return canViewOuting(outingId, username);
 }
 
 export function listOutingsForRoute(routeId: string): OutingRow[] {
@@ -2320,6 +2801,12 @@ export function listUserPhotos(owner: string, limit = 50): UserPhotoRow[] {
     .all(normalizeUser(owner), limit) as UserPhotoRow[];
 }
 
+export function listUserPhotosForOuting(outingId: string): UserPhotoRow[] {
+  return getDb()
+    .prepare(`SELECT * FROM user_photos WHERE outing_id = ? ORDER BY created_at ASC`)
+    .all(outingId) as UserPhotoRow[];
+}
+
 export function listUserPhotosInBbox(
   south: number,
   west: number,
@@ -2338,14 +2825,7 @@ export function listUserPhotosInBbox(
 
 /* ---------------- Field reports ---------------- */
 
-export type FieldReportKind =
-  | "avalanche"
-  | "road_closed"
-  | "steep"
-  | "bridge_down"
-  | "trail_blocked"
-  | "water"
-  | "other";
+export type { FieldReportKind } from "./field-reports";
 
 export type FieldReportStatus = "active" | "resolved";
 
@@ -2359,6 +2839,9 @@ export type FieldReportRow = {
   route_id: string | null;
   status: FieldReportStatus;
   confirmation_count: number;
+  severity: number;
+  expires_at: number | null;
+  photo_id: string | null;
   created_at: number;
   updated_at: number;
 };
@@ -2371,19 +2854,32 @@ export function insertFieldReport(input: {
   kind: FieldReportKind;
   description?: string;
   route_id?: string | null;
+  photo_id?: string | null;
+  severity?: number;
   created_at: number;
   updated_at: number;
 }): FieldReportRow {
+  const severity = input.severity ?? REPORT_KIND_SEVERITY[input.kind];
+  const expires_at = expiresAtForKind(input.kind, input.created_at);
   getDb()
     .prepare(
-      `INSERT INTO field_reports (id, author, lng, lat, kind, description, route_id, status, confirmation_count, created_at, updated_at)
-       VALUES (@id, @author, @lng, @lat, @kind, @description, @route_id, 'active', 0, @created_at, @updated_at)`,
+      `INSERT INTO field_reports (
+        id, author, lng, lat, kind, description, route_id, status, confirmation_count,
+        severity, expires_at, photo_id, created_at, updated_at
+      )
+       VALUES (
+        @id, @author, @lng, @lat, @kind, @description, @route_id, 'active', 0,
+        @severity, @expires_at, @photo_id, @created_at, @updated_at
+      )`,
     )
     .run({
       ...input,
       author: normalizeUser(input.author),
       description: input.description ?? "",
       route_id: input.route_id ?? null,
+      photo_id: input.photo_id ?? null,
+      severity,
+      expires_at,
     });
   return getFieldReport(input.id)!;
 }
@@ -2399,14 +2895,17 @@ export function listFieldReportsInBbox(
   east: number,
   activeOnly = true,
 ): FieldReportRow[] {
-  const statusClause = activeOnly ? `AND status = 'active'` : "";
+  const now = Date.now();
+  const statusClause = activeOnly
+    ? `AND status = 'active' AND (expires_at IS NULL OR expires_at > @now)`
+    : "";
   return getDb()
     .prepare(
       `SELECT * FROM field_reports
        WHERE lat BETWEEN @south AND @north AND lng BETWEEN @west AND @east ${statusClause}
        ORDER BY updated_at DESC`,
     )
-    .all({ south, west, north, east }) as FieldReportRow[];
+    .all({ south, west, north, east, now }) as FieldReportRow[];
 }
 
 export function listFieldReportsByAuthor(author: string): FieldReportRow[] {
@@ -2442,14 +2941,16 @@ export function addFieldReportConfirmation(reportId: string, username: string): 
     )
     .run(reportId, normalizeUser(username), now);
   if (res.changes > 0) {
+    const before = getFieldReport(reportId);
+    const renewed = before ? renewExpiresAt(before.kind, now) : null;
     getDb()
       .prepare(
-        `UPDATE field_reports SET confirmation_count = confirmation_count + 1, updated_at = ? WHERE id = ?`,
+        `UPDATE field_reports SET confirmation_count = confirmation_count + 1, updated_at = ?, expires_at = COALESCE(?, expires_at) WHERE id = ?`,
       )
-      .run(now, reportId);
-    const report = getFieldReport(reportId);
-    if (report && report.confirmation_count + 1 >= 2) {
-      recalcTrustScore(report.author);
+      .run(now, renewed, reportId);
+    const after = getFieldReport(reportId);
+    if (after && after.confirmation_count >= 2) {
+      recalcTrustScore(after.author);
     }
     return true;
   }
@@ -2461,6 +2962,50 @@ export function resolveFieldReport(reportId: string): void {
   getDb()
     .prepare(`UPDATE field_reports SET status = 'resolved', updated_at = ? WHERE id = ?`)
     .run(now, reportId);
+}
+
+export function countFieldReportResolveVotes(reportId: string): number {
+  const r = getDb()
+    .prepare(`SELECT COUNT(*) AS n FROM field_report_resolve_votes WHERE report_id = ?`)
+    .get(reportId) as { n: number };
+  return r.n;
+}
+
+/** Aggiunge voto "non c'è più"; risolve se raggiunge 2 voti. */
+export function addFieldReportResolveVote(reportId: string, username: string): {
+  resolved: boolean;
+  votes: number;
+} {
+  const now = Date.now();
+  const res = getDb()
+    .prepare(
+      `INSERT OR IGNORE INTO field_report_resolve_votes (report_id, username, created_at) VALUES (?, ?, ?)`,
+    )
+    .run(reportId, normalizeUser(username), now);
+  const votes = countFieldReportResolveVotes(reportId);
+  if (res.changes > 0 && votes >= 2) {
+    resolveFieldReport(reportId);
+    return { resolved: true, votes };
+  }
+  return { resolved: false, votes };
+}
+
+export function getConditionsCache(key: string): string | null {
+  const now = Date.now();
+  const row = getDb()
+    .prepare(`SELECT payload_json FROM conditions_cache WHERE cache_key = ? AND expires_at > ?`)
+    .get(key, now) as { payload_json: string } | undefined;
+  return row?.payload_json ?? null;
+}
+
+export function setConditionsCache(key: string, payloadJson: string, ttlMs: number): void {
+  const now = Date.now();
+  getDb()
+    .prepare(
+      `INSERT INTO conditions_cache (cache_key, payload_json, expires_at) VALUES (?, ?, ?)
+       ON CONFLICT(cache_key) DO UPDATE SET payload_json = excluded.payload_json, expires_at = excluded.expires_at`,
+    )
+    .run(key, payloadJson, now + ttlMs);
 }
 
 export function hasConfirmedReport(reportId: string, username: string): boolean {
@@ -2579,11 +3124,13 @@ export function listRoutesForExplore(
   const u = normalizeUser(username);
   if (scope === "public") {
     if (activity) {
+      const aff = activityFilterSql(activity);
       return getDb()
         .prepare(
-          `SELECT * FROM user_routes WHERE visibility = 'public' AND activity = ? ORDER BY updated_at DESC`,
+          `SELECT * FROM user_routes WHERE visibility = 'public' AND ${aff.sql}
+           ORDER BY (activity = @activity) DESC, updated_at DESC`,
         )
-        .all(activity) as UserRouteRow[];
+        .all({ ...aff.params, activity }) as UserRouteRow[];
     }
     return getDb()
       .prepare(`SELECT * FROM user_routes WHERE visibility = 'public' ORDER BY updated_at DESC`)
@@ -2623,7 +3170,15 @@ export function listRoutesForExplore(
         )
         .all(groupId, activity) as UserRouteRow[];
     }
-    return listSkiRoutesForGroup(groupId);
+    return getDb()
+      .prepare(
+        `SELECT DISTINCT r.* FROM user_routes r
+         INNER JOIN outings o ON o.route_id = r.id
+         INNER JOIN outing_groups og ON og.outing_id = o.id
+         WHERE og.group_id = ?
+         ORDER BY r.updated_at DESC`,
+      )
+      .all(groupId) as UserRouteRow[];
   }
   return [];
 }
@@ -2656,13 +3211,7 @@ export function getUserStats(username: string): UserStats {
     .prepare(`SELECT activity, COUNT(*) AS n FROM user_routes WHERE owner = ? GROUP BY activity`)
     .all(u) as Array<{ activity: UserRouteActivity; n: number }>;
 
-  const by_activity: Record<UserRouteActivity, number> = {
-    road: 0,
-    mtb: 0,
-    hike: 0,
-    gravel: 0,
-    ski: 0,
-  };
+  const by_activity = emptyActivityCounts();
   for (const row of byActivity) {
     by_activity[row.activity] = row.n;
   }

@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import V2Nav from "@/components/v2/V2Nav";
 import type { AppUserRole } from "@/lib/db";
 
 type UserRow = {
@@ -95,7 +94,6 @@ export default function V2AdminUsers() {
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto">
-      <V2Nav isAdmin />
       <div className="mx-auto w-full max-w-3xl flex-1 p-4">
         <h1 className="text-xl font-semibold">Admin utenti</h1>
         <p className="mt-1 text-sm text-[color:var(--hmr-muted)]">
@@ -104,7 +102,7 @@ export default function V2AdminUsers() {
 
         <form
           onSubmit={(e) => void onCreate(e)}
-          className="hmr-panel mt-4 grid gap-3 rounded-2xl border border-[color:var(--hmr-border)]/80 p-4 sm:grid-cols-2"
+          className="hmr-panel mt-4 grid gap-3 rounded-lg border border-[color:var(--hmr-border)]/80 p-4 sm:grid-cols-2"
         >
           <h2 className="sm:col-span-2 text-sm font-medium">Nuovo utente</h2>
           <label className="text-xs">
@@ -141,7 +139,7 @@ export default function V2AdminUsers() {
           <button
             type="submit"
             disabled={creating}
-            className="self-end rounded-lg bg-amber-500/90 px-4 py-2 text-sm font-medium text-[color:var(--hmr-bg)] disabled:opacity-50"
+            className="self-end rounded-lg bg-[color:var(--hmr-warn)]/100/90 px-4 py-2 text-sm font-medium text-[color:var(--hmr-bg)] disabled:opacity-50"
           >
             {creating ? "Creo…" : "Crea utente"}
           </button>
@@ -194,7 +192,7 @@ export default function V2AdminUsers() {
                     <button
                       type="button"
                       onClick={() => void deleteUser(u)}
-                      className="rounded-lg border border-red-500/40 px-2 py-1 text-[11px] text-red-400"
+                      className="rounded-lg border border-[color:var(--hmr-danger)]/40 px-2 py-1 text-[11px] text-[color:var(--hmr-danger)]"
                     >
                       Elimina
                     </button>
@@ -204,7 +202,7 @@ export default function V2AdminUsers() {
             </ul>
           )}
         </section>
-        {err ? <p className="mt-4 text-xs text-red-400">{err}</p> : null}
+        {err ? <p className="mt-4 text-xs text-[color:var(--hmr-danger)]">{err}</p> : null}
       </div>
     </div>
   );

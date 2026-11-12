@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import V2Nav from "@/components/v2/V2Nav";
 import V2PlanMap from "@/components/v2/V2PlanMap";
 import ElevationChart from "@/components/ElevationChart";
 import type { SkiExtractMeta } from "@/app/api/v2/ski/extract/route";
@@ -40,8 +39,7 @@ export default function V2SkiUpload({ isAdmin = false, username }: Props) {
   const [saveBusy, setSaveBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [sourceNote, setSourceNote] = useState("");
-  const [registerOuting, setRegisterOuting] = useState(true);
-  const [outingDate, setOutingDate] = useState("");
+  const [outingDate, setOutingDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [snowNotes, setSnowNotes] = useState("");
   const [participantsText, setParticipantsText] = useState("");
   const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
@@ -199,29 +197,31 @@ export default function V2SkiUpload({ isAdmin = false, username }: Props) {
       const data = (await res.json()) as { error?: string; id?: string };
       if (!res.ok || !data.id) throw new Error(data.error ?? "Salvataggio fallito");
 
-      if (registerOuting) {
-        const participants = participantsText
-          .split(/[,;\s]+/)
-          .map((s) => s.trim().toLowerCase())
-          .filter(Boolean);
-        const outingRes = await fetch("/api/v2/ski/outings", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            route_id: data.id,
-            title: meta.name || "Gita scialpinismo",
-            outing_date: outingDate || null,
-            snow_notes: snowNotes || meta.notes || "",
-            participants,
-            group_ids: selectedGroupIds,
-            make_route_public: true,
-          }),
-        });
-        const outingData = (await outingRes.json()) as { error?: string };
-        if (!outingRes.ok) throw new Error(outingData.error ?? "Registrazione gita fallita");
-      }
+      // Gita fatta: il racconto è la descrizione (voce/testo), le note neve vanno nelle condizioni.
+      const participants = participantsText
+        .split(/[,;\s]+/)
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean);
+      const snowNote = (snowNotes || meta.notes || "").trim();
+      const outingRes = await fetch("/api/v2/outings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          route_id: data.id,
+          title: meta.name || "Gita scialpinismo",
+          outing_date: outingDate || null,
+          status: "done",
+          story: transcript.trim(),
+          conditions: snowNote ? { snow: { note: snowNote } } : undefined,
+          participants,
+          group_ids: selectedGroupIds,
+        }),
+      });
+      const outingData = (await outingRes.json()) as { error?: string; id?: string };
+      if (!outingRes.ok || !outingData.id) throw new Error(outingData.error ?? "Registrazione gita fallita");
 
-      router.push("/v2/scialpinismo/esplora");
+      // Nel dettaglio si completano condizioni e foto.
+      router.push(`/v2/gite/${encodeURIComponent(outingData.id)}`);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -231,16 +231,15 @@ export default function V2SkiUpload({ isAdmin = false, username }: Props) {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <V2Nav isAdmin={isAdmin} username={username} />
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
         <aside className="hmr-panel z-10 flex max-h-[50vh] shrink-0 flex-col gap-3 overflow-y-auto border-b border-[color:var(--hmr-border)]/60 p-3 lg:max-h-none lg:w-96 lg:border-b-0 lg:border-r">
           <div>
             <Link href="/v2/scialpinismo" className="text-xs text-[color:var(--hmr-muted)] hover:underline">
               ← Scialpinismo
             </Link>
-            <h1 className="mt-1 text-base font-semibold">Carica gita</h1>
+            <h1 className="mt-1 text-base font-semibold">Racconta una gita</h1>
             <p className="text-xs text-[color:var(--hmr-muted)]">
-              Descrivi la gita (voce o testo) → carica GPX → verifica → salva.
+              Gita già fatta? Raccontala (voce o testo) → carica il GPX → verifica → salva.
             </p>
           </div>
 
@@ -392,15 +391,13 @@ export default function V2SkiUpload({ isAdmin = false, username }: Props) {
                 {lengthKm.toFixed(1)} km traccia · D+ profilo {Math.round(elevGainM)} m
               </p>
 
-              <label className="flex items-center gap-2 text-xs">
-                <input
-                  type="checkbox"
-                  checked={registerOuting}
-                  onChange={(e) => setRegisterOuting(e.target.checked)}
-                />
-                Registra gita (percorso sempre pubblico)
-              </label>
-              {registerOuting ? (
+              <p className="text-[10px] font-medium uppercase tracking-wide text-[color:var(--hmr-faint)]">
+                La tua gita
+              </p>
+              <p className="text-[10px] text-[color:var(--hmr-muted)]">
+                La traccia diventa un percorso pubblico riusabile; la gita (data, compagni, racconto) resta visibile a te,
+                ai compagni e ai gruppi scelti. Dopo il salvataggio puoi aggiungere condizioni e foto.
+              </p>
                 <div className="space-y-2 rounded-lg border border-[color:var(--hmr-border)]/70 bg-[color:var(--hmr-elev)] p-2">
                   <input
                     type="date"
@@ -448,7 +445,6 @@ export default function V2SkiUpload({ isAdmin = false, username }: Props) {
                     </div>
                   ) : null}
                 </div>
-              ) : null}
 
               <button
                 type="button"
@@ -456,12 +452,12 @@ export default function V2SkiUpload({ isAdmin = false, username }: Props) {
                 onClick={() => void saveRoute()}
                 className="w-full rounded-lg bg-[color:var(--hmr-accent)] py-2 text-sm font-medium text-[color:var(--hmr-bg)] disabled:opacity-50"
               >
-                {saveBusy ? "Salvo…" : "Salva gita"}
+                {saveBusy ? "Salvo…" : "Salva traccia e gita"}
               </button>
             </div>
           ) : null}
 
-          {err ? <p className="text-xs text-red-400">{err}</p> : null}
+          {err ? <p className="text-xs text-[color:var(--hmr-danger)]">{err}</p> : null}
         </aside>
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">

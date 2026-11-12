@@ -30,8 +30,8 @@ export const AVALANCHE_LEGEND = [
 ] as const;
 
 export const SKI_TRACK_COLORS = {
-  ascent: "#059669",
-  descent: "#dc2626",
+  ascent: "#6fb3ab",
+  descent: "#a99bd9",
 } as const;
 
 /** Opacità fissa overlay pendenza (~1/3 del valore precedente). */

@@ -9,6 +9,8 @@ type Ctx = { params: Promise<{ id: string }> };
 type Body = {
   lat?: number;
   lng?: number;
+  name?: string | null;
+  photoRadiusM?: number;
   image?: string | null;
   wikidata?: string | null;
   wikipedia?: string | null;
@@ -34,6 +36,9 @@ export async function POST(req: Request, ctx: Ctx) {
     const details = await buildPoiDetails({
       lat,
       lng,
+      name: typeof body.name === "string" ? body.name.slice(0, 120) : null,
+      photoRadiusM:
+        typeof body.photoRadiusM === "number" && Number.isFinite(body.photoRadiusM) ? body.photoRadiusM : undefined,
       osmImage: body.image ?? null,
       wikidata: body.wikidata ?? null,
       wikipedia: body.wikipedia ?? null,

@@ -1,12 +1,24 @@
 import type { Position } from "geojson";
+import { demElevations } from "@/lib/dem-sample";
 
-/** Campiona una linea e chiede quota a Open-Elevation (POST). */
+export type ElevationSample = {
+  distanceKm: number[];
+  elevationM: number[];
+  sampled: Position[];
+  /** false = quote non disponibili (profilo piatto di ripiego, non usare per D+/D−). */
+  available: boolean;
+};
+
+/**
+ * Campiona una linea e ricava le quote: prima dai tile DEM Terrarium nel browser
+ * (stessa sorgente del rilievo), poi Open-Elevation come ripiego.
+ */
 export async function sampleElevationsForLine(
   coordinates: Position[],
-  maxPoints = 100
-): Promise<{ distanceKm: number[]; elevationM: number[]; sampled: Position[] }> {
+  maxPoints = 160
+): Promise<ElevationSample> {
   if (coordinates.length < 2) {
-    return { distanceKm: [], elevationM: [], sampled: [] };
+    return { distanceKm: [], elevationM: [], sampled: [], available: false };
   }
   const sampled: Position[] = [];
   const total = coordinates.length;
@@ -14,6 +26,16 @@ export async function sampleElevationsForLine(
   for (let i = 0; i < total; i += step) sampled.push(coordinates[i]);
   if (sampled[sampled.length - 1] !== coordinates[total - 1]) {
     sampled.push(coordinates[total - 1]);
+  }
+
+  const distanceKm: number[] = [0];
+  for (let i = 1; i < sampled.length; i++) {
+    distanceKm.push(distanceKm[i - 1] + haversineKm(sampled[i - 1], sampled[i]));
+  }
+
+  const dem = await demElevations(sampled.map((c) => [c[0], c[1]] as [number, number]));
+  if (dem && dem.every((v) => Number.isFinite(v))) {
+    return { distanceKm, elevationM: dem.map((v) => Math.round(v * 10) / 10), sampled, available: true };
   }
 
   const locations = sampled.map((c) => ({ latitude: c[1], longitude: c[0] }));
@@ -31,11 +53,7 @@ export async function sampleElevationsForLine(
   } catch {
     return fallbackFlatProfile(sampled);
   }
-  const distanceKm: number[] = [0];
-  for (let i = 1; i < sampled.length; i++) {
-    distanceKm.push(distanceKm[i - 1] + haversineKm(sampled[i - 1], sampled[i]));
-  }
-  return { distanceKm, elevationM, sampled };
+  return { distanceKm, elevationM, sampled, available: true };
 }
 
 function haversineKm(a: Position, b: Position): number {
@@ -49,15 +67,11 @@ function haversineKm(a: Position, b: Position): number {
   return 2 * R * Math.asin(Math.sqrt(x));
 }
 
-function fallbackFlatProfile(sampled: Position[]): {
-  distanceKm: number[];
-  elevationM: number[];
-  sampled: Position[];
-} {
+function fallbackFlatProfile(sampled: Position[]): ElevationSample {
   const elevationM = sampled.map(() => 500);
   const distanceKm: number[] = [0];
   for (let i = 1; i < sampled.length; i++) {
     distanceKm.push(distanceKm[i - 1] + haversineKm(sampled[i - 1], sampled[i]));
   }
-  return { distanceKm, elevationM, sampled };
+  return { distanceKm, elevationM, sampled, available: false };
 }

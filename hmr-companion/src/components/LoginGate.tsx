@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import { BrandMark } from "@/components/v2/V2Shell";
 
 export default function LoginGate() {
   const [username, setUsername] = useState("");
@@ -29,30 +30,32 @@ export default function LoginGate() {
   };
 
   return (
-    <main className="flex h-full items-center justify-center p-4">
-      <form
-        onSubmit={(e) => void onSubmit(e)}
-        className="hmr-panel w-full max-w-sm rounded-2xl border border-[color:var(--hmr-border)]/80 p-4"
-      >
-        <h1 className="text-lg font-semibold">Accedi a HMR Companion</h1>
-        <p className="mt-1 text-xs text-[color:var(--hmr-muted)]">
-          Nome utente e password predefiniti (non modificabili dall&apos;app).
-        </p>
-        <label className="mt-3 block text-xs text-[color:var(--hmr-muted)]">
-          Nome utente
+    <main className="v2-theme flex h-full items-center justify-center p-4">
+      <form onSubmit={(e) => void onSubmit(e)} className="w-full max-w-[360px]">
+        <div className="flex items-center gap-2.5">
+          <BrandMark size={28} />
+          <span className="text-[15px] font-semibold tracking-tight">HMR Companion</span>
+        </div>
+
+        <h1 className="mt-10 text-[26px] font-semibold tracking-tight">Accedi</h1>
+        <p className="mt-1 text-[14px] text-[color:var(--hmr-muted)]">Pianifica, esplora, torna a casa.</p>
+
+        <label className="mt-8 block">
+          <span className="text-[13px] font-medium">Nome utente</span>
           <input
             type="text"
             name="username"
             autoComplete="username"
+            autoCapitalize="none"
+            spellCheck={false}
             required
             value={username}
             onChange={(e) => setUsername(e.target.value)}
-            className="mt-1 w-full min-h-[44px] rounded-lg border border-[color:var(--hmr-border)] bg-[color:var(--hmr-elev)] px-2 text-sm"
-            placeholder="es. ago"
+            className="ui-input mt-1.5 !min-h-[44px]"
           />
         </label>
-        <label className="mt-3 block text-xs text-[color:var(--hmr-muted)]">
-          Password
+        <label className="mt-4 block">
+          <span className="text-[13px] font-medium">Password</span>
           <input
             type="password"
             name="password"
@@ -60,17 +63,17 @@ export default function LoginGate() {
             required
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="mt-1 w-full min-h-[44px] rounded-lg border border-[color:var(--hmr-border)] bg-[color:var(--hmr-elev)] px-2 text-sm"
+            className="ui-input mt-1.5 !min-h-[44px]"
           />
         </label>
-        <button
-          type="submit"
-          disabled={busy}
-          className="hmr-btn hmr-btn-accent hmr-tap mt-3 w-full justify-center text-sm"
-        >
-          {busy ? "Accesso..." : "Accedi"}
+        {err ? (
+          <p className="mt-4 text-[13px] text-[color:var(--hmr-danger)]" role="alert">
+            {err}
+          </p>
+        ) : null}
+        <button type="submit" disabled={busy} className="ui-btn ui-btn-primary mt-6 !min-h-[44px] w-full !text-[14px]">
+          {busy ? "Accesso…" : "Accedi"}
         </button>
-        {err && <p className="mt-2 text-xs text-[color:var(--hmr-danger)]">{err}</p>}
       </form>
     </main>
   );

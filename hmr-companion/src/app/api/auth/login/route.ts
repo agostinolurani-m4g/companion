@@ -1,9 +1,12 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import {
   AUTH_COOKIE_NAME,
   createSessionForEmail,
+  normalizeUsername,
   verifyPasswordLogin,
 } from "@/lib/auth";
+import { getDb } from "@/lib/db";
+import { maybeSyncOnLogin } from "@/lib/integrations/sync";
 
 export const runtime = "nodejs";
 
@@ -40,5 +43,8 @@ export async function POST(req: Request) {
     path: "/",
     expires: new Date(session.expiresAt),
   });
+  // Import incrementale dai provider collegati (Strava): non blocca il login.
+  const owner = normalizeUsername(username);
+  after(() => maybeSyncOnLogin(getDb(), owner));
   return res;
 }

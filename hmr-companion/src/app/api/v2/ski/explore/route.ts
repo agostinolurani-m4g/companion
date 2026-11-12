@@ -10,7 +10,7 @@ import {
 } from "@/lib/db";
 import { parseExploreScope, routesToExploreGeoJson } from "@/lib/ski-explore";
 import { routeEndpointsFromSkiGeojson } from "@/lib/ski-overlays";
-import { serializeSkiOutings } from "@/lib/ski-outings";
+import { serializeOutings } from "@/lib/outings";
 
 export const runtime = "nodejs";
 
@@ -57,7 +57,7 @@ export async function GET(req: Request) {
         : 0;
       const outings =
         includeOutings && outingCount > 0
-          ? serializeSkiOutings(listOutingsVisibleForRoute(r.id, auth.email))
+          ? serializeOutings(listOutingsVisibleForRoute(r.id, auth.email))
           : [];
       return {
         id: r.id,

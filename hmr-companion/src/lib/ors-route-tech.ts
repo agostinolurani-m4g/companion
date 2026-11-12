@@ -7,10 +7,10 @@ import type { TrackSurfaceKind, SurfaceKmSpan } from "@/lib/surface-osm";
 import { formatTerrainIt, mergeSurfaceSpans } from "@/lib/surface-osm";
 
 export const SURFACE_COLORS: Record<TrackSurfaceKind, string> = {
-  asphalt: "#94a3b8",
-  gravel: "#eab308",
-  single: "#22c55e",
-  unknown: "#64748b",
+  asphalt: "#9aa3aa",
+  gravel: "#cdb68f",
+  single: "#6fb3ab",
+  unknown: "#7c858c",
 };
 
 /** Segmenti ORS grezzi: [fromIdx, toIdx, valueCode]. */
@@ -21,7 +21,51 @@ export type OrsExtrasRaw = {
   waytype?: { values?: OrsExtraValues };
   steepness?: { values?: OrsExtraValues };
   traildifficulty?: { values?: OrsExtraValues };
+  waycategory?: { values?: OrsExtraValues };
 };
+
+/** Categoria di via (da ORS waytype) per riepilogo e colorazione alternativa. */
+export type WayCategory = "cycleway" | "trail" | "track" | "minor" | "major" | "other";
+
+export const WAY_CATEGORY_ORDER: WayCategory[] = ["cycleway", "trail", "track", "minor", "major", "other"];
+
+export const WAY_CATEGORY_LABELS: Record<WayCategory, string> = {
+  cycleway: "Ciclabile",
+  trail: "Sentiero",
+  track: "Sterrata / pista",
+  minor: "Strada secondaria",
+  major: "Strada principale",
+  other: "Altro",
+};
+
+export const WAY_CATEGORY_COLORS: Record<WayCategory, string> = {
+  cycleway: "#a99bd9",
+  trail: "#6fb3ab",
+  track: "#cdb68f",
+  minor: "#9aa3aa",
+  major: "#d9a0a0",
+  other: "#7c858c",
+};
+
+export function wayCategoryOf(waytype: string): WayCategory {
+  switch (waytype) {
+    case "cycleway":
+      return "cycleway";
+    case "path":
+    case "footway":
+    case "steps":
+      return "trail";
+    case "track":
+      return "track";
+    case "street":
+    case "road":
+      return "minor";
+    case "state_road":
+      return "major";
+    default:
+      return "other";
+  }
+}
 
 export type RouteTechSegment = {
   fromKm: number;
@@ -34,6 +78,8 @@ export type RouteTechSegment = {
 
 export type RouteTechSummary = {
   surface_pct: { asphalt: number; gravel: number; single: number; unknown: number };
+  /** km per categoria di via (ciclabile, sentiero, …). Assente nelle risposte in cache vecchie. */
+  category_km?: Partial<Record<WayCategory, number>>;
   max_difficulty: string | null;
   max_steepness: string | null;
 };
@@ -42,6 +88,8 @@ export type RouteColoredSegment = {
   coordinates: [number, number][];
   color: string;
   surface: TrackSurfaceKind;
+  /** Categoria di via del tratto (per colorazione "per tipo"). */
+  category?: WayCategory;
 };
 
 export type RouteTech = {
@@ -49,6 +97,8 @@ export type RouteTech = {
   summary: RouteTechSummary;
   surface_bands: SurfaceKmSpan[];
   colored_segments: RouteColoredSegment[];
+  /** Stessa geometria colorata per categoria di via. */
+  category_segments?: RouteColoredSegment[];
 };
 
 const ORS_SURFACE: Record<number, TrackSurfaceKind> = {
@@ -145,8 +195,12 @@ export function cumulativeKmAtIndices(coords: [number, number][]): number[] {
   return out;
 }
 
+/** Codice dell'arco che parte dal vertice idx (range ORS [from, to] con estremi condivisi). */
 function lookupExtra(values: OrsExtraValues | undefined, idx: number): number {
   if (!values?.length) return 0;
+  for (const [from, to, code] of values) {
+    if (idx >= from && idx < to) return code;
+  }
   for (const [from, to, code] of values) {
     if (idx >= from && idx <= to) return code;
   }
@@ -200,24 +254,31 @@ function maxByRank<T extends string>(items: T[], rank: Record<string, number>): 
 
 function buildColoredSegments(
   coords: [number, number][],
-  segments: RouteTechSegment[]
+  segments: RouteTechSegment[],
+  kmOffset = 0,
+  by: "surface" | "category" = "surface",
 ): RouteColoredSegment[] {
-  const cum = cumulativeKmAtIndices(coords);
+  const cum = cumulativeKmAtIndices(coords).map((k) => k + kmOffset);
   const out: RouteColoredSegment[] = [];
+  // Unisce tratti consecutivi con lo stesso colore (meno feature, linea continua).
+  let cur: RouteColoredSegment | null = null;
   for (const seg of segments) {
+    const category = wayCategoryOf(seg.waytype);
+    const color = by === "surface" ? SURFACE_COLORS[seg.surface] : WAY_CATEGORY_COLORS[category];
     const slice: [number, number][] = [];
     for (let i = 0; i < cum.length; i++) {
       const k = cum[i]!;
-      if (k + 1e-6 >= seg.fromKm && k - 1e-6 <= seg.toKm) {
-        slice.push(coords[i]!);
-      }
+      if (k + 1e-6 >= seg.fromKm && k - 1e-6 <= seg.toKm) slice.push(coords[i]!);
     }
     if (slice.length < 2) continue;
-    out.push({
-      coordinates: slice,
-      color: SURFACE_COLORS[seg.surface],
-      surface: seg.surface,
-    });
+    if (cur && cur.color === color) {
+      const last = cur.coordinates[cur.coordinates.length - 1]!;
+      const first = slice[0]!;
+      cur.coordinates.push(...(last[0] === first[0] && last[1] === first[1] ? slice.slice(1) : slice));
+      continue;
+    }
+    cur = { coordinates: slice, color, surface: seg.surface, category };
+    out.push(cur);
   }
   if (out.length === 0 && coords.length >= 2) {
     out.push({
@@ -225,6 +286,15 @@ function buildColoredSegments(
       color: SURFACE_COLORS.unknown,
       surface: "unknown",
     });
+  }
+  return out;
+}
+
+function categoryKmFromSegments(segments: RouteTechSegment[]): Partial<Record<WayCategory, number>> {
+  const out: Partial<Record<WayCategory, number>> = {};
+  for (const s of segments) {
+    const c = wayCategoryOf(s.waytype);
+    out[c] = (out[c] ?? 0) + Math.max(0, s.toKm - s.fromKm);
   }
   return out;
 }
@@ -273,30 +343,31 @@ export function parseOrsExtras(
   const steepVals = extras.steepness?.values ?? [];
   const diffVals = extras.traildifficulty?.values ?? [];
 
-  const ranges = new Map<string, { from: number; to: number }>();
-  for (const [from, to] of surfaceVals.map((v) => [v[0], v[1]] as const)) {
-    ranges.set(`${from}:${to}`, { from, to });
+  // Intervalli elementari: tutti i punti di rottura di tutti gli extra, così i tratti
+  // non si sovrappongono (prima surface/waytype/… generavano range sovrapposti e km contati più volte).
+  const breaks = new Set<number>([0, coords.length - 1]);
+  for (const vals of [surfaceVals, waytypeVals, steepVals, diffVals]) {
+    for (const [from, to] of vals) {
+      breaks.add(Math.max(0, Math.min(coords.length - 1, from)));
+      breaks.add(Math.max(0, Math.min(coords.length - 1, to)));
+    }
   }
-  for (const [from, to] of waytypeVals.map((v) => [v[0], v[1]] as const)) {
-    ranges.set(`${from}:${to}`, { from, to });
-  }
-  for (const [from, to] of steepVals.map((v) => [v[0], v[1]] as const)) {
-    ranges.set(`${from}:${to}`, { from, to });
-  }
-  for (const [from, to] of diffVals.map((v) => [v[0], v[1]] as const)) {
-    ranges.set(`${from}:${to}`, { from, to });
+  const pts = [...breaks].sort((x, y) => x - y);
+  const sortedRanges: { from: number; to: number }[] = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    if (pts[i + 1]! > pts[i]!) sortedRanges.push({ from: pts[i]!, to: pts[i + 1]! });
   }
 
   const cum = cumulativeKmAtIndices(coords);
   const lengthKm = cum[cum.length - 1] ?? 0;
 
-  const sortedRanges = [...ranges.values()].sort((a, b) => a.from - b.from || a.to - b.to);
   const segments: RouteTechSegment[] = [];
   const steepnessCodes: string[] = [];
   const difficultyCodes: string[] = [];
 
   for (const { from, to } of sortedRanges) {
-    const mid = Math.min(coords.length - 1, Math.max(0, Math.floor((from + to) / 2)));
+    // Gli extra ORS descrivono archi: il tratto elementare [from, to) parte dal vertice `from`.
+    const mid = Math.min(coords.length - 1, Math.max(0, from));
     const sc = lookupExtra(surfaceVals, mid);
     const wc = lookupExtra(waytypeVals, mid);
     const stc = lookupExtra(steepVals, mid);
@@ -349,11 +420,13 @@ export function parseOrsExtras(
     segments: mergedSegments,
     summary: {
       surface_pct: surfacePctFromSegments(mergedSegments),
+      category_km: categoryKmFromSegments(mergedSegments),
       max_difficulty: maxDiff ? formatDifficultyIt(maxDiff) : null,
       max_steepness: maxSteep ? formatSteepnessIt(maxSteep) : null,
     },
     surface_bands,
-    colored_segments: buildColoredSegments(coords, mergedSegments),
+    colored_segments: buildColoredSegments(coords, mergedSegments, kmOffset, "surface"),
+    category_segments: buildColoredSegments(coords, mergedSegments, kmOffset, "category"),
   };
 }
 
@@ -365,6 +438,7 @@ export function mergeRouteTechParts(parts: RouteTech[]): RouteTech | null {
   const segments = parts.flatMap((p) => p.segments);
   const surface_bands = parts.flatMap((p) => p.surface_bands);
   const colored_segments = parts.flatMap((p) => p.colored_segments);
+  const category_segments = parts.flatMap((p) => p.category_segments ?? []);
 
   const kmTotals = { asphalt: 0, gravel: 0, single: 0, unknown: 0 };
   for (const p of parts) {
@@ -387,7 +461,9 @@ export function mergeRouteTechParts(parts: RouteTech[]): RouteTech | null {
     segments,
     surface_bands,
     colored_segments,
+    category_segments,
     summary: {
+      category_km: categoryKmFromSegments(segments),
       surface_pct:
         totalKm > 0
           ? {

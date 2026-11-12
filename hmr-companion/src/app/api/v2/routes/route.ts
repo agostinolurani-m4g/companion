@@ -8,10 +8,12 @@ import {
   type UserRouteActivity,
   type UserRouteVisibility,
 } from "@/lib/db";
+import { computeRouteFacts } from "@/lib/route-facts";
+import { USER_ROUTE_ACTIVITIES } from "@/lib/sports";
 
 export const runtime = "nodejs";
 
-const VALID_ACTIVITIES = new Set<UserRouteActivity>(["road", "mtb", "hike", "gravel", "ski"]);
+const VALID_ACTIVITIES = new Set<UserRouteActivity>(USER_ROUTE_ACTIVITIES);
 const VALID_VISIBILITY = new Set<UserRouteVisibility>(["private", "public"]);
 
 function serializeRoute(row: ReturnType<typeof listRoutesForOwner>[number]) {
@@ -43,6 +45,7 @@ function serializeRoute(row: ReturnType<typeof listRoutesForOwner>[number]) {
     license: row.license,
     external_id: row.external_id,
     meta_json,
+    facts: computeRouteFacts(row),
     created_at: row.created_at,
     updated_at: row.updated_at,
   };

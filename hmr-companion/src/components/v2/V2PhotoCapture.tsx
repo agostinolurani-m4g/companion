@@ -9,6 +9,8 @@ type Props = {
   onUploaded: () => void;
   initialLng?: number;
   initialLat?: number;
+  /** Collega la foto a una gita (resoconto). */
+  outingId?: string;
 };
 
 export default function V2PhotoCapture({
@@ -16,6 +18,7 @@ export default function V2PhotoCapture({
   onUploaded,
   initialLng,
   initialLat,
+  outingId,
 }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [point, setPoint] = useState<{ lng: number; lat: number } | null>(
@@ -69,6 +72,7 @@ export default function V2PhotoCapture({
     fd.append("lng", String(point.lng));
     fd.append("lat", String(point.lat));
     if (caption.trim()) fd.append("caption", caption.trim());
+    if (outingId) fd.append("outing_id", outingId);
     try {
       const res = await fetch("/api/v2/photos", { method: "POST", body: fd });
       const data = (await res.json()) as { error?: string };
@@ -83,7 +87,7 @@ export default function V2PhotoCapture({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 sm:items-center">
-      <div className="flex max-h-[95vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-[color:var(--hmr-border)] bg-[color:var(--hmr-panel)] sm:rounded-2xl">
+      <div className="flex max-h-[95vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-[color:var(--hmr-border)] bg-[color:var(--hmr-panel)] sm:rounded-lg">
         <div className="flex items-center justify-between border-b border-[color:var(--hmr-border)]/60 px-4 py-3">
           <h2 className="text-sm font-medium">Carica foto</h2>
           <button type="button" onClick={onClose} className="text-xs text-[color:var(--hmr-muted)]">
@@ -174,7 +178,7 @@ export default function V2PhotoCapture({
           >
             {busy ? "Carico…" : "Pubblica"}
           </button>
-          {err ? <p className="text-xs text-red-400">{err}</p> : null}
+          {err ? <p className="text-xs text-[color:var(--hmr-danger)]">{err}</p> : null}
         </div>
       </div>
     </div>
