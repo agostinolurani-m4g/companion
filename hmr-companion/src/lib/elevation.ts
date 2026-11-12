@@ -9,29 +9,61 @@ export type ElevationSample = {
   available: boolean;
 };
 
+/** Passo di campionamento lungo la linea: vicino alla risoluzione del DEM. */
+export const ELEV_SAMPLE_SPACING_M = 25;
+/** Tetto ai campioni: oltre, il passo si allarga (percorsi molto lunghi). */
+export const ELEV_SAMPLE_MAX_POINTS = 6000;
+
+/**
+ * Ricampiona la linea a passo costante in metri (non per indice dei vertici: i vertici
+ * sono radi sui rettilinei e fitti sui tornanti). `distanceKm` è la distanza vera lungo
+ * la linea, quindi il totale coincide con la lunghezza del percorso.
+ */
+export function resampleLineByDistance(
+  coordinates: Position[],
+  spacingM = ELEV_SAMPLE_SPACING_M,
+  maxPoints = ELEV_SAMPLE_MAX_POINTS,
+): { sampled: Position[]; distanceKm: number[] } {
+  if (coordinates.length < 2) return { sampled: [], distanceKm: [] };
+  const cum: number[] = [0];
+  for (let i = 1; i < coordinates.length; i++) {
+    cum.push(cum[i - 1] + haversineKm(coordinates[i - 1], coordinates[i]));
+  }
+  const totalKm = cum[cum.length - 1];
+  const stepKm = Math.max(spacingM / 1000, totalKm / Math.max(1, maxPoints - 1));
+  const sampled: Position[] = [coordinates[0]];
+  const distanceKm: number[] = [0];
+  let seg = 1;
+  for (let d = stepKm; d < totalKm - stepKm * 0.5; d += stepKm) {
+    while (seg < cum.length - 1 && cum[seg] < d) seg++;
+    const a = coordinates[seg - 1];
+    const b = coordinates[seg];
+    const len = cum[seg] - cum[seg - 1];
+    const t = len > 1e-12 ? (d - cum[seg - 1]) / len : 0;
+    sampled.push([a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])]);
+    distanceKm.push(d);
+  }
+  sampled.push(coordinates[coordinates.length - 1]);
+  distanceKm.push(totalKm);
+  return { sampled, distanceKm };
+}
+
 /**
  * Campiona una linea e ricava le quote: prima dai tile DEM Terrarium nel browser
  * (stessa sorgente del rilievo), poi Open-Elevation come ripiego.
  */
 export async function sampleElevationsForLine(
   coordinates: Position[],
-  maxPoints = 160
+  maxPoints = ELEV_SAMPLE_MAX_POINTS
 ): Promise<ElevationSample> {
   if (coordinates.length < 2) {
     return { distanceKm: [], elevationM: [], sampled: [], available: false };
   }
-  const sampled: Position[] = [];
-  const total = coordinates.length;
-  const step = Math.max(1, Math.floor((total - 1) / (maxPoints - 1)));
-  for (let i = 0; i < total; i += step) sampled.push(coordinates[i]);
-  if (sampled[sampled.length - 1] !== coordinates[total - 1]) {
-    sampled.push(coordinates[total - 1]);
-  }
-
-  const distanceKm: number[] = [0];
-  for (let i = 1; i < sampled.length; i++) {
-    distanceKm.push(distanceKm[i - 1] + haversineKm(sampled[i - 1], sampled[i]));
-  }
+  const { sampled, distanceKm } = resampleLineByDistance(
+    coordinates,
+    ELEV_SAMPLE_SPACING_M,
+    Math.max(200, maxPoints),
+  );
 
   const dem = await demElevations(sampled.map((c) => [c[0], c[1]] as [number, number]));
   if (dem && dem.every((v) => Number.isFinite(v))) {

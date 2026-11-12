@@ -46,7 +46,7 @@ async function loadTile(z: number, x: number, y: number): Promise<TileData> {
       }
     })();
     cache.set(key, p);
-    if (cache.size > 256) cache.delete(cache.keys().next().value as string);
+    if (cache.size > 600) cache.delete(cache.keys().next().value as string);
   }
   return p;
 }
@@ -62,6 +62,22 @@ function pixelElev(data: Uint8ClampedArray, x: number, y: number): number {
  */
 export async function demElevations(points: Array<[number, number]>, z = DEM_ZOOM): Promise<number[] | null> {
   if (typeof window === "undefined" || typeof createImageBitmap === "undefined") return null;
+  // Scarica in parallelo tutti i tile toccati (in serie un percorso lungo impiegava secondi).
+  const needed = new Map<string, [number, number]>();
+  for (const [lng, lat] of points) {
+    const { px, py } = lngLatToPixel(lng, lat, z);
+    const x0 = Math.floor(px - 0.5);
+    const y0 = Math.floor(py - 0.5);
+    for (const gx of [x0, x0 + 1]) {
+      for (const gy of [y0, y0 + 1]) {
+        const tx = Math.floor(gx / TILE);
+        const ty = Math.floor(gy / TILE);
+        needed.set(`${tx}/${ty}`, [tx, ty]);
+      }
+    }
+  }
+  await Promise.all([...needed.values()].map(([tx, ty]) => loadTile(z, tx, ty)));
+
   const out: number[] = [];
   for (const [lng, lat] of points) {
     const { px, py } = lngLatToPixel(lng, lat, z);
