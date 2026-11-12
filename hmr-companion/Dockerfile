@@ -34,11 +34,12 @@ RUN apt-get update -y && apt-get install -y --no-install-recommends ca-certifica
 
 RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 nextjs
 
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
+# --chown sulla COPY: un `chown -R /app` dopo duplicherebbe l'intero layer.
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-RUN mkdir -p /data /app/seed && chown -R nextjs:nodejs /app /data
+RUN mkdir -p /data /app/seed /app/data && chown nextjs:nodejs /app /app/data /app/seed /data
 
 # Cartella data/ (GPX/PDF da git; hmr.db opzionale dopo `npm run seed` in locale — non committato)
 COPY data /tmp/builddata

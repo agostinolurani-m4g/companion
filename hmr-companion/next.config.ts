@@ -23,6 +23,11 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/api/**/*": ["./node_modules/better-sqlite3/**/*"],
   },
+  // `path.join(process.cwd(), "data", …)` fa tracciare tutta `data/` nello standalone:
+  // fuori i file pesanti che a runtime non servono (estratti OSM, DB e backup — il DB vive in HMR_DB_PATH).
+  outputFileTracingExcludes: {
+    "/**/*": ["./data/osm/**/*", "./data/**/*.db", "./data/**/*.db-*", "./.ingest-cache/**/*"],
+  },
   turbopack: {
     root: appDir,
   },
