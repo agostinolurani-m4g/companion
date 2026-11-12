@@ -291,7 +291,8 @@ function initSchema(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_user_routes_owner ON user_routes(owner, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_user_routes_visibility ON user_routes(visibility, updated_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_user_routes_source_ext ON user_routes(source, external_id);
+    -- idx_user_routes_source_ext: creato in migrateUserRoutesSourceMeta, dopo aver
+    -- aggiunto le colonne (sui DB vecchi la colonna source non esiste ancora qui).
 
     CREATE TABLE IF NOT EXISTS osm_poi (
       osm_type TEXT NOT NULL,
