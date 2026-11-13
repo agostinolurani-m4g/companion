@@ -7,7 +7,7 @@ import V2ConnectedAccounts from "@/components/v2/V2ConnectedAccounts";
 import V2PhotoCapture from "@/components/v2/V2PhotoCapture";
 import type { UserRouteActivity, UserRouteVisibility } from "@/lib/db";
 import { avatarUrl } from "@/lib/social-labels";
-import { formatOutingDate } from "@/lib/outings-types";
+import { OutingCardList } from "@/components/v2/V2OutingList";
 import type { OutingDto } from "@/lib/outings-types";
 import { REPORT_KIND_LABELS } from "@/lib/field-reports";
 import {
@@ -88,7 +88,7 @@ const SOURCE_LABELS: Record<string, string> = {
 
 const TABS: { id: HubTab; label: string }[] = [
   { id: "overview", label: "Panoramica" },
-  { id: "routes", label: "Percorsi" },
+  { id: "routes", label: "Tracce" },
   { id: "outings", label: "Gite" },
   { id: "photos", label: "Foto" },
   { id: "reports", label: "Segnalazioni" },
@@ -312,19 +312,13 @@ export default function V2PersonalHub({ isAdmin = false, username }: Props) {
                 href="/v2/plan"
                 className="rounded-lg bg-[color:var(--hmr-accent)] px-3 py-2 text-xs font-medium text-[color:var(--hmr-bg)]"
               >
-                + Nuovo percorso
+                + Pianifica traccia
               </Link>
               <Link
-                href="/v2/scialpinismo"
+                href="/v2/gite/nuova"
                 className="rounded-lg border border-[color:var(--hmr-border)] px-3 py-2 text-xs text-[color:var(--hmr-accent)]"
               >
-                Traccia scialpinismo
-              </Link>
-              <Link
-                href="/v2/scialpinismo/nuova"
-                className="rounded-lg border border-[color:var(--hmr-border)] px-3 py-2 text-xs text-[color:var(--hmr-accent)]"
-              >
-                Carica gita
+                + Aggiungi gita
               </Link>
               <Link
                 href="/v2/foto"
@@ -366,13 +360,7 @@ export default function V2PersonalHub({ isAdmin = false, username }: Props) {
                 Pubblici
               </button>
               <Link href="/v2/plan" className="ml-auto text-xs text-[color:var(--hmr-accent)]">
-                + Nuovo
-              </Link>
-              <Link href="/v2/scialpinismo" className="text-xs text-[color:var(--hmr-accent)]">
-                Traccia scialpinismo
-              </Link>
-              <Link href="/v2/scialpinismo/nuova" className="text-xs text-[color:var(--hmr-accent)]">
-                Carica gita
+                + Pianifica traccia
               </Link>
             </div>
             <div className="mt-3 flex flex-wrap gap-1">
@@ -454,31 +442,16 @@ export default function V2PersonalHub({ isAdmin = false, username }: Props) {
           </div>
         ) : tab === "outings" ? (
           <div className="mt-4">
-            {outings.length === 0 ? (
-              <p className="text-sm text-[color:var(--hmr-muted)]">Nessuna gita registrata.</p>
-            ) : (
-              <ul className="grid gap-2">
-                {outings.map((o) => (
-                  <li
-                    key={o.id}
-                    className="hmr-panel rounded-xl border border-[color:var(--hmr-border)]/60 p-3"
-                  >
-                    <Link
-                      href={routeEditorHref(o.activity, o.route_id)}
-                      className="font-medium hover:text-[color:var(--hmr-accent)]"
-                    >
-                      {o.title}
-                    </Link>
-                    <p className="mt-0.5 text-xs text-[color:var(--hmr-muted)]">
-                      {activityLabel(o.activity)} · {formatOutingDate(o.outing_date)}
-                    </p>
-                    {o.notes ? (
-                      <p className="mt-1 text-xs text-[color:var(--hmr-text)]">{o.notes}</p>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-            )}
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <p className="text-xs text-[color:var(--hmr-muted)]">Le tue uscite: in programma e fatte. Ogni gita vive su una traccia.</p>
+              <Link href="/v2/gite/nuova" className="ml-auto text-xs text-[color:var(--hmr-accent)]">
+                + Aggiungi gita fatta
+              </Link>
+              <Link href="/v2/plan?tab=outing" className="text-xs text-[color:var(--hmr-accent)]">
+                + Pianifica gita
+              </Link>
+            </div>
+            <OutingCardList outings={outings} emptyText="Nessuna gita ancora." />
           </div>
         ) : tab === "photos" ? (
           <div className="mt-4">

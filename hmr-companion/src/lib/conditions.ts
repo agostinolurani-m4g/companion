@@ -13,6 +13,9 @@ export type HourlyWeather = {
   lightning_index: number;
   wind_speed_kmh?: number | null;
   weather_code?: number | null;
+  /** Umidità relativa (%) e temperatura percepita del modello. */
+  humidity_pct?: number | null;
+  apparent_c?: number | null;
   /** Solo sport invernali (`avalanche_detail` in `conditionWidgets`). */
   freezing_level_m?: number | null;
   snowfall_cm?: number | null;
@@ -106,7 +109,7 @@ function round2(v: number): number {
 }
 
 export function pointCacheKey(lat: number, lng: number, ele: number | null, winter: boolean): string {
-  return `cond:v2:${round2(lat)}:${round2(lng)}:${ele == null ? "dem" : Math.round(ele / 50) * 50}:${winter ? "w" : "s"}:${FORECAST_DAYS}`;
+  return `cond:v3:${round2(lat)}:${round2(lng)}:${ele == null ? "dem" : Math.round(ele / 50) * 50}:${winter ? "w" : "s"}:${FORECAST_DAYS}`;
 }
 
 export function winterWidgetsFor(activity: string | null | undefined): boolean {
@@ -196,7 +199,7 @@ type OpenMeteoJson = {
 };
 
 export function openMeteoUrl(lat: number, lng: number, ele: number | null, winter: boolean): string {
-  const vars = ["temperature_2m", "precipitation", "wind_gusts_10m", "wind_speed_10m", "cape", "lightning_potential", "weather_code"];
+  const vars = ["temperature_2m", "precipitation", "wind_gusts_10m", "wind_speed_10m", "cape", "lightning_potential", "weather_code", "relative_humidity_2m", "apparent_temperature"];
   if (winter) vars.push("freezing_level_height", "snowfall", "snow_depth", "wind_speed_700hPa", "wind_direction_700hPa");
   const params = new URLSearchParams({
     latitude: String(lat),
@@ -226,6 +229,8 @@ export function parseOpenMeteo(j: OpenMeteoJson, winter: boolean): { hourly: Hou
       lightning_index: num("lightning_potential", i) ?? 0,
       wind_speed_kmh: num("wind_speed_10m", i),
       weather_code: num("weather_code", i),
+      humidity_pct: num("relative_humidity_2m", i),
+      apparent_c: num("apparent_temperature", i),
     };
     if (winter) {
       row.freezing_level_m = num("freezing_level_height", i);

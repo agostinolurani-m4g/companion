@@ -39,6 +39,23 @@ export function googleMapsSearchUrl(
   return base.toString();
 }
 
+/** Apre Google Maps con il segnaposto esattamente sulle coordinate (nessuna ricerca per nome). */
+export function googleMapsPointUrl(lat: number, lng: number): string {
+  const base = new URL("https://www.google.com/maps/search/");
+  base.searchParams.set("api", "1");
+  base.searchParams.set("query", `${lat.toFixed(6)},${lng.toFixed(6)}`);
+  return base.toString();
+}
+
+/**
+ * Cerca il nome in Google Maps con la mappa centrata sulle coordinate: la ricerca resta
+ * nei dintorni del punto invece di saltare a un omonimo altrove. È comunque una ricerca
+ * per nome: per la posizione certa usare `googleMapsPointUrl`.
+ */
+export function googleMapsNameNearUrl(lat: number, lng: number, name: string, zoom = 16): string {
+  return `https://www.google.com/maps/search/${encodeURIComponent(name.trim())}/@${lat.toFixed(6)},${lng.toFixed(6)},${zoom}z`;
+}
+
 export class GmapsParseError extends Error {
   constructor(message: string) {
     super(message);

@@ -6,6 +6,8 @@ export type GpxParseResult = {
   name: string | null;
   coordinates: [number, number][];
   length_km: number;
+  /** Data del primo punto con orario (`YYYY-MM-DD`), se il GPX è una registrazione. */
+  date: string | null;
 };
 
 function haversineKm(a: [number, number], b: [number, number]): number {
@@ -57,10 +59,15 @@ export function parseGpx(xml: string): GpxParseResult {
     }
   }
 
+  // Primo <time> dopo il primo punto traccia (quello in <metadata> è la data di export).
+  const trkAt = xml.search(/<trkpt/i);
+  const timeMatch = trkAt >= 0 ? /<time>\s*(\d{4}-\d{2}-\d{2})T/i.exec(xml.slice(trkAt, trkAt + 2_000_000)) : null;
+
   return {
     name,
     coordinates: coords,
     length_km: lineLengthKm(coords),
+    date: timeMatch ? timeMatch[1] : null,
   };
 }
 

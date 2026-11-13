@@ -7,7 +7,9 @@ import V2PlanMap, { type V2MapClickTarget, type V2Waypoint } from "@/components/
 import V2OutingList, { outingHref } from "@/components/v2/V2OutingList";
 import V2OutingPlanPanel from "@/components/v2/V2OutingPlanPanel";
 import { useOutingDraft } from "@/lib/use-outing-draft";
-import { outingPlanHref } from "@/lib/sports";
+import { outingNewHref, outingPlanHref } from "@/lib/sports";
+import V2PrecisionForecast from "@/components/v2/V2PrecisionForecast";
+import V2SportChips from "@/components/v2/V2SportChips";
 import V2SkiRouteBanner from "@/components/v2/V2SkiRouteBanner";
 import ElevationChart from "@/components/ElevationChart";
 import type { UserRouteVisibility } from "@/lib/db";
@@ -516,7 +518,14 @@ export default function V2SkiTour({ isAdmin = false, username }: Props) {
     const all = [...(ascentCoords ?? []), ...(descentCoords ?? [])];
     return all.length >= 2 ? all : null;
   }, [ascentCoords, descentCoords]);
-  const outingDraft = useOutingDraft(routeId ? skiAllCoords : null, outingId);
+  const outingDraft = useOutingDraft(routeId ? skiAllCoords : null, outingId, searchParams.get("group"));
+  const outingOvernights = useMemo(
+    () =>
+      outingDraft.draft.stops
+        .filter((x) => x.role === "stop" && x.overnight && x.along_km != null)
+        .map((x) => ({ km: x.along_km as number, name: x.name, exposed: x.kind === "bivouac" || x.kind === "other" })),
+    [outingDraft.draft.stops],
+  );
 
   const closeOutingPlanner = () => {
     setOutingPlanning(false);
@@ -591,9 +600,15 @@ export default function V2SkiTour({ isAdmin = false, username }: Props) {
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
         <aside className="hmr-panel z-10 flex max-h-[50vh] shrink-0 flex-col gap-3 overflow-y-auto border-b border-[color:var(--hmr-border)]/60 p-3 lg:max-h-none lg:w-80 lg:border-b-0 lg:border-r">
           <div>
+            <p className="text-[10px] font-medium uppercase tracking-wide text-[color:var(--hmr-faint)]">Pianifica · traccia</p>
             <h1 className="text-base font-semibold">Scialpinismo</h1>
-            <p className="mt-0.5 text-xs text-[color:var(--hmr-muted)]">
-              Traccia libera punto a punto: max {SKI_MAX_WAYPOINT_GAP_KM * 1000} m tra tappe,
+            <V2SportChips
+              value="ski"
+              onChange={(a) => router.push(`/v2/plan?activity=${encodeURIComponent(a)}`)}
+              className="mt-2"
+            />
+            <p className="mt-2 text-xs text-[color:var(--hmr-muted)]">
+              Traccia libera punto a punto, salita e discesa separate: max {SKI_MAX_WAYPOINT_GAP_KM * 1000} m tra tappe,
               campionamento ogni {SKI_DENSIFY_STEP_M} m con analisi pendenza.
             </p>
             <Link
@@ -603,10 +618,10 @@ export default function V2SkiTour({ isAdmin = false, username }: Props) {
               Esplora mappa
             </Link>
             <Link
-              href="/v2/scialpinismo/nuova"
+              href={outingNewHref("ski")}
               className="mt-2 inline-block rounded-lg border border-[color:var(--hmr-accent)]/50 px-2.5 py-1 text-xs text-[color:var(--hmr-accent)]"
             >
-              + Carica gita (audio/GPX)
+              + Aggiungi gita fatta (GPX)
             </Link>
           </div>
 
@@ -776,7 +791,7 @@ export default function V2SkiTour({ isAdmin = false, username }: Props) {
 
           <div className="mt-auto space-y-2 border-t border-[color:var(--hmr-border)]/60 pt-3">
             <p className="text-[10px] font-medium uppercase tracking-wide text-[color:var(--hmr-faint)]">
-              Percorso (pubblico)
+              Traccia (pubblica)
             </p>
             <input
               type="text"
@@ -802,6 +817,8 @@ export default function V2SkiTour({ isAdmin = false, username }: Props) {
                     <V2OutingPlanPanel
                       api={outingDraft}
                       hasRoute={!!skiAllCoords && skiAllCoords.length >= 2}
+                      profile={profileCoords.length >= 2 ? profileCoords : null}
+                      activity="ski"
                       onFocusStop={(lng, lat) => setFlyTo({ lng, lat, zoom: 15, key: Date.now() })}
                     />
                     <button
@@ -820,6 +837,23 @@ export default function V2SkiTour({ isAdmin = false, username }: Props) {
                 Salva la traccia: poi potrai pianificare una o più gite su questo percorso (data, compagni, rifugi, soste).
               </p>
             )}
+
+            {profileCoords.length >= 2 ? (
+              <details className="rounded-lg border border-[color:var(--hmr-border)]/70 bg-[color:var(--hmr-elev)] p-2.5">
+                <summary className="cursor-pointer text-[10px] font-medium uppercase tracking-wide text-[color:var(--hmr-faint)]">
+                  Meteo di precisione (temperatura, umidità, percepita)
+                </summary>
+                <div className="mt-2">
+                  <V2PrecisionForecast
+                    activity="ski"
+                    date={routeId ? outingDraft.draft.outing_date || null : null}
+                    startTime={routeId ? outingDraft.draft.start_time || null : null}
+                    profile={profileCoords}
+                    overnights={routeId ? outingOvernights : undefined}
+                  />
+                </div>
+              </details>
+            ) : null}
 
             <button
               type="button"

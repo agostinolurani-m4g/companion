@@ -45,6 +45,7 @@ export function serializeOuting(row: OutingRow): OutingDto {
       along_km: s.along_km,
       ref: s.ref,
       note: s.note,
+      overnight: s.overnight === 1,
     })),
     photos: listUserPhotosForOuting(row.id).map((p) => ({
       id: p.id,

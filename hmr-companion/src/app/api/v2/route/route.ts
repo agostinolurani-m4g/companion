@@ -42,7 +42,7 @@ function routeCacheKey(
   preferCycleways: boolean,
 ): string {
   const rounded = coordinates.map(([lng, lat]) => `${Math.round(lng * 1e5)}_${Math.round(lat * 1e5)}`).join(";");
-  return `v2route:v5:${activity}:${preference}${preferCycleways ? ":cw2" : ""}:${rounded}`;
+  return `v2route:v6:${activity}:${preference}${preferCycleways ? ":cw3" : ""}:${rounded}`;
 }
 
 /** Popolarità (heatmap) calcolata a ogni richiesta: la heatmap cambia, la cache del routing no. */

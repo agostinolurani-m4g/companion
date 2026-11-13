@@ -115,7 +115,14 @@ export type OutingStopDto = {
   along_km: number | null;
   ref: string | null;
   note: string;
+  /** Si dorme qui: la sosta chiude una tappa (gita di più giorni). */
+  overnight?: boolean;
 };
+
+/** Numero di giorni della gita: un giorno più uno per ogni pernotto. */
+export function outingDays(stops: readonly Pick<OutingStopDto, "role" | "overnight">[]): number {
+  return 1 + stops.filter((s) => s.role === "stop" && s.overnight).length;
+}
 
 /* ---------------- Condizioni (resoconto) ---------------- */
 
@@ -329,6 +336,7 @@ export function parseOutingStops(raw: unknown): OutingStopDto[] {
       along_km: s.along_km != null && Number.isFinite(along) ? Math.round(along * 100) / 100 : null,
       ref: typeof s.ref === "string" && s.ref.trim() ? s.ref.trim().slice(0, 120) : null,
       note: typeof s.note === "string" ? s.note.trim().slice(0, 500) : "",
+      overnight: role === "stop" && s.overnight === true,
     });
   }
   // Una sola partenza e un solo arrivo; partenza in testa, arrivo in coda, soste per km.

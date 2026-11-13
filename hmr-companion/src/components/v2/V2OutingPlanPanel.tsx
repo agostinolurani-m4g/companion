@@ -1,8 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Icon from "@/components/v2/ui/Icon";
-import { OUTING_STOP_KIND_META, OUTING_STOP_KINDS, type OutingStopKind } from "@/lib/outings-types";
+import V2StageList from "@/components/v2/V2StageList";
+import { buildStages, suggestOvernightKms, type ProfilePoint } from "@/lib/multiday";
+import { OUTING_STOP_KIND_META, OUTING_STOP_KINDS, outingDays, type OutingStopKind } from "@/lib/outings-types";
+import type { UserRouteActivity } from "@/lib/sports";
 import type { OutingDraftApi } from "@/lib/use-outing-draft";
 
 type GroupItem = { id: string; name: string };
@@ -23,10 +26,42 @@ type Props = {
   hasRoute: boolean;
   onFindAlong?: (kind: AlongSearchKind) => void;
   onFocusStop?: (lng: number, lat: number) => void;
+  /** Profilo `[lng, lat, quota, km]` della traccia: serve per dividere la gita in tappe. */
+  profile?: readonly ProfilePoint[] | null;
+  activity?: UserRouteActivity;
 };
 
-export default function V2OutingPlanPanel({ api, hasRoute, onFindAlong, onFocusStop }: Props) {
-  const { draft, patch, updateStop, removeStop } = api;
+/** Tipi di sosta dove ha senso dormire. */
+const SLEEP_KINDS = new Set<OutingStopKind>(["hut", "bivouac", "lodging"]);
+
+export default function V2OutingPlanPanel({ api, hasRoute, onFindAlong, onFocusStop, profile = null, activity = "hike" }: Props) {
+  const { draft, patch, updateStop, removeStop, addStop } = api;
+  const [splitDays, setSplitDays] = useState(2);
+  const days = outingDays(draft.stops);
+  const hasProfile = !!profile && profile.length >= 2;
+  const stages = useMemo(
+    () =>
+      hasProfile
+        ? buildStages(
+            profile,
+            draft.stops
+              .filter((s) => s.role === "stop" && s.overnight && s.along_km != null)
+              .map((s) => ({ km: s.along_km as number, name: s.name })),
+            activity,
+          )
+        : [],
+    [hasProfile, profile, draft.stops, activity],
+  );
+
+  /** Aggiunge i pernotti che dividono la traccia in giorni di impegno simile. */
+  const splitEvenly = () => {
+    if (!hasProfile) return;
+    for (const km of suggestOvernightKms(profile, splitDays, activity)) {
+      let best = profile[0];
+      for (const p of profile) if (Math.abs(p[3] - km) < Math.abs(best[3] - km)) best = p;
+      addStop({ kind: "bivouac", name: "", lng: best[0], lat: best[1], overnight: true });
+    }
+  };
   const [groups, setGroups] = useState<GroupItem[]>([]);
   const [participantsText, setParticipantsText] = useState("");
 
@@ -140,6 +175,17 @@ export default function V2OutingPlanPanel({ api, hasRoute, onFindAlong, onFocusS
                     placeholder="Nota (orari, prenotazione, cosa comprare…)"
                     className="w-full bg-transparent text-[11.5px] text-[color:var(--hmr-muted)] outline-none placeholder:text-[color:var(--hmr-faint)]"
                   />
+                  {s.role === "stop" && (s.overnight || SLEEP_KINDS.has(s.kind) || days > 1) ? (
+                    <label className="flex cursor-pointer items-center gap-1.5 text-[11.5px] text-[color:var(--hmr-muted)]">
+                      <input
+                        type="checkbox"
+                        className="h-3.5 w-3.5 accent-[color:var(--hmr-accent)]"
+                        checked={s.overnight === true}
+                        onChange={(e) => updateStop(i, { overnight: e.target.checked })}
+                      />
+                      Si dorme qui (fine tappa)
+                    </label>
+                  ) : null}
                 </div>
                 {s.role === "stop" ? (
                   <button type="button" onClick={() => removeStop(i)} className="ui-icon-btn !h-7 !w-7" aria-label="Rimuovi sosta">
@@ -161,6 +207,45 @@ export default function V2OutingPlanPanel({ api, hasRoute, onFindAlong, onFocusS
                 {a.label}
               </button>
             ))}
+          </div>
+        ) : null}
+      </section>
+
+      <section>
+        <h3 className="ui-eyebrow mb-2">Più giorni</h3>
+        {days > 1 ? (
+          <>
+            <p className="mb-2 text-[12.5px]">
+              <b>{days} giorni</b> · {days - 1} {days === 2 ? "notte" : "notti"} fuori
+            </p>
+            {stages.length > 1 ? <V2StageList stages={stages} startDate={draft.outing_date || null} /> : null}
+            {!hasProfile ? (
+              <p className="text-[11.5px] text-[color:var(--hmr-faint)]">Il profilo altimetrico non è disponibile: le tappe non hanno dislivello e tempi.</p>
+            ) : null}
+          </>
+        ) : (
+          <p className="text-[12px] text-[color:var(--hmr-muted)]">
+            Gita di un giorno. Per una traversata segna “Si dorme qui” su un rifugio o bivacco tra le tappe, oppure dividi la
+            traccia in giorni di impegno simile.
+          </p>
+        )}
+        {hasProfile && days === 1 ? (
+          <div className="mt-2 flex items-center gap-2">
+            <select
+              value={splitDays}
+              onChange={(e) => setSplitDays(Number(e.target.value))}
+              aria-label="Numero di giorni"
+              className="ui-input !min-h-[34px] w-28 !text-[12.5px]"
+            >
+              {[2, 3, 4, 5, 6, 7].map((n) => (
+                <option key={n} value={n}>
+                  {n} giorni
+                </option>
+              ))}
+            </select>
+            <button type="button" className="ui-btn ui-btn-sm" onClick={splitEvenly}>
+              Dividi in tappe
+            </button>
           </div>
         ) : null}
       </section>

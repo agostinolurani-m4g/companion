@@ -7,6 +7,10 @@ import V2PlanMap from "@/components/v2/V2PlanMap";
 import V2PhotoCapture from "@/components/v2/V2PhotoCapture";
 import V2OutingReportForm from "@/components/v2/V2OutingReportForm";
 import V2ConditionsPanel from "@/components/v2/V2ConditionsPanel";
+import V2PrecisionForecast from "@/components/v2/V2PrecisionForecast";
+import V2StageList from "@/components/v2/V2StageList";
+import { sampleElevationsForLine } from "@/lib/elevation";
+import { buildStages, type ProfilePoint } from "@/lib/multiday";
 import { OutingStatusBadge } from "@/components/v2/V2OutingList";
 import Icon from "@/components/v2/ui/Icon";
 import { fetchJson } from "@/lib/fetch-json";
@@ -14,6 +18,7 @@ import {
   CONDITION_FIELD_LABELS,
   formatOutingDate,
   OUTING_STOP_KIND_META,
+  outingDays,
   SNOW_QUALITY_LABELS,
   TRAIL_STATE_LABELS,
   WEATHER_SKY_LABELS,
@@ -150,6 +155,36 @@ export default function V2OutingDetail({ outingId }: Props) {
     return b ? { bbox: b, key: 1 } : null;
   }, [coords, outing?.stops]);
   const stopsGeo = useMemo(() => outingStopsGeoJson(outing?.stops ?? []), [outing?.stops]);
+
+  // Profilo altimetrico della traccia: serve per tappe e meteo alla quota giusta.
+  const [profile, setProfile] = useState<ProfilePoint[]>([]);
+  useEffect(() => {
+    if (coords.length < 2) {
+      setProfile([]);
+      return;
+    }
+    let cancelled = false;
+    void sampleElevationsForLine(coords)
+      .then(({ sampled, elevationM, distanceKm, available }) => {
+        if (cancelled || !available) return;
+        setProfile(sampled.map((p, i) => [p[0], p[1], elevationM[i] ?? null, distanceKm[i] ?? 0] as const));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [coords]);
+  const overnights = useMemo(
+    () =>
+      (outing?.stops ?? [])
+        .filter((s) => s.role === "stop" && s.overnight && s.along_km != null)
+        .map((s) => ({ km: s.along_km as number, name: s.name, exposed: s.kind === "bivouac" || s.kind === "other" })),
+    [outing?.stops],
+  );
+  const stages = useMemo(
+    () => (profile.length >= 2 && route ? buildStages(profile, overnights, route.activity) : []),
+    [profile, overnights, route],
+  );
   const photosGeo = useMemo<GeoJSON.FeatureCollection>(
     () => ({
       type: "FeatureCollection",
@@ -197,6 +232,7 @@ export default function V2OutingDetail({ outingId }: Props) {
           <h1 className="mt-1 text-[19px] font-bold tracking-tight">{outing.title}</h1>
           <p className="mt-0.5 text-[12.5px] text-[color:var(--hmr-muted)]">
             {formatOutingDate(outing.outing_date)}
+            {outingDays(outing.stops) > 1 ? ` · ${outingDays(outing.stops)} giorni` : ""}
             {outing.start_time ? ` · partenza ${outing.start_time}` : ""}
             {outing.visibility === "public" ? " · pubblica" : " · compagni e gruppi"}
           </p>
@@ -323,6 +359,7 @@ export default function V2OutingDetail({ outingId }: Props) {
                         {s.name || label}
                       </span>
                       <span className="block text-[11.5px] text-[color:var(--hmr-faint)]">
+                        {s.overnight ? "🌙 Notte · " : ""}
                         {s.name ? label : ""}
                         {s.note ? `${s.name ? " · " : ""}${s.note}` : ""}
                       </span>
@@ -339,10 +376,30 @@ export default function V2OutingDetail({ outingId }: Props) {
           ) : null}
         </section>
 
+        {stages.length > 1 ? (
+          <section>
+            <h2 className="ui-eyebrow mb-2">Tappe · {stages.length} giorni</h2>
+            <V2StageList stages={stages} startDate={outing.outing_date} />
+          </section>
+        ) : null}
+
         {outing.status === "planned" && first ? (
           <section>
             <h2 className="ui-eyebrow mb-2">Condizioni previste</h2>
             <V2ConditionsPanel lat={first[1]} lng={first[0]} activity={activity} compact />
+          </section>
+        ) : null}
+
+        {outing.status === "planned" && profile.length >= 2 ? (
+          <section>
+            <h2 className="ui-eyebrow mb-2">Meteo di precisione per tappa</h2>
+            <V2PrecisionForecast
+              activity={activity}
+              date={outing.outing_date}
+              startTime={outing.start_time}
+              profile={profile}
+              overnights={overnights}
+            />
           </section>
         ) : null}
 

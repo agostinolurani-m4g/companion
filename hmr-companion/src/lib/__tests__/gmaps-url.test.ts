@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   GmapsParseError,
+  googleMapsNameNearUrl,
+  googleMapsPointUrl,
   googleMapsSearchUrl,
   googleMapsStreetViewLayerUrl,
   parseGoogleMapsUrl,
@@ -111,6 +113,18 @@ describe("googleMapsSearchUrl", () => {
     const u = googleMapsSearchUrl(46.5, 10.3, "Bivacco Tuckett");
     expect(u).toContain("Bivacco");
     expect(u).toContain("Tuckett");
+  });
+});
+
+describe("googleMapsPointUrl / googleMapsNameNearUrl", () => {
+  it("il punto esatto usa solo le coordinate", () => {
+    const u = new URL(googleMapsPointUrl(46.5, 10.3));
+    expect(u.searchParams.get("query")).toBe("46.500000,10.300000");
+  });
+
+  it("la ricerca per nome resta centrata sulle coordinate", () => {
+    const u = googleMapsNameNearUrl(46.5, 10.3, "Rifugio Città di Milano");
+    expect(u).toBe("https://www.google.com/maps/search/Rifugio%20Citt%C3%A0%20di%20Milano/@46.500000,10.300000,16z");
   });
 });
 

@@ -14,8 +14,10 @@ export async function GET(req: Request) {
   const abs = path.join(process.cwd(), rel);
   const fieldRoot = path.join(process.cwd(), "data", "uploads", "field");
   const avatarRoot = path.join(process.cwd(), "data", "uploads", "avatars");
+  // Upload v2 (foto di gite, mappa personale, segnalazioni, avatar dei gruppi): data/uploads/v2/…
+  const v2PhotoRoot = path.join(process.cwd(), "data", "uploads", "v2");
   const allowed =
-    abs.startsWith(fieldRoot) || abs.startsWith(avatarRoot);
+    abs.startsWith(fieldRoot + path.sep) || abs.startsWith(avatarRoot + path.sep) || abs.startsWith(v2PhotoRoot + path.sep);
   if (!allowed) {
     return NextResponse.json({ error: "path non consentito" }, { status: 403 });
   }
@@ -27,7 +29,13 @@ export async function GET(req: Request) {
   const buf = fs.readFileSync(abs);
   const ext = path.extname(abs).toLowerCase();
   const mime =
-    ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : "image/jpeg";
+    ext === ".png"
+      ? "image/png"
+      : ext === ".webp"
+        ? "image/webp"
+        : ext === ".heic" || ext === ".heif"
+          ? "image/heic"
+          : "image/jpeg";
 
   return new NextResponse(buf, {
     headers: {

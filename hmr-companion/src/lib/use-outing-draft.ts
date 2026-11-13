@@ -52,8 +52,16 @@ const OFF_ROUTE_KM = 1.5;
  * Stato della gita in pianificazione: partenza/arrivo seguono la traccia
  * finché l'utente non li rinomina o sposta; le soste sono ordinate per km.
  */
-export function useOutingDraft(routeCoords: [number, number][] | null, outingId: string | null) {
-  const [draft, setDraft] = useState<OutingDraft>(emptyOutingDraft);
+export function useOutingDraft(
+  routeCoords: [number, number][] | null,
+  outingId: string | null,
+  /** Gruppo preselezionato per una gita nuova (es. creata dalla pagina del gruppo). */
+  initialGroupId: string | null = null,
+) {
+  const [draft, setDraft] = useState<OutingDraft>(() => ({
+    ...emptyOutingDraft(),
+    group_ids: initialGroupId ? [initialGroupId] : [],
+  }));
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -133,7 +141,7 @@ export function useOutingDraft(routeCoords: [number, number][] | null, outingId:
   const patch = useCallback((p: Partial<OutingDraft>) => setDraft((d) => ({ ...d, ...p })), []);
 
   const addStop = useCallback(
-    (s: { kind: OutingStopKind; name: string; lng: number; lat: number; ref?: string | null }) => {
+    (s: { kind: OutingStopKind; name: string; lng: number; lat: number; ref?: string | null; overnight?: boolean }) => {
       const { km, offRoute } = alongKm(s.lng, s.lat);
       setDraft((d) => {
         if (s.ref && d.stops.some((x) => x.ref === s.ref)) return d;
@@ -146,6 +154,7 @@ export function useOutingDraft(routeCoords: [number, number][] | null, outingId:
           along_km: km,
           ref: s.ref ?? null,
           note: offRoute ? "Fuori traccia" : "",
+          overnight: s.overnight === true,
         };
         return { ...d, stops: sortStops([...d.stops, stop]) };
       });
@@ -227,7 +236,7 @@ export function outingStopsGeoJson(stops: OutingStopDto[]): GeoJSON.FeatureColle
     type: "FeatureCollection",
     features: stops.map((s, i) => ({
       type: "Feature",
-      properties: { index: i, role: s.role, kind: s.kind, name: s.name },
+      properties: { index: i, role: s.role, kind: s.kind, name: s.name, overnight: s.overnight === true },
       geometry: { type: "Point", coordinates: [s.lng, s.lat] },
     })),
   };

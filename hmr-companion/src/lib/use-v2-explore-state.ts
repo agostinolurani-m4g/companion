@@ -70,6 +70,7 @@ export function useV2ExploreState(enabled: boolean, username?: string) {
     confirmation_count: number;
     verified: boolean;
     status: string;
+    photo_url?: string | null;
   } | null>(null);
   const [showPhotoCapture, setShowPhotoCapture] = useState(false);
   const [mapBbox, setMapBbox] = useState<{ south: number; west: number; north: number; east: number } | null>(null);

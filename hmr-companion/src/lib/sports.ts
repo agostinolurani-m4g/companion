@@ -452,8 +452,24 @@ export function outingConditionFields(
   return ["weather", "access", "trail"];
 }
 
+/** Pagina "Aggiungi gita": gita già fatta, da GPX e racconto, per qualsiasi sport. */
+export function outingNewHref(activity?: UserRouteActivity | null, groupId?: string | null): string {
+  const q = new URLSearchParams();
+  if (activity) q.set("activity", activity);
+  if (groupId) q.set("group", groupId);
+  const qs = q.toString();
+  return `/v2/gite/nuova${qs ? `?${qs}` : ""}`;
+}
+
 /** Planner del percorso con la tab "Gita" aperta (nuova gita o modifica di `outingId`). */
-export function outingPlanHref(activity: UserRouteActivity, routeId: string, outingId?: string): string {
+export function outingPlanHref(
+  activity: UserRouteActivity,
+  routeId: string,
+  outingId?: string | null,
+  groupId?: string | null,
+): string {
   const base = routeEditorHref(activity, routeId);
-  return `${base}&tab=outing${outingId ? `&outing=${encodeURIComponent(outingId)}` : ""}`;
+  return `${base}&tab=outing${outingId ? `&outing=${encodeURIComponent(outingId)}` : ""}${
+    groupId ? `&group=${encodeURIComponent(groupId)}` : ""
+  }`;
 }

@@ -1,7 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import V2OutingList, { outingHref } from "@/components/v2/V2OutingList";
+import V2OutingPlanPanel from "@/components/v2/V2OutingPlanPanel";
+import V2PrecisionForecast from "@/components/v2/V2PrecisionForecast";
+import { stopKindFromOutdoorKind, stopKindFromPoiCategory } from "@/lib/outings-types";
+import { useOutingDraft } from "@/lib/use-outing-draft";
 import V2ExploreAside from "@/components/v2/V2ExploreAside";
 import V2PhotoCapture from "@/components/v2/V2PhotoCapture";
 import V2RoutePopularity, {
@@ -51,7 +57,7 @@ import {
 } from "@/lib/ors-route-tech";
 import type { RoutePreference } from "@/lib/openrouteservice-route";
 import type { TrackSurfaceKind } from "@/lib/surface-osm";
-import { isUserRouteActivity, outingPlanHref, routeEditorHref, SPORTS } from "@/lib/sports";
+import { isUserRouteActivity, outingNewHref, outingPlanHref, routeEditorHref, SPORTS } from "@/lib/sports";
 import V2ConditionsPanel from "@/components/v2/V2ConditionsPanel";
 import V2SportChips from "@/components/v2/V2SportChips";
 import { useFieldReportsOnMap } from "@/lib/use-field-reports-map";
@@ -76,7 +82,7 @@ type MapAction =
   | { kind: "waypoint"; index: number; lng: number; lat: number }
   | { kind: "poi"; poi: V2SearchPoi };
 
-type PlanTab = "route" | "nearby" | "conditions";
+type PlanTab = "route" | "outing" | "nearby" | "conditions";
 
 const POI_RADIUS_PRESETS: PoiKindMeta[] = SEARCH_KINDS;
 const POI_SEARCH_RADIUS_M = 3000;
@@ -89,6 +95,9 @@ const PREFERENCE_LABELS: Record<RoutePreference, { foot: string; bike: string; h
   shortest: { foot: "Più breve", bike: "Più breve", hint: "Distanza minima" },
   quiet: { foot: "Nel verde", bike: "Meno salite", hint: "A piedi: vie tranquille e nel verde · In bici: pendenze più dolci" },
 };
+
+/** Distanza massima (m) entro cui una tappa viene spostata sulla via più vicina. */
+const PIN_SNAP_LIMIT_M = 40;
 
 function metersBetween(a: { lng: number; lat: number }, b: { lng: number; lat: number }): number {
   const kx = 111_320 * Math.cos((((a.lat + b.lat) / 2) * Math.PI) / 180);
@@ -176,6 +185,8 @@ export default function V2RouteBuilder({ username }: Props) {
   const routeId = searchParams.get("route");
   const activityParam = searchParams.get("activity");
   const isExplore = searchParams.get("mode") === "explore";
+  const outingId = searchParams.get("outing");
+  const wantsOutingTab = searchParams.get("tab") === "outing" || !!outingId;
   const explore = useV2ExploreState(isExplore, username);
 
   const [activity, setActivity] = useState<UserRouteActivity>(() =>
@@ -214,7 +225,6 @@ export default function V2RouteBuilder({ username }: Props) {
   const [routing, setRouting] = useState(false);
   const [poiBusy, setPoiBusy] = useState(false);
   const [saveBusy, setSaveBusy] = useState(false);
-  const [outingBusy, setOutingBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [name, setName] = useState("");
@@ -233,7 +243,10 @@ export default function V2RouteBuilder({ username }: Props) {
   const [selectedViewportKinds, setSelectedViewportKinds] = useState<Set<PoiKind>>(
     () => new Set(VIEWPORT_SEARCH_KINDS.map((k) => k.id)),
   );
-  const [tab, setTab] = useState<PlanTab>("route");
+  const [tab, setTab] = useState<PlanTab>(wantsOutingTab ? "outing" : "route");
+  /** Traccia caricata senza tappe (GPX importato): non va ricalcolata né cancellata. */
+  const importedTrackRef = useRef(false);
+  const [importedTrack, setImportedTrack] = useState(false);
   const [preference, setPreference] = useState<RoutePreference>("recommended");
   /** Solo bici da strada: prende le ciclabili asfaltate quando non allungano troppo. */
   const [preferCycleways, setPreferCycleways] = useState(false);
@@ -253,6 +266,13 @@ export default function V2RouteBuilder({ username }: Props) {
   const cyclewaysOn = preferCycleways && activity === "road";
   const [colorBy, setColorBy] = useState<"surface" | "category">("category");
   const [snap, setSnap] = useState<PanelSnap>("peek");
+  // Link "pianifica gita" (?tab=outing): apre la scheda Gita.
+  useEffect(() => {
+    if (wantsOutingTab) {
+      setTab("outing");
+      setSnap((v) => (v === "peek" ? "half" : v));
+    }
+  }, [wantsOutingTab]);
   const [sheetH, setSheetH] = useState(0);
 
   const routeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -318,6 +338,15 @@ export default function V2RouteBuilder({ username }: Props) {
 
   const fetchRoute = useCallback(async (wps: V2Waypoint[], act: UserRouteActivity, pref: RoutePreference, cw: boolean) => {
     routeAbortRef.current?.abort();
+    if (wps.length < 2 && importedTrackRef.current) {
+      // Traccia importata: resta com'è finché non si disegnano almeno due tappe.
+      setRouting(false);
+      return;
+    }
+    if (wps.length >= 2) {
+      importedTrackRef.current = false;
+      setImportedTrack(false);
+    }
     if (wps.length < 2) {
       setRouting(false);
       setRouteCoords(null);
@@ -370,9 +399,19 @@ export default function V2RouteBuilder({ username }: Props) {
       const snapped = data.snapped;
       const cur = waypointsRef.current;
       if (snapped && snapped.length === cur.length && cur === wps) {
-        const moved = snapped.some(([lng, lat], i) => metersBetween(cur[i]!, { lng, lat }) > 3);
+        // L'aggancio ha un limite: oltre, il pallino resta dove l'hai messo (non salta su una
+        // via lontana) e il percorso parte dalla via più vicina.
+        const dist = snapped.map(([lng, lat], i) => metersBetween(cur[i]!, { lng, lat }));
+        const far = dist.findIndex((d) => d > PIN_SNAP_LIMIT_M);
+        if (far >= 0) {
+          setNotice(`Tappa ${far + 1} a ${Math.round(dist[far]!)} m dalla via più vicina: il percorso passa da lì, il pallino resta dov'è.`);
+          setTimeout(() => setNotice(null), 5000);
+        }
+        const moved = dist.some((d) => d > 3 && d <= PIN_SNAP_LIMIT_M);
         if (moved) {
-          const next = cur.map((w, i) => ({ ...w, lng: snapped[i]![0], lat: snapped[i]![1] }));
+          const next = cur.map((w, i) =>
+            dist[i]! <= PIN_SNAP_LIMIT_M ? { ...w, lng: snapped[i]![0], lat: snapped[i]![1] } : w,
+          );
           skipRouteKeyRef.current = routeKey(next, act, pref, cw);
           waypointsRef.current = next;
           setWaypoints(next);
@@ -462,7 +501,9 @@ export default function V2RouteBuilder({ username }: Props) {
         setName(r.name);
         setActivity(r.activity);
         setVisibility(r.visibility);
-        const wps = r.waypoints.map(([lng, lat]) => ({ lng, lat }));
+        const wps = (Array.isArray(r.waypoints) ? r.waypoints : []).map(([lng, lat]) => ({ lng, lat }));
+        importedTrackRef.current = wps.length < 2;
+        setImportedTrack(wps.length < 2);
         waypointsRef.current = wps;
         historyRef.current = { past: [], future: [], lastMoveAt: 0 };
         syncHistory();
@@ -870,7 +911,7 @@ export default function V2RouteBuilder({ username }: Props) {
   );
 
   /* ─────────────── Salvataggio / export ─────────────── */
-  const saveRoute = async () => {
+  const saveRoute = async (thenPlanOuting = false) => {
     if (!routeCoords || routeCoords.length < 2) {
       setErr("Serve almeno 2 tappe con percorso calcolato");
       return;
@@ -894,8 +935,10 @@ export default function V2RouteBuilder({ username }: Props) {
       });
       const data = (await res.json()) as { error?: string; id?: string };
       if (!res.ok || !data.id) throw new Error(data.error ?? "Salvataggio fallito");
-      router.push(`/v2/me`);
-      router.refresh();
+      // Si resta sulla traccia salvata: da lì si pianificano le gite.
+      router.push(thenPlanOuting ? outingPlanHref(activity, data.id) : routeEditorHref(activity, data.id));
+      setNotice("Traccia salvata");
+      setTimeout(() => setNotice(null), 2200);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -928,29 +971,26 @@ export default function V2RouteBuilder({ username }: Props) {
     setTimeout(() => setNotice(null), 2200);
   };
 
-  const registerOuting = async () => {
+  /* ─────────────── Gita su questa traccia ─────────────── */
+  const outingDraft = useOutingDraft(routeId ? routeCoords : null, outingId, searchParams.get("group"));
+  /** Scheda Gita aperta su una traccia salvata: i luoghi scelti diventano soste, la traccia non cambia. */
+  const outingMode = tab === "outing" && !!routeId && !isExplore;
+  const saveOuting = async () => {
     if (!routeId) return;
-    setOutingBusy(true);
-    setErr(null);
     try {
-      const res = await fetch("/api/v2/outings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          route_id: routeId,
-          title: name.trim() || "Gita",
-          outing_date: new Date().toISOString().slice(0, 10),
-        }),
-      });
-      const data = (await res.json()) as { error?: string };
-      if (!res.ok) throw new Error(data.error ?? "Registrazione gita fallita");
-      router.push("/v2/me");
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setOutingBusy(false);
+      const id = await outingDraft.save(routeId, name.trim() || "Gita");
+      router.push(outingHref(id));
+    } catch {
+      /* errore mostrato dal pannello */
     }
   };
+  const outingOvernights = useMemo(
+    () =>
+      outingDraft.draft.stops
+        .filter((x) => x.role === "stop" && x.overnight && x.along_km != null)
+        .map((x) => ({ km: x.along_km as number, name: x.name, exposed: x.kind === "bivouac" || x.kind === "other" })),
+    [outingDraft.draft.stops],
+  );
 
   /* ─────────────── Derivati ─────────────── */
   const durationMin = estimateDurationMin(activity, lengthKm, elevGainM, elevLossM);
@@ -1075,8 +1115,8 @@ export default function V2RouteBuilder({ username }: Props) {
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="Nome del percorso"
-          aria-label="Nome percorso"
+          placeholder="Nome della traccia"
+          aria-label="Nome traccia"
           className="ui-input !min-h-[38px] flex-1 !text-[13px]"
         />
         <button
@@ -1084,6 +1124,7 @@ export default function V2RouteBuilder({ username }: Props) {
           disabled={saveBusy || !hasRoute}
           onClick={() => void saveRoute()}
           className="ui-btn ui-btn-primary"
+          title={routeId ? "Salva come nuova traccia" : "Salva la traccia"}
         >
           <Icon name="save" size={16} />
           {saveBusy ? "Salvo…" : "Salva"}
@@ -1099,12 +1140,17 @@ export default function V2RouteBuilder({ username }: Props) {
           />
           Pubblico
         </label>
-        {routeId ? (
-          <button type="button" disabled={outingBusy} onClick={() => void registerOuting()} className="ui-btn ui-btn-sm ui-btn-ghost">
-            <Icon name="flag" size={15} />
-            {outingBusy ? "…" : "Registra gita"}
-          </button>
-        ) : null}
+        <button
+          type="button"
+          onClick={() => {
+            setTab("outing");
+            if (snap === "peek") setSnap("half");
+          }}
+          className="ui-btn ui-btn-sm ui-btn-ghost"
+        >
+          <Icon name="flag" size={15} />
+          Gita
+        </button>
         <button type="button" disabled={!hasRoute} onClick={exportGpx} className="ui-btn ui-btn-sm">
           <Icon name="download" size={15} />
           GPX
@@ -1114,7 +1160,8 @@ export default function V2RouteBuilder({ username }: Props) {
   );
 
   const tabs: { id: PlanTab; label: string; badge?: number }[] = [
-    { id: "route", label: "Percorso", badge: waypoints.length || undefined },
+    { id: "route", label: "Traccia", badge: waypoints.length || undefined },
+    { id: "outing", label: "Gita" },
     { id: "nearby", label: "Dintorni", badge: pois.length || undefined },
     { id: "conditions", label: "Condizioni", badge: routeReportWarning ?? undefined },
   ];
@@ -1179,6 +1226,11 @@ export default function V2RouteBuilder({ username }: Props) {
         <div className="v2-anim-in">
           <SectionTitle>Attività</SectionTitle>
           <V2SportChips value={activity} onChange={(a) => setActivity(a)} />
+          {importedTrack && hasRoute ? (
+            <p className="mt-2 text-[12px] text-[color:var(--hmr-muted)]">
+              Traccia importata da GPX: resta com&apos;è. Se aggiungi due tappe sulla mappa viene sostituita da un percorso calcolato.
+            </p>
+          ) : null}
 
           <SectionTitle>Percorso</SectionTitle>
           <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Preferenza di percorso">
@@ -1393,6 +1445,61 @@ export default function V2RouteBuilder({ username }: Props) {
         </div>
       ) : null}
 
+      {tab === "outing" ? (
+        <div className="v2-anim-in">
+          <p className="mt-1 text-[12.5px] text-[color:var(--hmr-muted)]">
+            La <b>traccia</b> è il percorso, riusabile. La <b>gita</b> è un&apos;uscita su quella traccia: data, compagni, soste,
+            notti fuori e poi il resoconto.
+          </p>
+          <Link href={outingNewHref(activity)} className="ui-btn ui-btn-sm mt-2 w-full">
+            <Icon name="plus" size={15} />
+            Aggiungi una gita già fatta (GPX + racconto)
+          </Link>
+
+          {routeId ? (
+            <>
+              <V2OutingList routeId={routeId} className="mt-3" />
+              <SectionTitle>{outingId ? "Modifica gita" : "Pianifica una gita su questa traccia"}</SectionTitle>
+              <V2OutingPlanPanel
+                api={outingDraft}
+                hasRoute={hasRoute}
+                profile={hasProfile ? profileCoords : null}
+                activity={activity}
+                onFocusStop={(lng, lat) => {
+                  flyKeyRef.current += 1;
+                  setFlyTo({ lng, lat, zoom: 15, key: flyKeyRef.current });
+                }}
+              />
+              <button
+                type="button"
+                disabled={outingDraft.saving || !hasRoute}
+                onClick={() => void saveOuting()}
+                className="ui-btn ui-btn-primary mt-4 w-full"
+              >
+                <Icon name="save" size={16} />
+                {outingDraft.saving ? "Salvo…" : outingId ? "Salva modifiche alla gita" : "Salva gita"}
+              </button>
+            </>
+          ) : (
+            <div className="mt-3 rounded-xl border border-[color:var(--hmr-border)]/70 p-3">
+              <p className="text-[12.5px]">
+                Per pianificare una gita serve una traccia salvata.{" "}
+                {hasRoute ? "Salva questa e continua con la gita." : "Disegna la traccia nella scheda Traccia, poi salvala."}
+              </p>
+              <button
+                type="button"
+                disabled={saveBusy || !hasRoute}
+                onClick={() => void saveRoute(true)}
+                className="ui-btn ui-btn-primary ui-btn-sm mt-2 w-full"
+              >
+                <Icon name="save" size={15} />
+                {saveBusy ? "Salvo…" : "Salva traccia e pianifica gita"}
+              </button>
+            </div>
+          )}
+        </div>
+      ) : null}
+
       {tab === "nearby" ? (
         <div className="v2-anim-in">
           {groupCounts.length > 0 || outdoorBusy ? (
@@ -1526,13 +1633,25 @@ export default function V2RouteBuilder({ username }: Props) {
               </span>
             </div>
           ) : null}
-          <SectionTitle>Meteo {waypoints[0] ? "alla partenza" : "al centro mappa"}</SectionTitle>
+          <SectionTitle>Meteo {hasRoute ? "alla partenza" : "al centro mappa"}</SectionTitle>
           <V2ConditionsPanel
-            lat={waypoints[0]?.lat ?? mapViewCenter?.lat ?? null}
-            lng={waypoints[0]?.lng ?? mapViewCenter?.lng ?? null}
+            lat={(hasRoute ? routeCoords?.[0]?.[1] : null) ?? mapViewCenter?.lat ?? null}
+            lng={(hasRoute ? routeCoords?.[0]?.[0] : null) ?? mapViewCenter?.lng ?? null}
             activity={activity}
-            profile={waypoints[0] ? profileCoords : null}
+            profile={hasRoute ? profileCoords : null}
           />
+          {hasProfile ? (
+            <>
+              <SectionTitle>Meteo di precisione lungo la traccia</SectionTitle>
+              <V2PrecisionForecast
+                activity={activity}
+                date={routeId ? outingDraft.draft.outing_date || null : null}
+                startTime={routeId ? outingDraft.draft.start_time || null : null}
+                profile={profileCoords}
+                overnights={routeId ? outingOvernights : undefined}
+              />
+            </>
+          ) : null}
         </div>
       ) : null}
 
@@ -1585,6 +1704,7 @@ export default function V2RouteBuilder({ username }: Props) {
           photosGeoJson={isExplore ? (explore.photosVisible ? explore.photosGeoJson : null) : undefined}
           onRouteSelect={isExplore ? explore.setSelectedRouteId : undefined}
           showWaypoints={!isExplore}
+          outingStopsGeoJson={outingMode ? outingDraft.stopsGeoJson : null}
           slopeVisible={isExplore && explore.activity === "ski" && explore.slopeVisible}
           slopeOpacity={SKI_SLOPE_DEFAULT_OPACITY}
           avalancheGeoJson={isExplore ? explore.avalancheGeoJson : undefined}
@@ -1606,6 +1726,7 @@ export default function V2RouteBuilder({ username }: Props) {
                     description: string;
                     verified: boolean;
                     confirmationCount: number;
+                    photoUrl?: string | null;
                   };
                   explore.setSelectedReport({
                     id: p.reportId,
@@ -1616,6 +1737,7 @@ export default function V2RouteBuilder({ username }: Props) {
                     confirmation_count: p.confirmationCount,
                     verified: p.verified,
                     status: "active",
+                    photo_url: p.photoUrl ?? null,
                   });
                 }
               : undefined
@@ -1714,6 +1836,19 @@ export default function V2RouteBuilder({ username }: Props) {
                       Vicino
                     </button>
                   </div>
+                  {outingMode ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        outingDraft.addStop({ kind: "other", name: mapAction.label ?? "", lng: mapAction.lng, lat: mapAction.lat });
+                        dismissAction();
+                      }}
+                      className="ui-btn ui-btn-sm ui-btn-primary mt-2 w-full"
+                    >
+                      <Icon name="plus" size={15} />
+                      Sosta della gita (la traccia non cambia)
+                    </button>
+                  ) : null}
                 </>
               ) : null}
 
@@ -1774,6 +1909,20 @@ export default function V2RouteBuilder({ username }: Props) {
                 : undefined
             }
             destinationLabel={waypoints.length === 0 ? "Parti da qui" : "Arrivo qui"}
+            onAddToOuting={
+              outingMode
+                ? () => {
+                    outingDraft.addStop({
+                      kind: "viewpoint",
+                      name: selectedPlace.name,
+                      lng: selectedPlace.lng,
+                      lat: selectedPlace.lat,
+                      ref: `place:${selectedPlace.id}`,
+                    });
+                    setSelectedPlace(null);
+                  }
+                : undefined
+            }
           />
         ) : null}
 
@@ -1784,6 +1933,21 @@ export default function V2RouteBuilder({ username }: Props) {
             onClose={dismissAction}
             onInsertInRoute={() => insertInRoute(mapAction.poi.lng, mapAction.poi.lat, mapAction.poi.name ?? mapAction.poi.sub_kind)}
             onSetDestination={() => setNewDestination(mapAction.poi.lng, mapAction.poi.lat, mapAction.poi.name ?? mapAction.poi.sub_kind)}
+            onAddToOuting={
+              outingMode
+                ? () => {
+                    const poi = mapAction.poi;
+                    outingDraft.addStop({
+                      kind: stopKindFromPoiCategory(poi.category, poi.sub_kind),
+                      name: poi.name ?? "",
+                      lng: poi.lng,
+                      lat: poi.lat,
+                      ref: `poi:${poi.id}`,
+                    });
+                    dismissAction();
+                  }
+                : undefined
+            }
           />
         ) : null}
 
@@ -1822,6 +1986,25 @@ export default function V2RouteBuilder({ username }: Props) {
                   <Icon name="plus" size={15} />
                   Aggiungi come tappa
                 </button>
+                {outingMode ? (
+                  <button
+                    type="button"
+                    className="ui-btn ui-btn-primary ui-btn-sm col-span-2"
+                    onClick={() => {
+                      outingDraft.addStop({
+                        kind: stopKindFromOutdoorKind(selectedFeature.kind),
+                        name: selectedFeature.name,
+                        lng: selectedFeature.lng,
+                        lat: selectedFeature.lat,
+                        ref: `feature:${selectedFeature.id}`,
+                      });
+                      setSelectedFeature(null);
+                    }}
+                  >
+                    <Icon name="plus" size={15} />
+                    Aggiungi alla gita (sosta o pernotto)
+                  </button>
+                ) : null}
               </div>
             </div>
           </div>

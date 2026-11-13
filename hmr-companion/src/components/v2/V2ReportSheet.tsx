@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FieldReportKind } from "@/lib/field-reports";
 import { REPORT_KIND_LABELS } from "@/lib/field-reports";
 
@@ -14,6 +14,7 @@ type ReportDto = {
   verified: boolean;
   status: string;
   viewer_confirmed?: boolean;
+  photo_url?: string | null;
 };
 
 type Props = {
@@ -51,16 +52,50 @@ export function V2ReportCreateSheet({
   const [description, setDescription] = useState(initialDescription ?? "");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [photo, setPhoto] = useState<File | null>(null);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!photo) {
+      setPhotoPreview(null);
+      return;
+    }
+    const url = URL.createObjectURL(photo);
+    setPhotoPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [photo]);
+
+  const pickPhoto = (f: File | undefined) => {
+    if (!f) return;
+    if (f.size > 5 * 1024 * 1024) {
+      setErr("Foto troppo grande (max 5 MB)");
+      return;
+    }
+    setErr(null);
+    setPhoto(f);
+  };
 
   const submit = async () => {
     setBusy(true);
     setErr(null);
     try {
-      const res = await fetch("/api/v2/reports", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lng, lat, kind, description: description.trim() }),
-      });
+      let res: Response;
+      if (photo) {
+        const fd = new FormData();
+        fd.append("lng", String(lng));
+        fd.append("lat", String(lat));
+        fd.append("kind", kind);
+        fd.append("description", description.trim());
+        fd.append("file", photo);
+        res = await fetch("/api/v2/reports", { method: "POST", body: fd });
+      } else {
+        res = await fetch("/api/v2/reports", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ lng, lat, kind, description: description.trim() }),
+        });
+      }
       const data = (await res.json()) as { error?: string };
       if (!res.ok) throw new Error(data.error ?? "Invio fallito");
       onCreated();
@@ -107,6 +142,38 @@ export function V2ReportCreateSheet({
           rows={2}
           className="mt-3 w-full rounded-lg border border-[color:var(--hmr-border)] bg-transparent px-3 py-2 text-sm"
         />
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
+          className="hidden"
+          onChange={(e) => {
+            pickPhoto(e.target.files?.[0]);
+            e.target.value = "";
+          }}
+        />
+        {photoPreview ? (
+          <div className="mt-2 flex items-center gap-3">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={photoPreview} alt="Anteprima foto" className="h-16 w-16 rounded-lg object-cover" />
+            <div className="flex flex-col items-start gap-1 text-xs">
+              <button type="button" onClick={() => fileRef.current?.click()} className="text-[color:var(--hmr-accent)]">
+                Cambia foto
+              </button>
+              <button type="button" onClick={() => setPhoto(null)} className="text-[color:var(--hmr-muted)]">
+                Rimuovi
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            className="mt-2 w-full rounded-lg border border-dashed border-[color:var(--hmr-border)] py-2 text-xs text-[color:var(--hmr-muted)]"
+          >
+            Aggiungi una foto (opzionale)
+          </button>
+        )}
         <button
           type="button"
           disabled={busy}
@@ -143,6 +210,17 @@ export default function V2ReportSheet({
         <p className="mt-1 text-xs text-[color:var(--hmr-muted)]">di @{report.author}</p>
         {report.description ? (
           <p className="mt-2 text-sm">{report.description}</p>
+        ) : null}
+        {report.photo_url ? (
+          <a href={report.photo_url} target="_blank" rel="noreferrer" className="mt-2 block">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={report.photo_url}
+              alt={`Foto della segnalazione: ${report.kind_label}`}
+              className="max-h-56 w-full rounded-lg object-cover"
+              loading="lazy"
+            />
+          </a>
         ) : null}
         <p className="mt-2 text-[10px] text-[color:var(--hmr-muted)]">
           {report.verified

@@ -631,6 +631,13 @@ function migrateOutingsPlanReport(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_outing_stops_outing ON outing_stops(outing_id, position);
   `);
+  // Gite di più giorni: la sosta è un pernotto (fine tappa).
+  const stopCols = new Set(
+    (db.prepare(`PRAGMA table_info(outing_stops)`).all() as { name: string }[]).map((c) => c.name),
+  );
+  if (!stopCols.has("overnight")) {
+    db.exec(`ALTER TABLE outing_stops ADD COLUMN overnight INTEGER NOT NULL DEFAULT 0`);
+  }
 }
 
 /** OSM camp_site era in lodging; ora categoria dedicata. */
@@ -2602,6 +2609,8 @@ export type OutingStopRow = {
   along_km: number | null;
   ref: string | null;
   note: string;
+  /** 1 = si dorme qui (fine tappa di una gita di più giorni). */
+  overnight: number;
 };
 
 export function listOutingStops(outingId: string): OutingStopRow[] {
@@ -2613,12 +2622,12 @@ export function listOutingStops(outingId: string): OutingStopRow[] {
 /** Sostituisce tutte le soste della gita (ordine = posizione nell'array). */
 export function replaceOutingStops(
   outingId: string,
-  stops: Omit<OutingStopRow, "id" | "outing_id" | "position">[],
+  stops: (Omit<OutingStopRow, "id" | "outing_id" | "position" | "overnight"> & { overnight?: boolean | number })[],
 ): void {
   const db = getDb();
   const ins = db.prepare(
-    `INSERT INTO outing_stops (id, outing_id, position, role, kind, name, lng, lat, along_km, ref, note)
-     VALUES (@id, @outing_id, @position, @role, @kind, @name, @lng, @lat, @along_km, @ref, @note)`,
+    `INSERT INTO outing_stops (id, outing_id, position, role, kind, name, lng, lat, along_km, ref, note, overnight)
+     VALUES (@id, @outing_id, @position, @role, @kind, @name, @lng, @lat, @along_km, @ref, @note, @overnight)`,
   );
   db.transaction(() => {
     db.prepare(`DELETE FROM outing_stops WHERE outing_id = ?`).run(outingId);
@@ -2635,6 +2644,7 @@ export function replaceOutingStops(
         along_km: s.along_km ?? null,
         ref: s.ref ?? null,
         note: s.note ?? "",
+        overnight: s.overnight ? 1 : 0,
       });
     });
   })();

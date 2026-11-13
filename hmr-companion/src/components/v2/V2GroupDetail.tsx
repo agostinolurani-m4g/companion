@@ -3,7 +3,11 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { GroupRouteDto } from "@/app/api/v2/groups/[id]/outings/route";
+import { OutingCardList, outingHref } from "@/components/v2/V2OutingList";
 import type { GroupMemberRole, GroupType } from "@/lib/db";
+import type { OutingDto } from "@/lib/outings-types";
+import { outingNewHref, outingPlanHref, routeEditorHref, SPORTS } from "@/lib/sports";
 
 type Props = {
   groupId: string;
@@ -42,13 +46,14 @@ export default function V2GroupDetail({ groupId, username, isAdmin = false }: Pr
   const [group, setGroup] = useState<GroupDetail | null>(null);
   const [myRole, setMyRole] = useState<GroupMemberRole | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [tab, setTab] = useState<"chat" | "members" | "outings" | "settings">("chat");
+  const [tab, setTab] = useState<"chat" | "members" | "outings" | "routes" | "settings">("chat");
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(true);
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [memberInput, setMemberInput] = useState("");
-  const [outings, setOutings] = useState<Array<{ id: string; title: string; outing_date: string | null }>>([]);
+  const [outings, setOutings] = useState<OutingDto[]>([]);
+  const [routes, setRoutes] = useState<GroupRouteDto[]>([]);
   const [routeInput, setRouteInput] = useState("");
   const avatarRef = useRef<HTMLInputElement>(null);
   const lastTsRef = useRef(0);
@@ -97,8 +102,9 @@ export default function V2GroupDetail({ groupId, username, isAdmin = false }: Pr
 
   const loadOutings = useCallback(async () => {
     const res = await fetch(`/api/v2/groups/${encodeURIComponent(groupId)}/outings`);
-    const data = (await res.json()) as { outings?: Array<{ id: string; title: string; outing_date: string | null }> };
+    const data = (await res.json()) as { outings?: OutingDto[]; routes?: GroupRouteDto[] };
     setOutings(data.outings ?? []);
+    setRoutes(data.routes ?? []);
   }, [groupId]);
 
   const loadAll = useCallback(async () => {
@@ -213,6 +219,7 @@ export default function V2GroupDetail({ groupId, username, isAdmin = false }: Pr
       const data = (await res.json()) as { error?: string; group?: GroupDetail };
       if (!res.ok) throw new Error(data.error ?? "Salvataggio fallito");
       setGroup(data.group ?? null);
+      await loadOutings();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     }
@@ -272,12 +279,9 @@ export default function V2GroupDetail({ groupId, username, isAdmin = false }: Pr
                 <p className="mt-1 text-sm text-[color:var(--hmr-muted)]">{group.description}</p>
               ) : null}
               {group.route_id ? (
-                <Link
-                  href={`/v2/plan?route=${encodeURIComponent(group.route_id)}`}
-                  className="mt-2 inline-block text-xs text-[color:var(--hmr-accent)]"
-                >
-                  Apri percorso collegato →
-                </Link>
+                <button type="button" onClick={() => setTab("routes")} className="mt-2 inline-block text-xs text-[color:var(--hmr-accent)]">
+                  Traccia del gruppo →
+                </button>
               ) : null}
             </div>
             {myRole === "owner" ? (
@@ -291,56 +295,34 @@ export default function V2GroupDetail({ groupId, username, isAdmin = false }: Pr
             ) : null}
           </div>
 
-          <div className="mt-3 flex gap-2">
-            <button
-              type="button"
-              onClick={() => setTab("chat")}
-              className={
-                tab === "chat"
-                  ? "rounded-lg bg-[color:var(--hmr-accent)] px-3 py-1.5 text-xs font-medium text-[color:var(--hmr-bg)]"
-                  : "rounded-lg border border-[color:var(--hmr-border)] px-3 py-1.5 text-xs"
-              }
-            >
-              Messaggi
-            </button>
-            <button
-              type="button"
-              onClick={() => setTab("members")}
-              className={
-                tab === "members"
-                  ? "rounded-lg bg-[color:var(--hmr-accent)] px-3 py-1.5 text-xs font-medium text-[color:var(--hmr-bg)]"
-                  : "rounded-lg border border-[color:var(--hmr-border)] px-3 py-1.5 text-xs"
-              }
-            >
-              Membri
-            </button>
-            <button
-              type="button"
-              onClick={() => setTab("outings")}
-              className={
-                tab === "outings"
-                  ? "rounded-lg bg-[color:var(--hmr-accent)] px-3 py-1.5 text-xs font-medium text-[color:var(--hmr-bg)]"
-                  : "rounded-lg border border-[color:var(--hmr-border)] px-3 py-1.5 text-xs"
-              }
-            >
-              Gite
-            </button>
-            {myRole === "owner" ? (
+          <div className="mt-3 flex flex-wrap gap-2" role="tablist" aria-label="Sezioni del gruppo">
+            {(
+              [
+                { id: "chat", label: "Messaggi" },
+                { id: "outings", label: `Gite${outings.length ? ` · ${outings.length}` : ""}` },
+                { id: "routes", label: `Tracce${routes.length ? ` · ${routes.length}` : ""}` },
+                { id: "members", label: "Membri" },
+                ...(myRole === "owner" ? [{ id: "settings", label: "Impostazioni" } as const] : []),
+              ] as const
+            ).map((t) => (
               <button
+                key={t.id}
                 type="button"
+                role="tab"
+                aria-selected={tab === t.id}
                 onClick={() => {
-                  setTab("settings");
-                  setRouteInput(group.route_id ?? "");
+                  setTab(t.id);
+                  if (t.id === "settings") setRouteInput(group.route_id ?? "");
                 }}
                 className={
-                  tab === "settings"
+                  tab === t.id
                     ? "rounded-lg bg-[color:var(--hmr-accent)] px-3 py-1.5 text-xs font-medium text-[color:var(--hmr-bg)]"
                     : "rounded-lg border border-[color:var(--hmr-border)] px-3 py-1.5 text-xs"
                 }
               >
-                Impostazioni
+                {t.label}
               </button>
-            ) : null}
+            ))}
           </div>
         </div>
 
@@ -471,33 +453,100 @@ export default function V2GroupDetail({ groupId, username, isAdmin = false }: Pr
           </div>
         ) : tab === "outings" ? (
           <div className="mt-3 min-h-0 flex-1 overflow-y-auto">
-            {outings.length === 0 ? (
-              <p className="text-sm text-[color:var(--hmr-muted)]">Nessuna gita collegata al gruppo.</p>
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <p className="text-xs text-[color:var(--hmr-muted)]">Le uscite del gruppo, in programma e fatte.</p>
+              <Link href={outingNewHref(null, groupId)} className="ml-auto text-xs text-[color:var(--hmr-accent)]">
+                + Aggiungi gita fatta
+              </Link>
+              <button type="button" onClick={() => setTab("routes")} className="text-xs text-[color:var(--hmr-accent)]">
+                + Pianifica su una traccia
+              </button>
+            </div>
+            <OutingCardList
+              outings={outings}
+              emptyText="Nessuna gita del gruppo. Aggiungine una già fatta, oppure pianificane una su una traccia e condividila con il gruppo."
+            />
+          </div>
+        ) : tab === "routes" ? (
+          <div className="mt-3 min-h-0 flex-1 overflow-y-auto">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <p className="text-xs text-[color:var(--hmr-muted)]">
+                Le tracce su cui il gruppo va: riusabili, ognuna con le sue gite.
+              </p>
+              <Link href="/v2/plan" className="ml-auto text-xs text-[color:var(--hmr-accent)]">
+                + Nuova traccia
+              </Link>
+            </div>
+            {routes.length === 0 ? (
+              <p className="text-sm text-[color:var(--hmr-muted)]">
+                Nessuna traccia ancora: compaiono qui quando una gita viene condivisa con il gruppo
+                {myRole === "owner" ? " o quando ne colleghi una dalle impostazioni" : ""}.
+              </p>
             ) : (
               <ul className="grid gap-2">
-                {outings.map((o) => (
-                  <li
-                    key={o.id}
-                    className="hmr-panel rounded-xl border border-[color:var(--hmr-border)]/60 px-3 py-2 text-sm"
-                  >
-                    {o.title}
-                    <span className="ml-2 text-xs text-[color:var(--hmr-muted)]">
-                      {o.outing_date ?? "data n/d"}
-                    </span>
-                  </li>
-                ))}
+                {routes.map((r) => {
+                  const sport = SPORTS[r.activity];
+                  return (
+                    <li key={r.id} className="hmr-panel rounded-xl border border-[color:var(--hmr-border)]/60 px-3 py-2.5">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium">{r.name}</p>
+                          <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-[color:var(--hmr-muted)]">
+                            <span className="inline-flex items-center gap-1">
+                              <span className="h-2 w-2 rounded-full" style={{ background: sport.color }} aria-hidden />
+                              {sport.shortLabel}
+                            </span>
+                            · {r.length_km.toFixed(1)} km · +{Math.round(r.elev_gain_m)} m · di @{r.owner}
+                          </p>
+                          <p className="mt-0.5 text-xs text-[color:var(--hmr-faint)]">
+                            {r.planned_count + r.done_count === 0
+                              ? "Nessuna gita del gruppo"
+                              : [
+                                  r.planned_count ? `${r.planned_count} in programma` : "",
+                                  r.done_count ? `${r.done_count} ${r.done_count === 1 ? "fatta" : "fatte"}` : "",
+                                ]
+                                  .filter(Boolean)
+                                  .join(" · ")}
+                            {r.linked ? " · traccia del gruppo" : ""}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                        {r.can_open ? (
+                          <>
+                            <Link href={routeEditorHref(r.activity, r.id)} className="text-[color:var(--hmr-accent)]">
+                              Apri traccia
+                            </Link>
+                            <Link href={outingPlanHref(r.activity, r.id, null, groupId)} className="text-[color:var(--hmr-accent)]">
+                              + Pianifica gita del gruppo
+                            </Link>
+                          </>
+                        ) : r.latest_outing_id ? (
+                          <Link href={outingHref(r.latest_outing_id)} className="text-[color:var(--hmr-accent)]">
+                            Traccia privata: vedila dall&apos;ultima gita
+                          </Link>
+                        ) : (
+                          <span className="text-[color:var(--hmr-faint)]">Traccia privata di @{r.owner}</span>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>
         ) : tab === "settings" && myRole === "owner" ? (
           <div className="mt-3 space-y-4">
             <div>
-              <p className="text-xs font-medium">Percorso collegato</p>
+              <p className="text-xs font-medium">Traccia del gruppo</p>
+              <p className="mt-0.5 text-[11px] text-[color:var(--hmr-muted)]">
+                Incolla l&apos;ID di una traccia (il valore dopo <code>route=</code> nell&apos;indirizzo del planner).
+              </p>
               <div className="mt-2 flex gap-2">
                 <input
                   value={routeInput}
                   onChange={(e) => setRouteInput(e.target.value)}
-                  placeholder="ID percorso"
+                  placeholder="ID traccia"
                   className="min-w-0 flex-1 rounded-lg border border-[color:var(--hmr-border)] bg-transparent px-3 py-2 text-sm"
                 />
                 <button type="button" onClick={() => void saveRouteLink()} className="rounded-lg border px-3 py-2 text-xs">

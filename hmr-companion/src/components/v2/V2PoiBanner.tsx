@@ -5,7 +5,7 @@ import type { V2SearchPoi } from "@/app/api/v2/pois/search/route";
 import type { V2MapPlacePick } from "@/components/v2/map/types";
 import type { PoiCategory } from "@/lib/db";
 import { resolvePoiKind } from "@/lib/categories";
-import { googleMapsSearchUrl } from "@/lib/gmaps-url";
+import { googleMapsNameNearUrl, googleMapsPointUrl } from "@/lib/gmaps-url";
 import { SPORTS, type UserRouteActivity } from "@/lib/sports";
 
 /** Qualsiasi cosa cliccabile sulla mappa di cui mostrare info: POI di ricerca o etichetta della mappa base. */
@@ -120,7 +120,9 @@ export default function V2PoiBanner({
 
   const title = target.name ?? target.sub_kind ?? "Luogo";
   const sportLabel = sport ? SPORTS[sport]?.label ?? null : null;
-  const googleMapsUrl = googleMapsSearchUrl(target.lat, target.lng, target.name);
+  // Il link principale va alle coordinate (sempre giuste); la ricerca per nome resta vicino al punto.
+  const googleMapsUrl = googleMapsPointUrl(target.lat, target.lng);
+  const googleMapsNameUrl = target.name?.trim() ? googleMapsNameNearUrl(target.lat, target.lng, target.name) : null;
   const searchName = target.name ? `${target.name}${target.category ? "" : ` ${target.kindLabel.toLowerCase()}`}` : null;
 
   useEffect(() => {
@@ -375,9 +377,26 @@ export default function V2PoiBanner({
                 Wikipedia
               </a>
             ) : null}
-            <a href={googleMapsUrl} target="_blank" rel="noopener noreferrer" className={linkCls}>
-              Google Maps
+            <a
+              href={googleMapsUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={linkCls}
+              title="Apre Google Maps sulle coordinate esatte del punto"
+            >
+              Google Maps (punto esatto)
             </a>
+            {googleMapsNameUrl ? (
+              <a
+                href={googleMapsNameUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={linkCls}
+                title="Cerca il nome in Google Maps restando nei dintorni del punto (scheda, recensioni, orari)"
+              >
+                Scheda su Maps
+              </a>
+            ) : null}
           </div>
 
           {error ? <p className="mb-3 text-xs text-[color:var(--hmr-danger)]">{error}</p> : null}

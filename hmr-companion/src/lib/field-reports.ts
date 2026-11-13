@@ -56,6 +56,8 @@ export type FieldReportDto = {
   severity: number;
   expires_at: number | null;
   photo_id: string | null;
+  /** URL della foto allegata alla segnalazione, se presente. */
+  photo_url: string | null;
   created_at: number;
   updated_at: number;
   viewer_confirmed?: boolean;
@@ -201,7 +203,7 @@ export function reportRelevantForSport(kind: FieldReportKind, sport: UserRouteAc
 
 export function serializeFieldReport(
   row: FieldReportRowInput,
-  extras?: { viewer_confirmed?: boolean },
+  extras?: { viewer_confirmed?: boolean; photo_url?: string | null },
 ): FieldReportDto {
   return {
     id: row.id,
@@ -218,6 +220,7 @@ export function serializeFieldReport(
     severity: row.severity,
     expires_at: row.expires_at,
     photo_id: row.photo_id,
+    photo_url: extras?.photo_url ?? null,
     created_at: row.created_at,
     updated_at: row.updated_at,
     viewer_confirmed: extras?.viewer_confirmed,
@@ -241,6 +244,7 @@ export function fieldReportsToGeoJson(
         confirmationCount: r.confirmation_count,
         author: r.author,
         description: r.description,
+        photoUrl: r.photo_url,
       },
       geometry: { type: "Point" as const, coordinates: [r.lng, r.lat] },
     })),

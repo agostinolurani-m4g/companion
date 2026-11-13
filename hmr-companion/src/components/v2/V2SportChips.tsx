@@ -9,8 +9,13 @@ type Props = {
   onChange: (sport: UserRouteActivity) => void;
   className?: string;
   options?: readonly UserRouteActivity[];
-  /** Mostra la scorciatoia al planner scialpinismo (salita/discesa). */
+  /**
+   * Nel planner lo scialpinismo ha il suo editor (salita e discesa separate): il chip "Sci"
+   * porta lì. Mettere false dove lo sci non è tra gli sport possibili.
+   */
   showSkiLink?: boolean;
+  /** Lo sci è un'opzione come le altre (es. "Aggiungi gita"): nessun cambio pagina. */
+  skiAsOption?: boolean;
 };
 
 /** Selettore sport: chip neutri, pallino col colore dello sport, selezionato in nero. */
@@ -20,10 +25,12 @@ export default function V2SportChips({
   className = "",
   options = PLANNER_ACTIVITIES,
   showSkiLink = true,
+  skiAsOption = false,
 }: Props) {
+  const list = skiAsOption ? options : options.filter((id) => !SPORTS[id].skiTourMode);
   return (
     <div className={`flex flex-wrap gap-1.5 ${className}`} role="radiogroup" aria-label="Sport">
-      {options.map((id) => {
+      {list.map((id) => {
         const s = SPORTS[id];
         const active = value === id;
         return (
@@ -33,14 +40,16 @@ export default function V2SportChips({
           </button>
         );
       })}
-      {showSkiLink ? (
+      {showSkiLink && !skiAsOption ? (
         <Link
-          href="/v2/scialpinismo/nuova"
-          className="ui-chip !border-dashed !text-[color:var(--hmr-muted)]"
-          title="Planner scialpinismo con salita e discesa separate"
+          href={SPORTS.ski.plannerPath}
+          role="radio"
+          aria-checked={value === "ski"}
+          className="ui-chip"
+          title="Planner scialpinismo: traccia con salita e discesa separate"
         >
           <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: SPORTS.ski.color }} aria-hidden />
-          Scialpinismo →
+          {SPORTS.ski.label}
         </Link>
       ) : null}
     </div>

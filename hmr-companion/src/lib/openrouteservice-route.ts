@@ -3,6 +3,7 @@ import type { UserRouteActivity } from "@/lib/db";
 import {
   lineLengthKm,
 } from "@/lib/osrm-route";
+import { haversineMeters } from "@/lib/track-geometry";
 import {
   mergeRouteTechParts,
   parseOrsExtras,
@@ -269,6 +270,37 @@ export function pickRoadLeg(roadLeg: OrsLeg, regularLeg: OrsLeg | null | undefin
   return regularLeg;
 }
 
+/**
+ * Oltre questa distanza tra la tappa e il punto dove "cycling-road" l'ha agganciata
+ * si prova il profilo che ammette ogni ciclabile: la tappa era probabilmente su una
+ * ciclabile che il profilo da strada non considera.
+ */
+export const ROAD_RESNAP_MIN_M = 12;
+/** Il profilo alternativo vince solo se aggancia la tappa almeno così tanto più vicino. */
+export const ROAD_RESNAP_GAIN_M = 8;
+
+/** Distanza (m) tra le due tappe richieste e gli estremi del tratto calcolato. */
+export function legSnapOffsetM(leg: OrsLeg, a: [number, number], b: [number, number]): number {
+  return haversineMeters(leg.coords[0]!, a) + haversineMeters(leg.coords[leg.coords.length - 1]!, b);
+}
+
+/**
+ * Tra due versioni dello stesso tratto sceglie quella che passa più vicino alle tappe
+ * messe dall'utente: se ha messo il pallino sulla ciclabile, il percorso usa la ciclabile
+ * anche se il profilo principale avrebbe preso la strada accanto.
+ */
+export function pickCloserSnapLeg(
+  baseLeg: OrsLeg,
+  altLeg: OrsLeg | null | undefined,
+  a: [number, number],
+  b: [number, number],
+): OrsLeg {
+  if (!altLeg || altLeg.coords.length < 2) return baseLeg;
+  const base = legSnapOffsetM(baseLeg, a, b);
+  if (base < ROAD_RESNAP_MIN_M) return baseLeg;
+  return legSnapOffsetM(altLeg, a, b) + ROAD_RESNAP_GAIN_M < base ? altLeg : baseLeg;
+}
+
 function splitRun(raw: OrsRawResult | null, nPoints: number): OrsLeg[] | null {
   if (!raw) return null;
   return nPoints === 2 ? [{ coords: raw.coords, extras: raw.extras }] : splitOrsIntoLegs(raw, nPoints);
@@ -276,7 +308,7 @@ function splitRun(raw: OrsRawResult | null, nPoints: number): OrsLeg[] | null {
 
 function legCacheKey(profile: string, preference: RoutePreference, a: [number, number], b: [number, number]): string {
   const r = (c: [number, number]) => `${Math.round(c[0] * 1e5)}_${Math.round(c[1] * 1e5)}`;
-  return `orsleg:v1:${profile}:${preference}:${r(a)};${r(b)}`;
+  return `orsleg:v2:${profile}:${preference}:${r(a)};${r(b)}`;
 }
 
 /** Tratti consecutivi mancanti dalla cache: [primo tratto, ultimo tratto]. */
@@ -317,7 +349,7 @@ export async function fetchOrsRouteLine(
   const profile = activityToOrsProfile(activity);
   const nLegs = coordinates.length - 1;
   const mixCycleways = !!opts.preferCycleways && profile === "cycling-road";
-  const cacheProfile = mixCycleways ? "road-cycleways-v2" : profile;
+  const cacheProfile = mixCycleways ? "road-cycleways-v3" : profile;
   const keys = Array.from({ length: nLegs }, (_, i) =>
     legCacheKey(cacheProfile, preference, coordinates[i]!, coordinates[i + 1]!),
   );
@@ -335,9 +367,25 @@ export async function fetchOrsRouteLine(
         ]);
         const road = splitRun(roadRaw, pts.length);
         const regular = splitRun(regularRaw, pts.length);
-        split = road ? road.map((leg, j) => pickRoadLeg(leg, regular?.[j])) : null;
+        split = road
+          ? road.map((leg, j) => {
+              // Tappa messa su una ciclabile: vince il tratto che ci passa, a prescindere dal resto.
+              const closer = pickCloserSnapLeg(leg, regular?.[j], pts[j]!, pts[j + 1]!);
+              return closer !== leg ? closer : pickRoadLeg(leg, regular?.[j]);
+            })
+          : null;
       } else {
         split = splitRun(await fetchOrsOnce(pts, profile, apiKey, preference), pts.length);
+        // Bici da strada: se una tappa finisce lontano da dove è stata messa, forse era su una
+        // ciclabile esclusa dal profilo. Si riprova con quello che le ammette tutte.
+        if (
+          split &&
+          profile === "cycling-road" &&
+          split.some((leg, j) => legSnapOffsetM(leg, pts[j]!, pts[j + 1]!) >= ROAD_RESNAP_MIN_M)
+        ) {
+          const regular = splitRun(await fetchOrsOnce(pts, "cycling-regular", apiKey, preference), pts.length);
+          if (regular) split = split.map((leg, j) => pickCloserSnapLeg(leg, regular[j], pts[j]!, pts[j + 1]!));
+        }
       }
       if (!split) return false;
       split.forEach((leg, j) => {

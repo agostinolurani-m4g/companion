@@ -58,6 +58,7 @@ type ReportDto = {
   verified: boolean;
   status: string;
   viewer_confirmed?: boolean;
+  photo_url?: string | null;
 };
 
 const ACTIVITIES = exploreActivityOptions();
@@ -248,7 +249,7 @@ export default function V2Explore({ isAdmin = false, username }: Props) {
                 Traccia
               </Link>
               <Link
-                href="/v2/scialpinismo/nuova"
+                href="/v2/gite/nuova"
                 className={
                   activity === "ski"
                     ? "rounded-lg border border-[color:var(--hmr-accent)] bg-[color:var(--hmr-accent)]/10 px-2 py-0.5 text-xs font-medium text-[color:var(--hmr-accent)]"
@@ -430,6 +431,7 @@ export default function V2Explore({ isAdmin = false, username }: Props) {
                 description: string;
                 verified: boolean;
                 confirmationCount: number;
+                photoUrl?: string | null;
               };
               setSelectedReport({
                 id: p.reportId,
@@ -440,6 +442,7 @@ export default function V2Explore({ isAdmin = false, username }: Props) {
                 confirmation_count: p.confirmationCount,
                 verified: p.verified,
                 status: "active",
+                photo_url: p.photoUrl ?? null,
               });
             }}
             showWaypoints={false}

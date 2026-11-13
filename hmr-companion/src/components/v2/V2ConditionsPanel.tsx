@@ -289,8 +289,12 @@ export default function V2ConditionsPanel({ lat, lng, compact = false, activity 
           >
             <p className="text-[10px] text-[color:var(--hmr-muted)]">{h.time.slice(11, 16)}</p>
             <p className="font-medium">{Math.round(h.temperature_c)}°</p>
+            {h.apparent_c != null && Math.abs(h.apparent_c - h.temperature_c) >= 2 ? (
+              <p className="text-[10px] text-[color:var(--hmr-muted)]">perc. {Math.round(h.apparent_c)}°</p>
+            ) : null}
             <p className="text-[10px] text-[color:var(--hmr-muted)]">
               {h.precipitation_mm > 0 ? `${h.precipitation_mm.toFixed(1)} mm` : "—"}
+              {h.humidity_pct != null ? ` · ${Math.round(h.humidity_pct)} %` : ""}
             </p>
           </div>
         ))}
