@@ -34,8 +34,8 @@ export const SKI_TRACK_COLORS = {
   descent: "#a99bd9",
 } as const;
 
-/** Opacità fissa overlay pendenza (~1/3 del valore precedente). */
-export const SKI_SLOPE_DEFAULT_OPACITY = 0.65 / 3;
+/** Opacità fissa overlay pendenza: abbastanza trasparente da lasciar leggere la mappa sotto. */
+export const SKI_SLOPE_DEFAULT_OPACITY = 0.15;
 
 /** Opacità fissa bollettino valanghe (~1/3 del valore precedente). */
 export const SKI_AVALANCHE_DEFAULT_OPACITY = 0.45 / 3;

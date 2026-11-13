@@ -42,7 +42,7 @@ function routeCacheKey(
   preferCycleways: boolean,
 ): string {
   const rounded = coordinates.map(([lng, lat]) => `${Math.round(lng * 1e5)}_${Math.round(lat * 1e5)}`).join(";");
-  return `v2route:v6:${activity}:${preference}${preferCycleways ? ":cw3" : ""}:${rounded}`;
+  return `v2route:v7:${activity}:${preference}${preferCycleways ? ":cw3" : ""}:${rounded}`;
 }
 
 /** Popolarità (heatmap) calcolata a ogni richiesta: la heatmap cambia, la cache del routing no. */
@@ -119,6 +119,7 @@ export async function POST(req: Request) {
     let engine = "osrm";
     let tech: RouteTech | null = null;
     let snapped: [number, number][] | null = null;
+    let spurs: { waypoint: number; km: number }[] = [];
 
     if (orsKey && activityPrefersOrs(activity)) {
       const ors = await fetchOrsRouteLine(coordinates, activity, orsKey, preference, ORS_LEG_CACHE, { preferCycleways });
@@ -128,6 +129,7 @@ export async function POST(req: Request) {
         engine = "openrouteservice";
         tech = ors.tech;
         snapped = ors.snapped;
+        spurs = ors.spurs;
       }
     } else if (!orsKey && activityPrefersOrs(activity)) {
       console.warn(
@@ -160,7 +162,7 @@ export async function POST(req: Request) {
 
     const coords = feature.geometry.coordinates as [number, number][];
     const length_km = lineLengthKm(coords);
-    const payload = { feature, length_km, profile, engine, preference, routingMode: "snapped" as const, tech, snapped };
+    const payload = { feature, length_km, profile, engine, preference, routingMode: "snapped" as const, tech, snapped, spurs };
     geoCacheSet(cacheKey, payload);
     return NextResponse.json({
       ...payload,

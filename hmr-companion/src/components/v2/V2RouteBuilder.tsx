@@ -384,11 +384,19 @@ export default function V2RouteBuilder({ username }: Props) {
         length_km?: number;
         tech?: RouteTech | null;
         snapped?: [number, number][] | null;
+        spurs?: { waypoint: number; km: number }[];
         popularity?: RoutePopularityDto | null;
         alternatives?: RouteAlternativeDto[];
       };
       if (ctrl.signal.aborted) return;
       if (!res.ok || !data.feature) throw new Error(data.error ?? "Routing fallito");
+      const spur = data.spurs?.[0];
+      if (spur) {
+        setNotice(
+          `Tappa ${spur.waypoint + 1} su una diramazione: tolti ${spur.km} km di andata e ritorno. Spostala sul percorso se vuoi andare fin lì.`,
+        );
+        setTimeout(() => setNotice(null), 7000);
+      }
       setRouteCoords(data.feature.geometry.coordinates as [number, number][]);
       setRouteTech(data.tech ?? null);
       setLengthKm(data.length_km ?? 0);
@@ -972,7 +980,8 @@ export default function V2RouteBuilder({ username }: Props) {
   };
 
   /* ─────────────── Gita su questa traccia ─────────────── */
-  const outingDraft = useOutingDraft(routeId ? routeCoords : null, outingId, searchParams.get("group"));
+  // La bozza segue la traccia anche non salvata: giorni, tappe e meteo si vedono subito, salvare serve solo per tenerla.
+  const outingDraft = useOutingDraft(routeCoords, outingId, searchParams.get("group"));
   /** Scheda Gita aperta su una traccia salvata: i luoghi scelti diventano soste, la traccia non cambia. */
   const outingMode = tab === "outing" && !!routeId && !isExplore;
   const saveOuting = async () => {
@@ -1456,47 +1465,39 @@ export default function V2RouteBuilder({ username }: Props) {
             Aggiungi una gita già fatta (GPX + racconto)
           </Link>
 
+          {routeId ? <V2OutingList routeId={routeId} className="mt-3" /> : null}
+          <SectionTitle>{outingId ? "Modifica gita" : "Pianifica una gita su questa traccia"}</SectionTitle>
+          <V2OutingPlanPanel
+            api={outingDraft}
+            hasRoute={hasRoute}
+            profile={hasProfile ? profileCoords : null}
+            activity={activity}
+            onFocusStop={(lng, lat) => {
+              flyKeyRef.current += 1;
+              setFlyTo({ lng, lat, zoom: 15, key: flyKeyRef.current });
+            }}
+          />
           {routeId ? (
-            <>
-              <V2OutingList routeId={routeId} className="mt-3" />
-              <SectionTitle>{outingId ? "Modifica gita" : "Pianifica una gita su questa traccia"}</SectionTitle>
-              <V2OutingPlanPanel
-                api={outingDraft}
-                hasRoute={hasRoute}
-                profile={hasProfile ? profileCoords : null}
-                activity={activity}
-                onFocusStop={(lng, lat) => {
-                  flyKeyRef.current += 1;
-                  setFlyTo({ lng, lat, zoom: 15, key: flyKeyRef.current });
-                }}
-              />
-              <button
-                type="button"
-                disabled={outingDraft.saving || !hasRoute}
-                onClick={() => void saveOuting()}
-                className="ui-btn ui-btn-primary mt-4 w-full"
-              >
-                <Icon name="save" size={16} />
-                {outingDraft.saving ? "Salvo…" : outingId ? "Salva modifiche alla gita" : "Salva gita"}
-              </button>
-            </>
-          ) : (
-            <div className="mt-3 rounded-xl border border-[color:var(--hmr-border)]/70 p-3">
-              <p className="text-[12.5px]">
-                Per pianificare una gita serve una traccia salvata.{" "}
-                {hasRoute ? "Salva questa e continua con la gita." : "Disegna la traccia nella scheda Traccia, poi salvala."}
-              </p>
-              <button
-                type="button"
-                disabled={saveBusy || !hasRoute}
-                onClick={() => void saveRoute(true)}
-                className="ui-btn ui-btn-primary ui-btn-sm mt-2 w-full"
-              >
-                <Icon name="save" size={15} />
-                {saveBusy ? "Salvo…" : "Salva traccia e pianifica gita"}
-              </button>
-            </div>
-          )}
+            <button
+              type="button"
+              disabled={outingDraft.saving || !hasRoute}
+              onClick={() => void saveOuting()}
+              className="ui-btn ui-btn-primary mt-4 w-full"
+            >
+              <Icon name="save" size={16} />
+              {outingDraft.saving ? "Salvo…" : outingId ? "Salva modifiche alla gita" : "Salva gita"}
+            </button>
+          ) : hasRoute ? (
+            <button
+              type="button"
+              disabled={saveBusy}
+              onClick={() => void saveRoute(true)}
+              className="ui-btn ui-btn-primary mt-4 w-full"
+            >
+              <Icon name="save" size={15} />
+              {saveBusy ? "Salvo…" : "Salva traccia per tenere la gita"}
+            </button>
+          ) : null}
         </div>
       ) : null}
 
@@ -1645,10 +1646,10 @@ export default function V2RouteBuilder({ username }: Props) {
               <SectionTitle>Meteo di precisione lungo la traccia</SectionTitle>
               <V2PrecisionForecast
                 activity={activity}
-                date={routeId ? outingDraft.draft.outing_date || null : null}
-                startTime={routeId ? outingDraft.draft.start_time || null : null}
+                date={outingDraft.draft.outing_date || null}
+                startTime={outingDraft.draft.start_time || null}
                 profile={profileCoords}
-                overnights={routeId ? outingOvernights : undefined}
+                overnights={outingOvernights}
               />
             </>
           ) : null}

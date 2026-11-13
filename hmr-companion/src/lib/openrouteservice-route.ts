@@ -301,6 +301,47 @@ export function pickCloserSnapLeg(
   return legSnapOffsetM(altLeg, a, b) + ROAD_RESNAP_GAIN_M < base ? altLeg : baseLeg;
 }
 
+/** Sotto questa lunghezza un'andata e ritorno è una svolta o un parcheggio: si lascia com'è. */
+export const SPUR_MIN_M = 250;
+/** Distanza entro cui due punti dei tratti contano come lo stesso punto del tracciato. */
+const SPUR_MATCH_M = 4;
+
+function tailLengthM(coords: [number, number][], fromIdx: number): number {
+  let m = 0;
+  for (let i = fromIdx; i < coords.length - 1; i++) m += haversineMeters(coords[i]!, coords[i + 1]!);
+  return m;
+}
+
+/**
+ * Toglie le "punte": una tappa agganciata a una via laterale fa andare il tratto prima fino
+ * in fondo e tornare indietro quello dopo, sullo stesso tracciato. Il percorso resta dritto e
+ * la tappa dove ORS ha agganciato viene riportata nell'elenco `spurs` (indice della tappa).
+ */
+export function trimSpurs(legs: OrsLeg[]): { legs: OrsLeg[]; spurs: { waypoint: number; km: number }[] } {
+  const out = legs.map((l) => ({ ...l }));
+  const spurs: { waypoint: number; km: number }[] = [];
+  for (let i = 1; i < out.length; i++) {
+    const prev = out[i - 1]!;
+    const next = out[i]!;
+    const pc = prev.coords;
+    const nc = next.coords;
+    let m = 0;
+    while (m < pc.length && m < nc.length && haversineMeters(pc[pc.length - 1 - m]!, nc[m]!) <= SPUR_MATCH_M) m++;
+    if (m < 2) continue;
+    const pivotPrev = pc.length - m;
+    const lenM = tailLengthM(pc, pivotPrev);
+    if (lenM < SPUR_MIN_M) continue;
+    // Deve restare almeno un segmento per tratto: tappe sovrapposte non si toccano.
+    if (pivotPrev < 1 || m >= nc.length) continue;
+    const prevExtras = sliceOrsExtras(prev.extras, 0, pivotPrev);
+    const nextExtras = sliceOrsExtras(next.extras, m - 1, nc.length - 1);
+    out[i - 1] = { coords: pc.slice(0, pivotPrev + 1), extras: prevExtras };
+    out[i] = { coords: nc.slice(m - 1), extras: nextExtras };
+    spurs.push({ waypoint: i, km: Math.round((lenM / 1000) * 10) / 10 });
+  }
+  return { legs: out, spurs };
+}
+
 function splitRun(raw: OrsRawResult | null, nPoints: number): OrsLeg[] | null {
   if (!raw) return null;
   return nPoints === 2 ? [{ coords: raw.coords, extras: raw.extras }] : splitOrsIntoLegs(raw, nPoints);
@@ -344,6 +385,7 @@ export async function fetchOrsRouteLine(
   meta: OrsRouteMeta;
   tech: RouteTech | null;
   snapped: [number, number][];
+  spurs: { waypoint: number; km: number }[];
 } | null> {
   if (coordinates.length < 2) return null;
   const profile = activityToOrsProfile(activity);
@@ -400,10 +442,15 @@ export async function fetchOrsRouteLine(
   const merged: [number, number][] = [];
   const techParts: RouteTech[] = [];
   const snapped: [number, number][] = [];
-  let kmOffset = 0;
-  for (const leg of legs as OrsLeg[]) {
-    if (snapped.length === 0) snapped.push(leg.coords[0]!);
+  const rawLegs = legs as OrsLeg[];
+  // Gli aggancio delle tappe si leggono prima di togliere le punte.
+  rawLegs.forEach((leg, i) => {
+    if (i === 0) snapped.push(leg.coords[0]!);
     snapped.push(leg.coords[leg.coords.length - 1]!);
+  });
+  const trimmed = trimSpurs(rawLegs);
+  let kmOffset = 0;
+  for (const leg of trimmed.legs) {
     techParts.push(parseOrsExtras(leg.coords, leg.extras, kmOffset));
     kmOffset += lineLengthKm(leg.coords);
     const first = leg.coords[0]!;
@@ -418,5 +465,6 @@ export async function fetchOrsRouteLine(
     meta: { mode: nLegs === 1 || runs.length <= 1 ? "single_request" : "chained_segments", profileUsed: profile },
     tech: mergeRouteTechParts(techParts),
     snapped,
+    spurs: trimmed.spurs,
   };
 }
