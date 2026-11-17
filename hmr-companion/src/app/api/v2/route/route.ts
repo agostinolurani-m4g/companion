@@ -40,9 +40,10 @@ function routeCacheKey(
   activity: UserRouteActivity,
   preference: RoutePreference,
   preferCycleways: boolean,
+  allowFerries: boolean,
 ): string {
   const rounded = coordinates.map(([lng, lat]) => `${Math.round(lng * 1e5)}_${Math.round(lat * 1e5)}`).join(";");
-  return `v2route:v7:${activity}:${preference}${preferCycleways ? ":cw3" : ""}:${rounded}`;
+  return `v2route:v8:${activity}:${preference}${preferCycleways ? ":cw3" : ""}${allowFerries ? ":ferry" : ""}:${rounded}`;
 }
 
 /** Popolarità (heatmap) calcolata a ogni richiesta: la heatmap cambia, la cache del routing no. */
@@ -62,10 +63,11 @@ async function alternativesFor(
   activity: UserRouteActivity,
   preference: RoutePreference,
   owner: string,
+  allowFerries: boolean,
 ): Promise<RouteAlternative[]> {
   const key = getOpenRouteServiceApiKey();
   if (!key || coordinates.length !== 2) return [];
-  const alts = await fetchOrsAlternatives(coordinates, activity, key, preference);
+  const alts = await fetchOrsAlternatives(coordinates, activity, key, preference, allowFerries);
   return alts
     .map((a) => ({ ...a, popularity: popularityFor(a.coordinates, activity, owner) }))
     .sort((a, b) => (b.popularity?.community_pct ?? 0) - (a.popularity?.community_pct ?? 0));
@@ -81,6 +83,7 @@ export async function POST(req: Request) {
       activity?: string;
       preference?: string;
       preferCycleways?: boolean;
+      allowFerries?: boolean;
       alternatives?: boolean;
     };
     const coordinates = body.coordinates;
@@ -95,7 +98,8 @@ export async function POST(req: Request) {
     const preference: RoutePreference = isRoutePreference(body.preference) ? body.preference : "recommended";
     // Solo bici da strada: confronta strada e ciclabili asfaltate tratto per tratto.
     const preferCycleways = body.preferCycleways === true && activity === "road";
-    const cacheKey = routeCacheKey(coordinates, activity, preference, preferCycleways);
+    const allowFerries = body.allowFerries === true;
+    const cacheKey = routeCacheKey(coordinates, activity, preference, preferCycleways, allowFerries);
     const cached = geoCacheGet(cacheKey) as {
       feature: GeoJSON.Feature<GeoJSON.LineString>;
       length_km: number;
@@ -109,7 +113,7 @@ export async function POST(req: Request) {
         ...cached,
         fromCache: true,
         popularity: popularityFor(cached.feature.geometry.coordinates, activity, auth.email),
-        ...(wantAlternatives ? { alternatives: await alternativesFor(coordinates, activity, preference, auth.email) } : {}),
+        ...(wantAlternatives ? { alternatives: await alternativesFor(coordinates, activity, preference, auth.email, allowFerries) } : {}),
       });
     }
 
@@ -120,9 +124,10 @@ export async function POST(req: Request) {
     let tech: RouteTech | null = null;
     let snapped: [number, number][] | null = null;
     let spurs: { waypoint: number; km: number }[] = [];
+    let straight: [number, number][][] = [];
 
     if (orsKey && activityPrefersOrs(activity)) {
-      const ors = await fetchOrsRouteLine(coordinates, activity, orsKey, preference, ORS_LEG_CACHE, { preferCycleways });
+      const ors = await fetchOrsRouteLine(coordinates, activity, orsKey, preference, ORS_LEG_CACHE, { preferCycleways, allowFerries });
       if (ors) {
         feature = ors.feature;
         profile = ors.meta.profileUsed as unknown as typeof profile;
@@ -130,6 +135,7 @@ export async function POST(req: Request) {
         tech = ors.tech;
         snapped = ors.snapped;
         spurs = ors.spurs;
+        straight = ors.straight;
       }
     } else if (!orsKey && activityPrefersOrs(activity)) {
       console.warn(
@@ -162,12 +168,12 @@ export async function POST(req: Request) {
 
     const coords = feature.geometry.coordinates as [number, number][];
     const length_km = lineLengthKm(coords);
-    const payload = { feature, length_km, profile, engine, preference, routingMode: "snapped" as const, tech, snapped, spurs };
+    const payload = { feature, length_km, profile, engine, preference, routingMode: "snapped" as const, tech, snapped, spurs, straight };
     geoCacheSet(cacheKey, payload);
     return NextResponse.json({
       ...payload,
       popularity: popularityFor(coords, activity, auth.email),
-      ...(wantAlternatives ? { alternatives: await alternativesFor(coordinates, activity, preference, auth.email) } : {}),
+      ...(wantAlternatives ? { alternatives: await alternativesFor(coordinates, activity, preference, auth.email, allowFerries) } : {}),
     });
   } catch (e) {
     return NextResponse.json(

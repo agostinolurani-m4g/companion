@@ -68,7 +68,9 @@ export default function V2RoutePopularity({
             {current}% su tratti battuti dalla community
           </span>
         ) : (
-          <span className="text-[color:var(--hmr-faint)]">Nessun dato community in questa zona</span>
+          <span className="text-[color:var(--hmr-faint)]">
+            Nessuno ha ancora condiviso percorsi qui: se lo salvi come pubblico, aiuti chi verrà dopo.
+          </span>
         )}
         {popularity.personal_pct != null && popularity.personal_pct > 0 ? (
           <span className="rounded-full border border-[color:var(--hmr-border)] px-2 py-0.5 text-[color:var(--hmr-muted)]">

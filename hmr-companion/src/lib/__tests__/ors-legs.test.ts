@@ -27,8 +27,8 @@ describe("ORS per tratti", () => {
       vi.fn(async (_url: string, init: { body: string }) => {
         const body = JSON.parse(init.body) as { coordinates: number[][] };
         calls.push(body.coordinates);
-        // Finto ORS: linea che passa per le tappe spostate di 0.001 in lat (= "agganciate").
-        const pts = body.coordinates.map(([x, y]) => [x, y + 0.001]);
+        // Finto ORS: linea che passa per le tappe spostate di 0.0001 in lat (≈11 m, sotto la soglia del tratteggio) (= "agganciate").
+        const pts = body.coordinates.map(([x, y]) => [x, y + 0.0001]);
         return new Response(
           JSON.stringify({
             type: "FeatureCollection",
@@ -41,7 +41,7 @@ describe("ORS per tratti", () => {
     const wps: [number, number][] = [[9, 46], [9.01, 46], [9.02, 46], [9.03, 46]];
     const first = await fetchOrsRouteLine(wps, "hike", "k", "recommended", cache);
     expect(calls).toHaveLength(1);
-    expect(first!.snapped[1]).toEqual([9.01, 46.001]);
+    expect(first!.snapped[1]).toEqual([9.01, 46.0001]);
 
     // Sposto la tappa 3: si ricalcolano solo i tratti 2→3 e 3→4, in una richiesta.
     calls.length = 0;

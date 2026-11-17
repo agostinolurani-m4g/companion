@@ -51,6 +51,7 @@ export default function MapCore({
   waypoints,
   routeCoords,
   routeColoredSegments,
+  routeStraightLines,
   pois,
   poiSearchCenter,
   poiSearchBbox,
@@ -396,16 +397,28 @@ export default function MapCore({
 
     const routeGeo: GeoJSON.FeatureCollection = (() => {
       if (exploreGeoJson && exploreGeoJson.features.length > 0) return exploreGeoJson;
+      const dashed: GeoJSON.Feature[] = (routeStraightLines ?? [])
+        .filter((l) => l.length >= 2)
+        .map((l) => ({
+          type: "Feature" as const,
+          properties: { dashed: true },
+          geometry: { type: "LineString" as const, coordinates: l },
+        }));
       if (routeColoredSegments && routeColoredSegments.length > 0) {
         return {
           type: "FeatureCollection",
-          features: routeColoredSegments.map((seg, i) => ({
-            type: "Feature" as const,
-            properties: { color: seg.color, surface: seg.surface, idx: i },
-            geometry: { type: "LineString" as const, coordinates: seg.coordinates },
-          })),
+          features: [
+            ...routeColoredSegments.map((seg, i) => ({
+              type: "Feature" as const,
+              properties: { color: seg.color, surface: seg.surface, idx: i },
+              geometry: { type: "LineString" as const, coordinates: seg.coordinates },
+            })),
+            ...dashed,
+          ],
         };
       }
+      // Percorso tutto in linea retta: solo il tratteggio, senza la linea piena sotto.
+      if (dashed.length > 0) return { type: "FeatureCollection", features: dashed };
       if (routeCoords && routeCoords.length >= 2) {
         return {
           type: "FeatureCollection",
@@ -513,6 +526,7 @@ export default function MapCore({
   }, [
     routeCoords,
     routeColoredSegments,
+    routeStraightLines,
     exploreGeoJson,
     routeMarkersGeoJson,
     photosGeoJson,

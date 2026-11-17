@@ -57,7 +57,7 @@ export default function V2AlongRoutePanel({ routeCoords, onSelect }: Props) {
         </div>
       ) : null}
       {!busy && items.length === 0 ? (
-        <p className="text-[12.5px] text-[color:var(--hmr-muted)]">Nessun elemento entro 150 m dal percorso.</p>
+        <p className="text-[12.5px] text-[color:var(--hmr-muted)]">Nessun rifugio, sorgente o pericolo noto entro 150 m dal percorso. Usa la scheda «Dintorni» per cercare più lontano.</p>
       ) : null}
       {!busy && items.length > 0 ? (
         <ol className="relative -mx-1">

@@ -176,6 +176,8 @@ export function addOverlaySourcesAndLayers(map: MaplibreMap, opts: OverlayLayerO
       "line-color": ["coalesce", ["get", "color"], ROUTE_DEFAULT_COLOR],
       "line-width": ROUTE_LINE_WIDTH,
       "line-opacity": ["case", ["==", ["get", "dimmed"], true], 0.35, 1],
+      // Linee rette dove il router non arriva: tratteggio.
+      "line-dasharray": ["case", ["==", ["get", "dashed"], true], ["literal", [1.5, 1.5]], ["literal", [1, 0]]],
     },
   });
   map.addLayer({
@@ -375,7 +377,10 @@ export function addOverlaySourcesAndLayers(map: MaplibreMap, opts: OverlayLayerO
     type: "circle",
     source: "v2-waypoints",
     paint: {
-      "circle-radius": ["interpolate", ["linear"], ["zoom"], 8, 7, 13, 10, 17, 13],
+      "circle-radius": ["interpolate", ["linear"], ["zoom"], 8, 9, 13, 12, 17, 15],
+      // Contorno chiaro: la partenza/arrivo restano ben visibili anche sul rilievo scuro.
+      "circle-stroke-width": 2.5,
+      "circle-stroke-color": "#ffffff",
       "circle-color": [
         "match",
         ["get", "role"],

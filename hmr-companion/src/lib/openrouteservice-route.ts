@@ -73,6 +73,7 @@ export function buildOrsRequestBody(
   profile: OrsProfile,
   preference: RoutePreference,
   withOptions = true,
+  allowFerries = false,
 ): Record<string, unknown> {
   const body: Record<string, unknown> = {
     coordinates,
@@ -85,10 +86,12 @@ export function buildOrsRequestBody(
   };
   if (!withOptions) return body;
 
-  const avoid: string[] = ["ferries"];
+  // Traghetti esclusi di default: si ammettono solo se l'utente lo chiede.
+  const avoid: string[] = allowFerries ? [] : ["ferries"];
   if (isCycling(profile)) avoid.push("steps");
   if (profile === "cycling-road") avoid.push("fords");
-  const options: Record<string, unknown> = { avoid_features: avoid };
+  const options: Record<string, unknown> = {};
+  if (avoid.length > 0) options.avoid_features = avoid;
 
   if (preference === "quiet") {
     if (isCycling(profile)) {
@@ -109,6 +112,8 @@ type OrsExtraValuesRaw = [number, number, number][];
 export type OrsLeg = {
   coords: [number, number][];
   extras?: OrsExtrasRaw;
+  /** Tratto non instradabile: linea retta tra le due tappe (non va in cache). */
+  straight?: boolean;
 };
 
 /** Cache dei tratti (lato server: geo_cache SQLite). */
@@ -134,7 +139,12 @@ function featureCollectionToRaw(j: GeoJSON.FeatureCollection): OrsRawResult | nu
   return { coords, extras: props.extras, wayPoints: Array.isArray(props.way_points) ? props.way_points : undefined };
 }
 
-type OrsAttempt = { ok: true; result: OrsRawResult } | { ok: false; optionsRejected: boolean };
+type OrsAttempt = { ok: true; result: OrsRawResult } | { ok: false; optionsRejected: boolean; unroutable?: boolean };
+
+/** Codici ORS "nessun punto instradabile vicino" (2010) e "percorso non trovato" (2009). */
+function isUnroutableError(code: number, msg: string): boolean {
+  return code === 2009 || code === 2010 || /could not find (routable point|route)/i.test(msg);
+}
 
 async function fetchOrsRaw(profile: OrsProfile, apiKey: string, body: Record<string, unknown>): Promise<OrsAttempt> {
   try {
@@ -157,7 +167,7 @@ async function fetchOrsRaw(profile: OrsProfile, apiKey: string, body: Record<str
       // manca un sentiero vicino a una tappa (2010) o la distanza è eccessiva (2004).
       const code = j.error?.code ?? 0;
       const optionsRejected = code === 2003 || /option|param|weighting|avoid/i.test(msg);
-      return { ok: false, optionsRejected };
+      return { ok: false, optionsRejected, unroutable: isUnroutableError(code, msg) };
     }
     if (j.type !== "FeatureCollection" || !("features" in j)) return { ok: false, optionsRejected: false };
     const result = featureCollectionToRaw(j as GeoJSON.FeatureCollection);
@@ -167,19 +177,30 @@ async function fetchOrsRaw(profile: OrsProfile, apiKey: string, body: Record<str
   }
 }
 
-/** Una richiesta; se ORS rifiuta le opzioni avanzate, riprova senza. */
+/** Una richiesta; se ORS rifiuta le opzioni avanzate, riprova senza. `unroutable`: tappa fuori da ogni via o isola. */
+async function fetchOrsDetailed(
+  coordinates: [number, number][],
+  profile: OrsProfile,
+  apiKey: string,
+  preference: RoutePreference,
+  allowFerries: boolean,
+): Promise<{ result: OrsRawResult | null; unroutable: boolean }> {
+  if (coordinates.length < 2) return { result: null, unroutable: false };
+  const full = await fetchOrsRaw(profile, apiKey, buildOrsRequestBody(coordinates, profile, preference, true, allowFerries));
+  if (full.ok) return { result: full.result, unroutable: false };
+  if (!full.optionsRejected) return { result: null, unroutable: !!full.unroutable };
+  const plain = await fetchOrsRaw(profile, apiKey, buildOrsRequestBody(coordinates, profile, preference, false, allowFerries));
+  return plain.ok ? { result: plain.result, unroutable: false } : { result: null, unroutable: !!plain.unroutable };
+}
+
 async function fetchOrsOnce(
   coordinates: [number, number][],
   profile: OrsProfile,
   apiKey: string,
   preference: RoutePreference,
+  allowFerries: boolean,
 ): Promise<OrsRawResult | null> {
-  if (coordinates.length < 2) return null;
-  const full = await fetchOrsRaw(profile, apiKey, buildOrsRequestBody(coordinates, profile, preference, true));
-  if (full.ok) return full.result;
-  if (!full.optionsRejected) return null;
-  const plain = await fetchOrsRaw(profile, apiKey, buildOrsRequestBody(coordinates, profile, preference, false));
-  return plain.ok ? plain.result : null;
+  return (await fetchOrsDetailed(coordinates, profile, apiKey, preference, allowFerries)).result;
 }
 
 /** Ritaglia gli extra ORS (intervalli di indici sul tracciato) al tratto [a, b], reindicizzati da 0. */
@@ -323,6 +344,7 @@ export function trimSpurs(legs: OrsLeg[]): { legs: OrsLeg[]; spurs: { waypoint: 
   for (let i = 1; i < out.length; i++) {
     const prev = out[i - 1]!;
     const next = out[i]!;
+    if (prev.straight || next.straight) continue;
     const pc = prev.coords;
     const nc = next.coords;
     let m = 0;
@@ -347,9 +369,15 @@ function splitRun(raw: OrsRawResult | null, nPoints: number): OrsLeg[] | null {
   return nPoints === 2 ? [{ coords: raw.coords, extras: raw.extras }] : splitOrsIntoLegs(raw, nPoints);
 }
 
-function legCacheKey(profile: string, preference: RoutePreference, a: [number, number], b: [number, number]): string {
+function legCacheKey(
+  profile: string,
+  preference: RoutePreference,
+  a: [number, number],
+  b: [number, number],
+  allowFerries = false,
+): string {
   const r = (c: [number, number]) => `${Math.round(c[0] * 1e5)}_${Math.round(c[1] * 1e5)}`;
-  return `orsleg:v2:${profile}:${preference}:${r(a)};${r(b)}`;
+  return `orsleg:v2:${profile}${allowFerries ? ":ferry" : ""}:${preference}:${r(a)};${r(b)}`;
 }
 
 /** Tratti consecutivi mancanti dalla cache: [primo tratto, ultimo tratto]. */
@@ -367,11 +395,42 @@ function missingRuns(have: (OrsLeg | null)[]): [number, number][] {
   return runs;
 }
 
+/** Oltre questa distanza (m) tra la tappa messa e la via agganciata il collegamento è tratteggiato. */
+export const STRAIGHT_GAP_M = 40;
+
+/**
+ * Tratti che ORS non sa instradare (tappa fuori da ogni via, isola, lago…): uno alla volta,
+ * così solo quelli impossibili diventano linee rette. `null` = errore vero (quota, rete).
+ */
+async function routeLegsIndividually(
+  pts: [number, number][],
+  profiles: OrsProfile[],
+  apiKey: string,
+  preference: RoutePreference,
+  allowFerries: boolean,
+): Promise<OrsLeg[] | null> {
+  const legs = await Promise.all(
+    pts.slice(0, -1).map(async (a, j): Promise<OrsLeg | null> => {
+      const b = pts[j + 1]!;
+      let unroutable = false;
+      for (const prof of profiles) {
+        const r = await fetchOrsDetailed([a, b], prof, apiKey, preference, allowFerries);
+        if (r.result) return { coords: r.result.coords, extras: r.result.extras };
+        unroutable = r.unroutable;
+        if (!unroutable) return null;
+      }
+      return unroutable ? { coords: [a, b], straight: true } : null;
+    }),
+  );
+  return legs.some((l) => !l) ? null : (legs as OrsLeg[]);
+}
+
 /**
  * Percorso ORS calcolato per tratti, con cache per tratto: spostando una tappa si
  * ricalcolano solo i due tratti toccati; i tratti mancanti consecutivi partono in una
  * richiesta sola e i gruppi separati in parallelo.
  * `snapped`: dove ORS ha agganciato ogni tappa al sentiero.
+ * `straight`: linee rette (tratteggiate) dove il router non arriva.
  */
 export async function fetchOrsRouteLine(
   coordinates: [number, number][],
@@ -379,21 +438,23 @@ export async function fetchOrsRouteLine(
   apiKey: string,
   preference: RoutePreference = "recommended",
   cache?: OrsLegCache,
-  opts: { preferCycleways?: boolean } = {},
+  opts: { preferCycleways?: boolean; allowFerries?: boolean } = {},
 ): Promise<{
   feature: Feature<LineString>;
   meta: OrsRouteMeta;
   tech: RouteTech | null;
   snapped: [number, number][];
   spurs: { waypoint: number; km: number }[];
+  straight: [number, number][][];
 } | null> {
   if (coordinates.length < 2) return null;
   const profile = activityToOrsProfile(activity);
   const nLegs = coordinates.length - 1;
   const mixCycleways = !!opts.preferCycleways && profile === "cycling-road";
+  const allowFerries = !!opts.allowFerries;
   const cacheProfile = mixCycleways ? "road-cycleways-v3" : profile;
   const keys = Array.from({ length: nLegs }, (_, i) =>
-    legCacheKey(cacheProfile, preference, coordinates[i]!, coordinates[i + 1]!),
+    legCacheKey(cacheProfile, preference, coordinates[i]!, coordinates[i + 1]!, allowFerries),
   );
   const legs: (OrsLeg | null)[] = keys.map((k) => cache?.get(k) ?? null);
 
@@ -404,8 +465,8 @@ export async function fetchOrsRouteLine(
       let split: OrsLeg[] | null;
       if (mixCycleways) {
         const [roadRaw, regularRaw] = await Promise.all([
-          fetchOrsOnce(pts, "cycling-road", apiKey, preference),
-          fetchOrsOnce(pts, "cycling-regular", apiKey, preference),
+          fetchOrsOnce(pts, "cycling-road", apiKey, preference, allowFerries),
+          fetchOrsOnce(pts, "cycling-regular", apiKey, preference, allowFerries),
         ]);
         const road = splitRun(roadRaw, pts.length);
         const regular = splitRun(regularRaw, pts.length);
@@ -417,7 +478,7 @@ export async function fetchOrsRouteLine(
             })
           : null;
       } else {
-        split = splitRun(await fetchOrsOnce(pts, profile, apiKey, preference), pts.length);
+        split = splitRun(await fetchOrsOnce(pts, profile, apiKey, preference, allowFerries), pts.length);
         // Bici da strada: se una tappa finisce lontano da dove è stata messa, forse era su una
         // ciclabile esclusa dal profilo. Si riprova con quello che le ammette tutte.
         if (
@@ -425,14 +486,25 @@ export async function fetchOrsRouteLine(
           profile === "cycling-road" &&
           split.some((leg, j) => legSnapOffsetM(leg, pts[j]!, pts[j + 1]!) >= ROAD_RESNAP_MIN_M)
         ) {
-          const regular = splitRun(await fetchOrsOnce(pts, "cycling-regular", apiKey, preference), pts.length);
+          const regular = splitRun(await fetchOrsOnce(pts, "cycling-regular", apiKey, preference, allowFerries), pts.length);
           if (regular) split = split.map((leg, j) => pickCloserSnapLeg(leg, regular[j], pts[j]!, pts[j + 1]!));
         }
+      }
+      if (!split) {
+        // Un tratto impossibile fa fallire l'intera richiesta: si ricalcola tratto per tratto.
+        split = await routeLegsIndividually(
+          pts,
+          mixCycleways ? ["cycling-road", "cycling-regular"] : [profile],
+          apiKey,
+          preference,
+          allowFerries,
+        );
       }
       if (!split) return false;
       split.forEach((leg, j) => {
         legs[from + j] = leg;
-        cache?.set(keys[from + j]!, leg);
+        // Le linee rette non si salvano: i dati OSM di ORS possono cambiare.
+        if (!leg.straight) cache?.set(keys[from + j]!, leg);
       });
       return true;
     }),
@@ -442,6 +514,7 @@ export async function fetchOrsRouteLine(
   const merged: [number, number][] = [];
   const techParts: RouteTech[] = [];
   const snapped: [number, number][] = [];
+  const straight: [number, number][][] = [];
   const rawLegs = legs as OrsLeg[];
   // Gli aggancio delle tappe si leggono prima di togliere le punte.
   rawLegs.forEach((leg, i) => {
@@ -450,13 +523,41 @@ export async function fetchOrsRouteLine(
   });
   const trimmed = trimSpurs(rawLegs);
   let kmOffset = 0;
-  for (const leg of trimmed.legs) {
-    techParts.push(parseOrsExtras(leg.coords, leg.extras, kmOffset));
-    kmOffset += lineLengthKm(leg.coords);
-    const first = leg.coords[0]!;
+  /** Collega con una linea retta tratteggiata quando il punto da raggiungere è lontano da dove siamo. */
+  const bridgeTo = (target: [number, number]) => {
+    const last = merged[merged.length - 1];
+    if (!last || haversineMeters(last, target) <= STRAIGHT_GAP_M) return;
+    straight.push([last, target]);
+    kmOffset += lineLengthKm([last, target]);
+    merged.push(target);
+  };
+  // Prima tappa lontana da ogni via: si parte dal pallino con un tratto tratteggiato.
+  const startLeg = trimmed.legs[0]!;
+  if (!startLeg.straight && haversineMeters(coordinates[0]!, startLeg.coords[0]!) > STRAIGHT_GAP_M) {
+    merged.push(coordinates[0]!);
+  }
+  const pushCoords = (coords: [number, number][]) => {
+    const first = coords[0]!;
     const last = merged[merged.length - 1];
     const dup = last && last[0] === first[0] && last[1] === first[1];
-    merged.push(...(dup ? leg.coords.slice(1) : leg.coords));
+    merged.push(...(dup ? coords.slice(1) : coords));
+  };
+  for (const leg of trimmed.legs) {
+    bridgeTo(leg.coords[0]!);
+    if (leg.straight) {
+      straight.push(leg.coords);
+    } else {
+      techParts.push(parseOrsExtras(leg.coords, leg.extras, kmOffset));
+    }
+    kmOffset += lineLengthKm(leg.coords);
+    pushCoords(leg.coords);
+  }
+  // Ultima tappa lontana da ogni via: tratteggio fino al pallino.
+  const endTarget = coordinates[coordinates.length - 1]!;
+  const lastPoint = merged[merged.length - 1];
+  if (lastPoint && haversineMeters(lastPoint, endTarget) > STRAIGHT_GAP_M) {
+    straight.push([lastPoint, endTarget]);
+    merged.push(endTarget);
   }
   if (merged.length < 2) return null;
 
@@ -466,5 +567,6 @@ export async function fetchOrsRouteLine(
     tech: mergeRouteTechParts(techParts),
     snapped,
     spurs: trimmed.spurs,
+    straight,
   };
 }
