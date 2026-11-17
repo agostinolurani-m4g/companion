@@ -104,8 +104,8 @@ function metersBetween(a: { lng: number; lat: number }, b: { lng: number; lat: n
   return Math.hypot((b.lng - a.lng) * kx, (b.lat - a.lat) * 110_540);
 }
 
-function routeKey(wps: V2Waypoint[], act: string, pref: string, cw = false): string {
-  return `${act}|${pref}${cw ? "+cw" : ""}|${wps.map((w) => `${w.lng.toFixed(6)},${w.lat.toFixed(6)}`).join(";")}`;
+function routeKey(wps: V2Waypoint[], act: string, pref: string, cw = false, ferry = false): string {
+  return `${act}|${pref}${cw ? "+cw" : ""}${ferry ? "+ferry" : ""}|${wps.map((w) => `${w.lng.toFixed(6)},${w.lat.toFixed(6)}`).join(";")}`;
 }
 
 /** Aggiunge un nuovo punto di arrivo; il precedente resta come tappa intermedia. */
@@ -230,6 +230,7 @@ export default function V2RouteBuilder({ username }: Props) {
   const [name, setName] = useState("");
   const [visibility, setVisibility] = useState<UserRouteVisibility>("private");
   const [mapAction, setMapAction] = useState<MapAction | null>(null);
+  const [activityOpen, setActivityOpen] = useState(false);
   const poiTarget = useMemo(
     () => (mapAction?.kind === "poi" ? targetFromSearchPoi(mapAction.poi) : null),
     [mapAction],
@@ -264,6 +265,23 @@ export default function V2RouteBuilder({ username }: Props) {
     });
   }, []);
   const cyclewaysOn = preferCycleways && activity === "road";
+  /** Ammette i traghetti nel calcolo (di default esclusi). */
+  const [allowFerries, setAllowFerries] = useState(false);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("v2.allowFerries") === "1") setAllowFerries(true);
+    } catch {}
+  }, []);
+  const toggleAllowFerries = useCallback(() => {
+    setAllowFerries((v) => {
+      try {
+        localStorage.setItem("v2.allowFerries", v ? "0" : "1");
+      } catch {}
+      return !v;
+    });
+  }, []);
+  /** Tratti in linea retta (non instradabili): mappa tratteggiata. */
+  const [straightLines, setStraightLines] = useState<[number, number][][] | null>(null);
   const [colorBy, setColorBy] = useState<"surface" | "category">("category");
   const [snap, setSnap] = useState<PanelSnap>("peek");
   // Link "pianifica gita" (?tab=outing): apre la scheda Gita.
@@ -336,7 +354,7 @@ export default function V2RouteBuilder({ username }: Props) {
   /** Tappe appena agganciate al sentiero: il percorso è già quello giusto, niente nuovo calcolo. */
   const skipRouteKeyRef = useRef<string | null>(null);
 
-  const fetchRoute = useCallback(async (wps: V2Waypoint[], act: UserRouteActivity, pref: RoutePreference, cw: boolean) => {
+  const fetchRoute = useCallback(async (wps: V2Waypoint[], act: UserRouteActivity, pref: RoutePreference, cw: boolean, ferry: boolean) => {
     routeAbortRef.current?.abort();
     if (wps.length < 2 && importedTrackRef.current) {
       // Traccia importata: resta com'è finché non si disegnano almeno due tappe.
@@ -350,6 +368,7 @@ export default function V2RouteBuilder({ username }: Props) {
     if (wps.length < 2) {
       setRouting(false);
       setRouteCoords(null);
+      setStraightLines(null);
       setRouteTech(null);
       setPopularity(null);
       setAlternatives([]);
@@ -374,6 +393,7 @@ export default function V2RouteBuilder({ username }: Props) {
           activity: act,
           preference: pref,
           preferCycleways: cw,
+          allowFerries: ferry,
           alternatives: coordinates.length === 2,
         }),
         signal: ctrl.signal,
@@ -385,6 +405,7 @@ export default function V2RouteBuilder({ username }: Props) {
         tech?: RouteTech | null;
         snapped?: [number, number][] | null;
         spurs?: { waypoint: number; km: number }[];
+        straight?: [number, number][][];
         popularity?: RoutePopularityDto | null;
         alternatives?: RouteAlternativeDto[];
       };
@@ -398,6 +419,12 @@ export default function V2RouteBuilder({ username }: Props) {
         setTimeout(() => setNotice(null), 7000);
       }
       setRouteCoords(data.feature.geometry.coordinates as [number, number][]);
+      const straight = data.straight?.filter((l) => l.length >= 2) ?? [];
+      setStraightLines(straight.length > 0 ? straight : null);
+      if (straight.length > 0 && !spur) {
+        setNotice("Tratto tratteggiato: lì non c'è una via percorribile per questo sport, collego in linea retta.");
+        setTimeout(() => setNotice(null), 7000);
+      }
       setRouteTech(data.tech ?? null);
       setLengthKm(data.length_km ?? 0);
       setPopularity(data.popularity ?? null);
@@ -420,7 +447,7 @@ export default function V2RouteBuilder({ username }: Props) {
           const next = cur.map((w, i) =>
             dist[i]! <= PIN_SNAP_LIMIT_M ? { ...w, lng: snapped[i]![0], lat: snapped[i]![1] } : w,
           );
-          skipRouteKeyRef.current = routeKey(next, act, pref, cw);
+          skipRouteKeyRef.current = routeKey(next, act, pref, cw, ferry);
           waypointsRef.current = next;
           setWaypoints(next);
         }
@@ -429,6 +456,7 @@ export default function V2RouteBuilder({ username }: Props) {
       if (ctrl.signal.aborted) return;
       setErr(e instanceof Error ? e.message : String(e));
       setRouteCoords(null);
+      setStraightLines(null);
       setRouteTech(null);
       setPopularity(null);
       setAlternatives([]);
@@ -442,18 +470,18 @@ export default function V2RouteBuilder({ username }: Props) {
 
   useEffect(() => {
     if (routeTimer.current) clearTimeout(routeTimer.current);
-    if (skipRouteKeyRef.current && skipRouteKeyRef.current === routeKey(waypoints, activity, preference, cyclewaysOn)) {
+    if (skipRouteKeyRef.current && skipRouteKeyRef.current === routeKey(waypoints, activity, preference, cyclewaysOn, allowFerries)) {
       skipRouteKeyRef.current = null;
       return;
     }
     skipRouteKeyRef.current = null;
     routeTimer.current = setTimeout(() => {
-      void fetchRoute(waypoints, activity, preference, cyclewaysOn);
+      void fetchRoute(waypoints, activity, preference, cyclewaysOn, allowFerries);
     }, 200);
     return () => {
       if (routeTimer.current) clearTimeout(routeTimer.current);
     };
-  }, [waypoints, activity, preference, cyclewaysOn, fetchRoute]);
+  }, [waypoints, activity, preference, cyclewaysOn, allowFerries, fetchRoute]);
 
   useEffect(() => {
     if (!routeCoords || routeCoords.length < 2) {
@@ -518,6 +546,7 @@ export default function V2RouteBuilder({ username }: Props) {
         setWaypoints(wps);
         const coords = r.geojson.geometry.coordinates as [number, number][];
         setRouteCoords(coords);
+        setStraightLines(null);
         setLengthKm(r.length_km);
         const bb = bboxOfCoords(coords);
         if (bb) setFitTo({ bbox: bb, key: Date.now() });
@@ -530,14 +559,28 @@ export default function V2RouteBuilder({ username }: Props) {
 
   /* ─────────────── Interazione mappa ─────────────── */
   const onMapInteraction = useCallback((target: V2MapClickTarget) => {
-    if (target.kind === "map") {
-      // Primo punto: diventa subito la partenza (niente popup inutile).
-      if (waypointsRef.current.length === 0) {
-        commitWaypoints((wps) => [...wps, { lng: target.lng, lat: target.lat }]);
+    // Mentre si traccia, un'etichetta della mappa (paese, vetta…) vale come un punto qualunque
+    // (con il suo nome): niente scheda informativa che copre la mappa e blocca il percorso.
+    if (target.kind === "map" || target.kind === "place") {
+      const pt =
+        target.kind === "place"
+          ? { lng: target.place.lng, lat: target.place.lat, label: target.place.name }
+          : { lng: target.lng, lat: target.lat, label: undefined };
+      setSelectedPlace(null);
+      setSelectedFeature(null);
+      const count = waypointsRef.current.length;
+      // Primo punto = partenza, secondo = arrivo: un solo tocco, niente popup intermedio.
+      if (count === 0) {
+        commitWaypoints((wps) => [...wps, pt]);
         setMapAction(null);
         return;
       }
-      setMapAction({ kind: "new_point", lng: target.lng, lat: target.lat });
+      if (count === 1) {
+        commitWaypoints((wps) => applyArrivalPoint(wps, pt.lng, pt.lat, pt.label));
+        setMapAction(null);
+        return;
+      }
+      setMapAction({ kind: "new_point", lng: pt.lng, lat: pt.lat, label: pt.label });
       return;
     }
     if (target.kind === "waypoint") {
@@ -549,12 +592,6 @@ export default function V2RouteBuilder({ username }: Props) {
       setMapAction(null);
       setSelectedPlace(null);
       setSelectedFeature(target.feature);
-      return;
-    }
-    if (target.kind === "place") {
-      setMapAction(null);
-      setSelectedFeature(null);
-      setSelectedPlace(target.place);
       return;
     }
     setSelectedPlace(null);
@@ -712,6 +749,7 @@ export default function V2RouteBuilder({ username }: Props) {
   const clearAll = () => {
     commitWaypoints(() => []);
     setRouteCoords(null);
+    setStraightLines(null);
     setRouteTech(null);
     setLengthKm(0);
     setElevGainM(0);
@@ -1109,6 +1147,7 @@ export default function V2RouteBuilder({ username }: Props) {
           onPickAlternative={(alt) => {
             // Variante scelta: sostituisce la linea (le tappe restano le stesse due).
             setRouteCoords(alt.coordinates);
+            setStraightLines(null);
             setRouteTech(null);
             setLengthKm(alt.length_km);
             setPopularity(alt.popularity);
@@ -1234,7 +1273,27 @@ export default function V2RouteBuilder({ username }: Props) {
       {tab === "route" ? (
         <div className="v2-anim-in">
           <SectionTitle>Attività</SectionTitle>
-          <V2SportChips value={activity} onChange={(a) => setActivity(a)} />
+          {hasRoute && !activityOpen ? (
+            // Percorso già tracciato: l'elenco completo degli sport occupa mezzo pannello,
+            // quindi resta solo quello scelto (con «Cambia») per tenere in vista tappe e Salva.
+            <div className="flex items-center gap-2">
+              <span className="ui-chip" aria-current="true">
+                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: sport.color }} aria-hidden />
+                {sport.shortLabel}
+              </span>
+              <button type="button" className="ui-btn ui-btn-sm" onClick={() => setActivityOpen(true)}>
+                Cambia
+              </button>
+            </div>
+          ) : (
+            <V2SportChips
+              value={activity}
+              onChange={(a) => {
+                setActivity(a);
+                setActivityOpen(false);
+              }}
+            />
+          )}
           {importedTrack && hasRoute ? (
             <p className="mt-2 text-[12px] text-[color:var(--hmr-muted)]">
               Traccia importata da GPX: resta com&apos;è. Se aggiungi due tappe sulla mappa viene sostituita da un percorso calcolato.
@@ -1263,6 +1322,10 @@ export default function V2RouteBuilder({ username }: Props) {
               <span title="Usa le piste ciclabili asfaltate quando non allungano più del 25%">Preferisci ciclabili</span>
             </label>
           ) : null}
+          <label className="mt-2 flex cursor-pointer items-center gap-2 text-sm">
+            <input type="checkbox" checked={allowFerries} onChange={toggleAllowFerries} />
+            <span title="Ammette i traghetti (es. attraversare un lago) nel percorso">Includi traghetti</span>
+          </label>
 
           {hasProfile ? (
             <div className="mt-4 h-[128px] lg:hidden">
@@ -1680,6 +1743,7 @@ export default function V2RouteBuilder({ username }: Props) {
           waypoints={isExplore ? [] : waypoints}
           routeCoords={isExplore ? null : routeCoords}
           routeColoredSegments={isExplore ? null : routeSegments}
+          routeStraightLines={isExplore ? null : straightLines}
           pois={isExplore ? [] : pois}
           poiSearchCenter={isExplore ? null : poiSearchCenter}
           poiSearchBbox={isExplore ? null : poiSearchBbox}

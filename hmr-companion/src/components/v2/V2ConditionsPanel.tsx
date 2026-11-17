@@ -281,11 +281,16 @@ export default function V2ConditionsPanel({ lat, lng, compact = false, activity 
         <p className="text-[10px] text-[color:var(--hmr-faint)]">{alertsInfo.disclaimer}</p>
       ) : null}
 
-      <div className="flex gap-1 overflow-x-auto pb-1">
+      <p className="text-[10px] text-[color:var(--hmr-faint)]">Prossime ore · scorri di lato →</p>
+      <div
+        className="flex snap-x gap-1 overflow-x-auto pb-1"
+        // Sfumatura a destra: segnala che le ore continuano oltre il bordo.
+        style={{ maskImage: "linear-gradient(to right, #000 calc(100% - 28px), transparent)" }}
+      >
         {next.map((h) => (
           <div
             key={h.time}
-            className="min-w-[4.5rem] shrink-0 rounded-lg border border-[color:var(--hmr-border)]/60 bg-[color:var(--hmr-elev)]/50 px-2 py-1"
+            className="min-w-[4.5rem] shrink-0 snap-start rounded-lg border border-[color:var(--hmr-border)]/60 bg-[color:var(--hmr-elev)]/50 px-2 py-1"
           >
             <p className="text-[10px] text-[color:var(--hmr-muted)]">{h.time.slice(11, 16)}</p>
             <p className="font-medium">{Math.round(h.temperature_c)}°</p>

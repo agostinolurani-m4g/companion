@@ -11,16 +11,17 @@ export async function fetchOrsAlternatives(
   activity: UserRouteActivity,
   apiKey: string,
   preference: RoutePreference,
+  allowFerries = false,
 ): Promise<{ coordinates: [number, number][]; length_km: number }[]> {
   if (coordinates.length !== 2) return [];
-  const key = `v2route-alt:v1:${activity}:${preference}:${coordinates
+  const key = `v2route-alt:v1:${activity}${allowFerries ? ":ferry" : ""}:${preference}:${coordinates
     .map(([lng, lat]) => `${Math.round(lng * 1e5)}_${Math.round(lat * 1e5)}`)
     .join(";")}`;
   const cached = geoCacheGet(key) as { coordinates: [number, number][]; length_km: number }[] | null;
   if (Array.isArray(cached)) return cached;
 
   const profile = activityToOrsProfile(activity);
-  const body = buildOrsRequestBody(coordinates, profile, preference, true);
+  const body = buildOrsRequestBody(coordinates, profile, preference, true, allowFerries);
   body.extra_info = [];
   body.alternative_routes = { target_count: 3, share_factor: 0.6, weight_factor: 1.6 };
   try {

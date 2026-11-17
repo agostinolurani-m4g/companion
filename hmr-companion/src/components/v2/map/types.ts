@@ -35,6 +35,8 @@ export type V2PlanMapProps = {
   waypoints: V2Waypoint[];
   routeCoords: [number, number][] | null;
   routeColoredSegments?: RouteColoredSegment[] | null;
+  /** Tratti in linea retta (tappa irraggiungibile o lontana da ogni via): disegnati tratteggiati. */
+  routeStraightLines?: [number, number][][] | null;
   pois: V2SearchPoi[];
   poiSearchCenter?: { lng: number; lat: number } | null;
   poiSearchBbox?: ViewBbox | null;
