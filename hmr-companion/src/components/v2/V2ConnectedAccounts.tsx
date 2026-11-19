@@ -414,6 +414,12 @@ export default function V2ConnectedAccounts() {
                   >
                     {a.community_consent ? "Togli dalla heatmap community" : "Aggiungi alla heatmap community"}
                   </button>
+                  <a
+                    href={`/v2/segmenti/nuovo?activity=${encodeURIComponent(a.id)}`}
+                    className="rounded-full border border-[color:var(--hmr-border)] px-2.5 py-1 text-[11px]"
+                  >
+                    Crea segmento
+                  </a>
                   <button
                     type="button"
                     onClick={() => void markDone(a, "done")}

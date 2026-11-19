@@ -220,6 +220,23 @@ const PATHS = {
       <path d="m12 22-4-10h8l-4 10Z" opacity="0.35" fill="currentColor" stroke="none" />
     </>
   ),
+  trophy: (
+    <>
+      <path d="M8 4h8v5a4 4 0 0 1-8 0V4Z" />
+      <path d="M8 6H5a3 3 0 0 0 3 4M16 6h3a3 3 0 0 1-3 4M12 13v4M8 21h8M9.5 17h5" />
+    </>
+  ),
+  panorama: (
+    <>
+      <path d="m2 19 6-9 4 5 3-3 7 7H2Z" />
+      <circle cx="17" cy="6" r="2" />
+    </>
+  ),
+  close: (
+    <>
+      <path d="M6 6l12 12M18 6 6 18" />
+    </>
+  ),
 } as const;
 
 export type IconName = keyof typeof PATHS;

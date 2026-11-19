@@ -32,6 +32,7 @@ import type { V2PlanMapProps } from "./types";
 import MapLayersPanel from "./MapLayersPanel";
 import { ensureContourLayers, setContourLayerVisible } from "./contourLayer";
 import { useMapPrefs } from "./useMapPrefs";
+import { usePhotoMarkers } from "./photoMarkers";
 import { ensureHeatLayers, HEAT_SOURCE, setGeoJsonData, setHeatVisible, UNTRODDEN_SOURCE, type HeatScope } from "./heatmapLayer";
 import { heatSportFamily } from "@/lib/activities/sport-family";
 import { useV2Theme } from "@/components/v2/ui/theme";
@@ -73,6 +74,9 @@ export default function MapCore({
   showWaypoints = true,
   exploreGeoJson,
   photosGeoJson,
+  onPhotoSelect,
+  segmentsGeoJson,
+  onSegmentSelect,
   outingStopsGeoJson,
   reportsGeoJson,
   onRouteSelect,
@@ -132,6 +136,8 @@ export default function MapCore({
   const suppressClickRef = useRef(false);
   const onRouteSelectRef = useRef(onRouteSelect);
   const onReportSelectRef = useRef(onReportSelect);
+  const onSegmentSelectRef = useRef(onSegmentSelect);
+  const onPhotoSelectRef = useRef(onPhotoSelect);
   const outdoorFeaturesRef = useRef<GeoJSON.FeatureCollection | null>(featuresGeoJson ?? null);
   const allowOutdoorPickRef = useRef(pickOutdoorFeatures);
   const allowLabelPickRef = useRef(pickMapLabels);
@@ -139,6 +145,8 @@ export default function MapCore({
   useEffect(() => {
     onRouteSelectRef.current = onRouteSelect;
     onReportSelectRef.current = onReportSelect;
+    onSegmentSelectRef.current = onSegmentSelect;
+    onPhotoSelectRef.current = onPhotoSelect;
     onInteractionRef.current = onMapInteraction;
     onWaypointMoveRef.current = onWaypointMove;
     onRouteDragStartRef.current = onRouteDragStart;
@@ -184,6 +192,8 @@ export default function MapCore({
     optsRef.current = { slopeVisible, slopeOpacity, avalancheVisible, avalancheOpacity, sportOverlays, prefs, baseStyle, mapSport, mapMode };
   });
 
+  usePhotoMarkers(mapRef, mapReady, photosGeoJson, onPhotoSelectRef);
+
   const handlerRefs = useMemo(
     () => ({
       onInteractionRef,
@@ -195,6 +205,7 @@ export default function MapCore({
       suppressClickRef,
       onRouteSelectRef,
       onReportSelectRef,
+      onSegmentSelectRef,
       outdoorFeaturesRef,
       allowOutdoorPickRef,
       allowLabelPickRef,
@@ -520,6 +531,7 @@ export default function MapCore({
     setGeoJson(map, "v2-pending", pendingGeo);
     setGeoJson(map, "v2-poi-radius", radiusGeo);
     setGeoJson(map, "v2-photos", photosGeoJson ?? EMPTY_FC);
+    setGeoJson(map, "v2-segments", segmentsGeoJson ?? EMPTY_FC);
     setGeoJson(map, "v2-outing-stops", outingStopsGeoJson ?? EMPTY_FC);
     setGeoJson(map, "v2-reports", reportsGeoJson ?? EMPTY_FC);
     setGeoJson(map, "v2-outdoor", featuresGeoJson ?? EMPTY_FC);
@@ -530,6 +542,7 @@ export default function MapCore({
     exploreGeoJson,
     routeMarkersGeoJson,
     photosGeoJson,
+    segmentsGeoJson,
     outingStopsGeoJson,
     reportsGeoJson,
     featuresGeoJson,

@@ -272,11 +272,53 @@ export function addOverlaySourcesAndLayers(map: MaplibreMap, opts: OverlayLayerO
     },
   });
 
+  /* ── Segmenti (stile Strava): linea arancio con bordo, freccia nel verso ── */
+  map.addSource("v2-segments", { type: "geojson", data: EMPTY_FC });
+  map.addLayer({
+    id: "v2-segments-casing",
+    type: "line",
+    source: "v2-segments",
+    layout: { "line-cap": "round", "line-join": "round" },
+    paint: { "line-color": "#ffffff", "line-width": ["interpolate", ["linear"], ["zoom"], 9, 4, 15, 9], "line-opacity": 0.9 },
+  });
+  map.addLayer({
+    id: "v2-segments",
+    type: "line",
+    source: "v2-segments",
+    layout: { "line-cap": "round", "line-join": "round" },
+    paint: {
+      "line-color": ["case", ["boolean", ["get", "selected"], false], "#dc2626", "#f97316"],
+      "line-width": ["interpolate", ["linear"], ["zoom"], 9, 2.5, 15, 6],
+    },
+  });
+  map.addLayer({
+    id: "v2-segments-arrows",
+    type: "symbol",
+    source: "v2-segments",
+    minzoom: 12,
+    layout: {
+      "symbol-placement": "line",
+      "symbol-spacing": 90,
+      "text-field": "›",
+      "text-size": 18,
+      "text-keep-upright": false,
+      "text-allow-overlap": true,
+    },
+    paint: { "text-color": "#ffffff", "text-halo-color": "#c2410c", "text-halo-width": 1 },
+  });
+  map.addLayer({
+    id: "v2-segments-hit",
+    type: "line",
+    source: "v2-segments",
+    paint: { "line-width": 18, "line-opacity": 0 },
+  });
+
   map.addSource("v2-photos", { type: "geojson", data: EMPTY_FC });
   map.addLayer({
     id: "v2-photos",
     type: "circle",
     source: "v2-photos",
+    filter: ["!", ["has", "url"]],
     paint: {
       "circle-radius": 7,
       "circle-color": "#ec4899",

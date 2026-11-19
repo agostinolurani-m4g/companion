@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import V2PlanMap from "@/components/v2/V2PlanMap";
 import V2PhotoCapture from "@/components/v2/V2PhotoCapture";
+import V2PhotoLightbox from "@/components/v2/V2PhotoLightbox";
+import { photosToGeoJson } from "@/lib/photo-geo";
 import V2OutingReportForm from "@/components/v2/V2OutingReportForm";
 import V2ConditionsPanel from "@/components/v2/V2ConditionsPanel";
 import V2PrecisionForecast from "@/components/v2/V2PrecisionForecast";
@@ -128,6 +130,7 @@ export default function V2OutingDetail({ outingId }: Props) {
   const [err, setErr] = useState<string | null>(null);
   const [reporting, setReporting] = useState(false);
   const [photoOpen, setPhotoOpen] = useState(false);
+  const [lightbox, setLightbox] = useState<{ ids: string[]; index: number } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -186,14 +189,7 @@ export default function V2OutingDetail({ outingId }: Props) {
     [profile, overnights, route],
   );
   const photosGeo = useMemo<GeoJSON.FeatureCollection>(
-    () => ({
-      type: "FeatureCollection",
-      features: (outing?.photos ?? []).map((p) => ({
-        type: "Feature",
-        properties: { id: p.id },
-        geometry: { type: "Point", coordinates: [p.lng, p.lat] },
-      })),
-    }),
+    () => photosToGeoJson(outing?.photos ?? []),
     [outing?.photos],
   );
 
@@ -327,11 +323,16 @@ export default function V2OutingDetail({ outingId }: Props) {
             </div>
             {outing.photos.length ? (
               <div className="grid grid-cols-3 gap-1.5">
-                {outing.photos.map((p) => (
-                  <a key={p.id} href={p.url} target="_blank" rel="noreferrer" className="block aspect-square overflow-hidden rounded-lg">
+                {outing.photos.map((p, i) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => setLightbox({ ids: outing.photos.map((x) => x.id), index: i })}
+                    className="block aspect-square overflow-hidden rounded-lg"
+                  >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={p.url} alt={p.caption || "Foto gita"} className="h-full w-full object-cover" loading="lazy" />
-                  </a>
+                  </button>
                 ))}
               </div>
             ) : (
@@ -416,9 +417,20 @@ export default function V2OutingDetail({ outingId }: Props) {
           fitTo={fit}
           outingStopsGeoJson={stopsGeo}
           photosGeoJson={photosGeo}
+          onPhotoSelect={(ids, index) => setLightbox({ ids, index })}
           mapSport={activity}
         />
       </div>
+
+      {lightbox ? (
+        <V2PhotoLightbox
+          photos={lightbox.ids
+            .map((id) => outing.photos.find((p) => p.id === id))
+            .filter((p): p is NonNullable<typeof p> => !!p)}
+          startIndex={lightbox.index}
+          onClose={() => setLightbox(null)}
+        />
+      ) : null}
 
       {photoOpen ? (
         <V2PhotoCapture

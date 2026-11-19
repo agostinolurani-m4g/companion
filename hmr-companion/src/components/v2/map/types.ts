@@ -65,7 +65,12 @@ export type V2PlanMapProps = {
   avalancheOpacity?: number;
   showWaypoints?: boolean;
   exploreGeoJson?: GeoJSON.FeatureCollection | null;
+  /** Foto geolocalizzate (properties: photoId, url, caption, owner): miniature stile Komoot. */
   photosGeoJson?: GeoJSON.FeatureCollection | null;
+  onPhotoSelect?: (photoIds: string[], index: number) => void;
+  /** Segmenti (properties: segmentId, name, mine): linee arancio cliccabili. */
+  segmentsGeoJson?: GeoJSON.FeatureCollection | null;
+  onSegmentSelect?: (segmentId: string) => void;
   /** Soste della gita pianificata (properties: role, kind, name). */
   outingStopsGeoJson?: GeoJSON.FeatureCollection | null;
   reportsGeoJson?: GeoJSON.FeatureCollection | null;

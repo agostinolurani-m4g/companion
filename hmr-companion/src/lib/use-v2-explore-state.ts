@@ -1,6 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { photosToGeoJson, type MapPhoto } from "@/lib/photo-geo";
+import { segmentsToGeoJson } from "@/lib/segments/geo";
+import type { SegmentDto } from "@/lib/segments/serialize";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { V2MapClickTarget } from "@/components/v2/V2PlanMap";
 import type { UserRouteActivity } from "@/lib/db";
@@ -58,6 +61,9 @@ export function useV2ExploreState(enabled: boolean, username?: string) {
   const [avalancheGeoJson, setAvalancheGeoJson] = useState<GeoJSON.FeatureCollection | null>(null);
   const [reportsGeoJson, setReportsGeoJson] = useState<GeoJSON.FeatureCollection | null>(null);
   const [photosGeoJson, setPhotosGeoJson] = useState<GeoJSON.FeatureCollection | null>(null);
+  const [photos, setPhotos] = useState<MapPhoto[]>([]);
+  const [segmentsVisible, setSegmentsVisible] = useState(true);
+  const [segmentsGeoJson, setSegmentsGeoJson] = useState<GeoJSON.FeatureCollection | null>(null);
 
   const [reportMode, setReportMode] = useState(false);
   const [createReportAt, setCreateReportAt] = useState<{ lng: number; lat: number } | null>(null);
@@ -106,21 +112,15 @@ export function useV2ExploreState(enabled: boolean, username?: string) {
     if (!bbox) return;
     const q = `${bbox.south},${bbox.west},${bbox.north},${bbox.east}`;
     try {
-      const [rep, pho] = await Promise.all([
+      const [rep, pho, seg] = await Promise.all([
         fetchJson<{ geojson?: GeoJSON.FeatureCollection }>(`/api/v2/reports?bbox=${q}`),
-        fetchJson<{ photos?: Array<{ id: string; lng: number; lat: number; owner: string }> }>(
-          `/api/v2/photos?bbox=${q}`,
-        ),
+        fetchJson<{ photos?: MapPhoto[] }>(`/api/v2/photos?bbox=${q}`),
+        fetchJson<{ segments?: SegmentDto[] }>(`/api/v2/segments?bbox=${q}`).catch(() => ({ segments: [] })),
       ]);
+      setSegmentsGeoJson(segmentsToGeoJson(seg.segments ?? []));
       setReportsGeoJson(rep.geojson ?? { type: "FeatureCollection", features: [] });
-      setPhotosGeoJson({
-        type: "FeatureCollection",
-        features: (pho.photos ?? []).map((p) => ({
-          type: "Feature",
-          properties: { photoId: p.id, owner: p.owner },
-          geometry: { type: "Point", coordinates: [p.lng, p.lat] },
-        })),
-      });
+      setPhotos(pho.photos ?? []);
+      setPhotosGeoJson(photosToGeoJson(pho.photos ?? []));
     } catch {
       /* optional */
     }
@@ -319,6 +319,10 @@ export function useV2ExploreState(enabled: boolean, username?: string) {
     avalancheGeoJson,
     reportsGeoJson,
     photosGeoJson,
+    photos,
+    segmentsVisible,
+    setSegmentsVisible,
+    segmentsGeoJson,
     reportMode,
     setReportMode,
     createReportAt,

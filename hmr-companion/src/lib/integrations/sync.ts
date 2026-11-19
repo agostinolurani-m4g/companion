@@ -17,6 +17,7 @@ import {
 import {
   deauthorizeStrava,
   getStravaActivity,
+  getStravaTrackWithTimes,
   listStravaActivities,
   mapStravaActivity,
   refreshStravaToken,
@@ -249,4 +250,32 @@ export async function handleStravaWebhookEvent(db: Database.Database, ev: Strava
       now: Date.now(),
     });
   }
+}
+
+/**
+ * Completa con gli orari (stream Strava) le attività del proprietario che
+ * passano su un segmento ma non hanno tempi. Limitato per rispettare il rate limit.
+ * Restituisce le attività aggiornate (per ricalcolare i passaggi).
+ */
+export async function hydrateStravaTimes(
+  db: Database.Database,
+  owner: string,
+  activityIds: { id: string; external_id: string }[],
+): Promise<string[]> {
+  const acc = getExternalAccount(db, owner, "strava");
+  if (!acc || acc.status !== "active" || activityIds.length === 0) return [];
+  const { setActivityTrack } = await import("@/lib/segments/store");
+  const token = await getValidStravaToken(db, acc);
+  const done: string[] = [];
+  for (const a of activityIds) {
+    try {
+      const track = await getStravaTrackWithTimes(token, a.external_id);
+      if (!track) continue;
+      setActivityTrack(db, a.id, track.line, track.times);
+      done.push(a.id);
+    } catch (e) {
+      if (e instanceof StravaError && (e.isRateLimit || e.isAuth)) break;
+    }
+  }
+  return done;
 }

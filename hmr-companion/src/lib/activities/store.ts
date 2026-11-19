@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import type Database from "better-sqlite3";
+import { migrateSegmentsStore } from "@/lib/segments/store";
 
 /**
  * Attività importate da provider esterni (Strava) o da file (GPX/FIT/TCX/ZIP),
@@ -49,6 +50,8 @@ export type ActivityRow = {
   review_state: ActivityReviewState;
   meta_json: string | null;
   created_at: number;
+  /** Secondi dalla partenza per ogni vertice di `geojson` (null se senza orari). */
+  times_json?: string | null;
 };
 
 export function migrateActivitiesStore(db: Database.Database): void {
@@ -110,6 +113,7 @@ export function migrateActivitiesStore(db: Database.Database): void {
     ) WITHOUT ROWID;
     CREATE INDEX IF NOT EXISTS idx_heat_cells_scope_xy ON heat_cells(scope, cx, cy);
   `);
+  migrateSegmentsStore(db);
 }
 
 // ---------------------------------------------------------------------------
@@ -226,6 +230,8 @@ export type NewActivity = {
   elev_gain_m: number;
   moving_time_s: number | null;
   line: GeoJSON.LineString;
+  /** Allineati ai vertici di `line`. */
+  times?: number[] | null;
   community_consent: boolean;
   review_state: ActivityReviewState;
   meta?: Record<string, unknown> | null;
@@ -258,8 +264,9 @@ export function insertActivity(
   db.prepare(
     `INSERT INTO activities
        (id, owner, provider, external_id, sport, name, start_time, distance_m, elev_gain_m, moving_time_s,
-        geojson, bbox_w, bbox_s, bbox_e, bbox_n, community_consent, heat_scopes, review_state, meta_json, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?)`,
+        geojson, bbox_w, bbox_s, bbox_e, bbox_n, community_consent, heat_scopes, review_state, meta_json, created_at,
+        times_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?)`,
   ).run(
     id,
     input.owner,
@@ -280,6 +287,7 @@ export function insertActivity(
     input.review_state,
     input.meta ? JSON.stringify(input.meta) : null,
     input.now,
+    input.times && input.times.length === input.line.coordinates.length ? JSON.stringify(input.times) : null,
   );
   return { id, inserted: true };
 }
@@ -343,6 +351,7 @@ export function setActivityCommunityConsent(db: Database.Database, id: string, c
 }
 
 export function deleteActivityRow(db: Database.Database, id: string): boolean {
+  db.prepare(`DELETE FROM segment_efforts WHERE activity_id = ?`).run(id);
   return db.prepare(`DELETE FROM activities WHERE id = ?`).run(id).changes > 0;
 }
 

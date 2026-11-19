@@ -38,6 +38,8 @@ export default function V2ExploreAside({ explore }: Props) {
     setReportsVisible,
     photosVisible,
     setPhotosVisible,
+    segmentsVisible,
+    setSegmentsVisible,
     slopeVisible,
     setSlopeVisible,
     avalancheVisible,
@@ -124,6 +126,9 @@ export default function V2ExploreAside({ explore }: Props) {
           </button>
           <button type="button" className="ui-chip" aria-pressed={photosVisible} onClick={() => setPhotosVisible(!photosVisible)}>
             Foto
+          </button>
+          <button type="button" className="ui-chip" aria-pressed={segmentsVisible} onClick={() => setSegmentsVisible(!segmentsVisible)}>
+            Segmenti
           </button>
           {activity === "ski" ? (
             <>
