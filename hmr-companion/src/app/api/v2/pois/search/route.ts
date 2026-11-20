@@ -22,6 +22,23 @@ export const runtime = "nodejs";
 
 const VALID_CATEGORY = new Set<string>(CATEGORY_ORDER);
 
+/**
+ * Tetto di attesa per Overpass: con 3 mirror da 55 s si superavano i 2 minuti e il browser/proxy
+ * chiudeva la connessione con risposta vuota ("Unexpected end of JSON input"). Meglio un 503 chiaro.
+ */
+const POI_BUDGET_MS = 40_000;
+
+function withPoiBudget<T>(work: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new OverpassError("il servizio mappe (Overpass) è lento: riprova tra poco", 503, true)),
+      POI_BUDGET_MS,
+    );
+  });
+  return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
+}
+
 type Body = {
   lat?: number;
   lng?: number;
@@ -135,7 +152,7 @@ export async function POST(req: Request) {
 
     if (!nodes) {
       try {
-        const result = await getPoiTypesInBbox(clamped.bbox, bboxKeys);
+        const result = await withPoiBudget(getPoiTypesInBbox(clamped.bbox, bboxKeys));
         nodes = result.nodes;
         source = result.source;
         geoCacheSet(cacheKey, { nodes, source });
@@ -185,7 +202,7 @@ export async function POST(req: Request) {
 
   if (!nodes) {
     try {
-      const result = await getPoiTypesAround(lat, lng, radiusM, bboxKeys);
+      const result = await withPoiBudget(getPoiTypesAround(lat, lng, radiusM, bboxKeys));
       nodes = result.nodes;
       source = result.source;
       geoCacheSet(cacheKey, { nodes, source });

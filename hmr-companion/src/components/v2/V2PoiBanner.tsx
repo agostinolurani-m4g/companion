@@ -230,7 +230,7 @@ export default function V2PoiBanner({
       role="dialog"
       aria-label={`Dettagli ${title}`}
     >
-      <div className="pointer-events-auto ui-glass v2-anim-in flex max-h-[min(75dvh,38rem)] w-full max-w-lg flex-col overflow-hidden rounded-lg">
+      <div className="pointer-events-auto ui-glass v2-anim-in flex max-h-[min(52dvh,26rem)] w-full max-w-lg flex-col overflow-hidden rounded-lg">
         {zoomed ? (
           <button
             type="button"
@@ -257,7 +257,7 @@ export default function V2PoiBanner({
                   <img
                     src={url}
                     alt=""
-                    className={`${i === 0 ? "h-40 w-64" : "h-40 w-48"} rounded-lg border border-[color:var(--hmr-border)] object-cover`}
+                    className={`${i === 0 ? "h-24 w-40" : "h-24 w-32"} rounded-lg border border-[color:var(--hmr-border)] object-cover`}
                     loading="lazy"
                     onError={(e) => {
                       (e.currentTarget.parentElement as HTMLElement).style.display = "none";
@@ -278,7 +278,7 @@ export default function V2PoiBanner({
           </div>
         ) : null}
 
-        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 pt-3">
           <div className="mb-3 flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="mb-1 flex items-center gap-2">
@@ -402,7 +402,8 @@ export default function V2PoiBanner({
           {error ? <p className="mb-3 text-xs text-[color:var(--hmr-danger)]">{error}</p> : null}
 
           {onInsertInRoute || onSetDestination || onAddToOuting ? (
-            <div className="flex flex-wrap gap-2 border-t border-[color:var(--hmr-border)]/60 pt-3">
+            // Sempre visibile in fondo al pannello, anche con testo e foto lunghi (prima finiva fuori vista).
+            <div className="sticky bottom-0 -mx-4 flex flex-wrap gap-2 border-t border-[color:var(--hmr-border)]/60 bg-[color:var(--hmr-surface)] px-4 py-3">
               {onInsertInRoute ? (
                 <button
                   type="button"

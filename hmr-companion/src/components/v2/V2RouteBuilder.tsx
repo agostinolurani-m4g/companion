@@ -109,6 +109,17 @@ function routeKey(wps: V2Waypoint[], act: string, pref: string, cw = false, ferr
 }
 
 /** Aggiunge un nuovo punto di arrivo; il precedente resta come tappa intermedia. */
+/** Legge il JSON di una risposta: se il server (o il proxy) ha chiuso a vuoto, un messaggio chiaro invece di "Unexpected end of JSON input". */
+async function readJsonSafe<T>(res: Response): Promise<T> {
+  const text = await res.text();
+  if (!text) throw new Error("Il server non ha risposto in tempo: riprova tra poco.");
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error("Risposta del server non valida: riprova tra poco.");
+  }
+}
+
 function applyArrivalPoint(wps: V2Waypoint[], lng: number, lat: number, label?: string): V2Waypoint[] {
   return [...wps, { lng, lat, label }];
 }
@@ -400,7 +411,7 @@ export default function V2RouteBuilder({ username }: Props) {
         }),
         signal: ctrl.signal,
       });
-      const data = (await res.json()) as {
+      const data = await readJsonSafe<{
         error?: string;
         feature?: GeoJSON.Feature<GeoJSON.LineString>;
         length_km?: number;
@@ -411,7 +422,7 @@ export default function V2RouteBuilder({ username }: Props) {
         popularity?: RoutePopularityDto | null;
         alternatives?: RouteAlternativeDto[];
         degraded?: boolean;
-      };
+      }>(res);
       if (ctrl.signal.aborted) return;
       if (!res.ok || !data.feature) throw new Error(data.error ?? "Routing fallito");
       setRoutingDegraded(data.degraded === true);
@@ -843,7 +854,7 @@ export default function V2RouteBuilder({ username }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ lat, lng, radiusM: POI_SEARCH_RADIUS_M, categories: [kind.category], refresh: false }),
       });
-      const data = (await res.json()) as { error?: string; pois?: V2SearchPoi[]; count?: number };
+      const data = await readJsonSafe<{ error?: string; pois?: V2SearchPoi[]; count?: number }>(res);
       if (!res.ok) throw new Error(data.error ?? "Ricerca POI fallita");
       const found = (data.pois ?? []).filter((p) => poiMatchesKind(p.category, p.sub_kind, kind));
       setPois(found);
@@ -867,7 +878,7 @@ export default function V2RouteBuilder({ username }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ lat, lng, radiusM: POI_SEARCH_RADIUS_M, categories, refresh: false }),
       });
-      const data = (await res.json()) as { error?: string; pois?: V2SearchPoi[]; count?: number };
+      const data = await readJsonSafe<{ error?: string; pois?: V2SearchPoi[]; count?: number }>(res);
       if (!res.ok) throw new Error(data.error ?? "Ricerca POI fallita");
       const found = data.pois ?? [];
       setPois(found);
@@ -900,7 +911,7 @@ export default function V2RouteBuilder({ username }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ bbox: mapViewport, categories, refresh: false }),
       });
-      const data = (await res.json()) as { error?: string; pois?: V2SearchPoi[]; count?: number };
+      const data = await readJsonSafe<{ error?: string; pois?: V2SearchPoi[]; count?: number }>(res);
       if (!res.ok) throw new Error(data.error ?? "Ricerca POI fallita");
       const found = (data.pois ?? []).filter((p) => poiMatchesAnyKind(p.category, p.sub_kind, kinds));
       setPois(found);

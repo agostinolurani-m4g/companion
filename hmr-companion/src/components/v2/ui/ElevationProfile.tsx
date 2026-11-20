@@ -44,7 +44,9 @@ export default function ElevationProfile({ coords, hoverKm, onHoverKm, className
     }
     const span = Math.max(50, max - min);
     const yStep = niceStep(span, 3);
-    const lo = Math.floor((min - span * 0.08) / yStep) * yStep;
+    let lo = Math.floor((min - span * 0.08) / yStep) * yStep;
+    // Percorso tutto sopra il livello del mare: l'asse non scende sotto lo zero (prima arrivava a −500).
+    if (min >= 0 && lo < 0) lo = 0;
     const hi = Math.ceil((max + span * 0.05) / yStep) * yStep;
     const total = pts[pts.length - 1]![3] || 1;
     const xStep = niceStep(total, Math.max(3, Math.round(size.w / 110)));
