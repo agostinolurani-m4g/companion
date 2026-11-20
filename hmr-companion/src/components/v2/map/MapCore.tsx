@@ -26,7 +26,8 @@ import Icon from "@/components/v2/ui/Icon";
 import { EMPTY_FC } from "./constants";
 import { circlePolygon, setGeoJson } from "./geojson";
 import { attachGlobalHandlers, bindLayerHandlers } from "./mapHandlers";
-import { addOverlaySourcesAndLayers, setSportOverlayVisibility } from "./overlayLayers";
+import { addOverlaySourcesAndLayers, ROUTE_DEFAULT_COLOR, setRouteTheme, setSportOverlayVisibility } from "./overlayLayers";
+import { adaptLineColors } from "@/lib/map/route-colors";
 import { applyTerrain3d } from "./terrain";
 import type { V2PlanMapProps } from "./types";
 import MapLayersPanel from "./MapLayersPanel";
@@ -523,9 +524,11 @@ export default function MapCore({
           }
         : EMPTY_FC;
 
-    setGeoJson(map, "v2-route", routeGeo);
+    // Colori sport pastello: sulla carta chiara vengono scuriti (stessa tinta) per restare leggibili.
+    setGeoJson(map, "v2-route", adaptLineColors(routeGeo, baseDark, ROUTE_DEFAULT_COLOR));
     setGeoJson(map, "v2-route-preview", previewGeo);
-    setGeoJson(map, "v2-route-markers", routeMarkersGeoJson ?? EMPTY_FC);
+    setGeoJson(map, "v2-route-markers", adaptLineColors(routeMarkersGeoJson ?? EMPTY_FC, baseDark, ROUTE_DEFAULT_COLOR));
+    setRouteTheme(map, baseDark);
     setGeoJson(map, "v2-waypoints", wpGeo);
     setGeoJson(map, "v2-pois", poiGeo);
     setGeoJson(map, "v2-pending", pendingGeo);
@@ -554,6 +557,7 @@ export default function MapCore({
     poiSearchBbox,
     mapReady,
     styleEpoch,
+    baseDark,
   ]);
 
   /* ── Marker hover (profilo altimetrico ↔ mappa) ── */

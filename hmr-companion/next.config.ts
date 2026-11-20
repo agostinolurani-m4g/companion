@@ -16,6 +16,12 @@ loadEnvConfig(appDir, isDev);
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  // Dev da telefono (hotspot iPhone = 172.20.10.x, Wi-Fi di casa = 192.168.x.x). Extra: HMR_DEV_ORIGINS=a,b
+  allowedDevOrigins: [
+    "172.20.10.*",
+    "192.168.*.*",
+    ...(process.env.HMR_DEV_ORIGINS?.split(",").map((s) => s.trim()).filter(Boolean) ?? []),
+  ],
   experimental: {
     proxyClientMaxBodySize: "50mb",
   },

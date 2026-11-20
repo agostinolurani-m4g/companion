@@ -46,14 +46,17 @@ type Palette = {
   hutIcon: string;
 };
 
-/** Chiara, pastello: pochi toni desaturati. */
+/**
+ * Chiara, carta svizzera: avorio caldo, boschi verdi leggibili (il colore che rende viva una topo),
+ * roccia e detriti beige. Paper/forest sono anche i campioni di contrasto in route-colors.ts.
+ */
 export const SWISS: Palette = {
-  paper: "#f4f3ef",
-  forest: "#dbe6d6",
-  forestEdge: "#c7d8c1",
-  meadow: "#eef0e8",
-  rock: "#e6e3de",
-  scree: "#ebe8e1",
+  paper: "#f6f3ea",
+  forest: "#d4e3c2",
+  forestEdge: "#bcd2a6",
+  meadow: "#edf0dc",
+  rock: "#e9e3d8",
+  scree: "#efe9dc",
   glacier: "#f2f6f9",
   glacierEdge: "#a9c3d6",
   water: "#c9dde8",
@@ -309,18 +312,58 @@ export function buildSwissTopoStyle(theme: "light" | "dark" = "light"): StyleSpe
       filter: ["all", ["==", ["get", "brunnel"], "tunnel"], cls("motorway", "trunk", "primary", "secondary", "tertiary", "minor")],
       paint: { "line-color": P.minorCase, "line-width": 1.2, "line-dasharray": [2, 2], "line-opacity": 0.6 },
     },
+    /*
+     * Sentieri. OpenMapTiles non espone `sac_scale` (le difficoltà le mostra il nostro overlay
+     * sentieri, src/lib/outdoor/trail-style.ts): qui la gerarchia segue `subclass`/`surface`,
+     * come la carta svizzera: sentiero escursionistico tratteggio nero marcato, percorso pedonale
+     * urbano fine e chiaro, scalinate a puntini.
+     */
     {
       id: "path",
       type: "line",
       source: SRC,
       "source-layer": "transportation",
       minzoom: 12,
-      filter: ["all", cls("path"), ["!=", ["get", "subclass"], "cycleway"], notTunnel],
+      filter: [
+        "all",
+        cls("path"),
+        ["match", ["get", "subclass"], ["cycleway", "footway", "pedestrian", "steps", "corridor", "platform"], false, true],
+        notTunnel,
+      ],
       paint: {
         "line-color": P.path,
-        "line-width": z(12, 0.6, 16, 1.4),
+        "line-width": z(12, 0.7, 14, 1.1, 17, 1.8),
         "line-dasharray": [3, 1.6],
-        "line-opacity": 0.85,
+        "line-opacity": ["match", ["get", "surface"], "paved", 0.6, 0.9],
+      },
+    },
+    {
+      id: "path-footway",
+      type: "line",
+      source: SRC,
+      "source-layer": "transportation",
+      minzoom: 14,
+      filter: ["all", cls("path"), ["match", ["get", "subclass"], ["footway", "pedestrian"], true, false], notTunnel],
+      paint: {
+        "line-color": P.path,
+        "line-width": z(14, 0.5, 17, 1.2),
+        "line-dasharray": [2, 1.2],
+        "line-opacity": 0.5,
+      },
+    },
+    {
+      id: "path-steps",
+      type: "line",
+      source: SRC,
+      "source-layer": "transportation",
+      minzoom: 15,
+      filter: ["all", cls("path"), ["==", ["get", "subclass"], "steps"], notTunnel],
+      layout: { "line-cap": "round" },
+      paint: {
+        "line-color": P.path,
+        "line-width": z(15, 1.2, 18, 2.4),
+        "line-dasharray": [0.1, 1.6],
+        "line-opacity": 0.8,
       },
     },
     {

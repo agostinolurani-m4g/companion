@@ -15,6 +15,7 @@ export const V2_NAV_LINKS: readonly V2NavLink[] = [
   { id: "explore", href: "/v2/plan?mode=explore", label: "Esplora", icon: "compass", mobile: true },
   { id: "safety", href: "/v2/sicurezza", label: "Sicurezza", icon: "shield", mobile: true },
   { id: "groups", href: "/v2/groups", label: "Gruppi", icon: "users", mobile: true },
+  { id: "live", href: "/v2/live", label: "Live", icon: "sparkles", mobile: true },
   { id: "segments", href: "/v2/segmenti", label: "Segmenti", icon: "trophy", mobile: false },
   { id: "panorama", href: "/v2/panorama", label: "Panorama", icon: "panorama", mobile: false },
   { id: "photos", href: "/v2/foto", label: "Foto", icon: "camera", mobile: false },
@@ -29,6 +30,7 @@ export function activeNavId(pathname: string, mode: string | null): string | nul
   if (pathname.startsWith("/v2/scialpinismo")) return "plan";
   if (pathname.startsWith("/v2/sicurezza")) return "safety";
   if (pathname.startsWith("/v2/groups")) return "groups";
+  if (pathname.startsWith("/v2/live")) return "live";
   if (pathname.startsWith("/v2/foto")) return "photos";
   if (pathname.startsWith("/v2/segmenti")) return "segments";
   if (pathname.startsWith("/v2/panorama")) return "panorama";
