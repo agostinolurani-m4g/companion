@@ -409,10 +409,12 @@ export function applyRelief(map: MaplibreMap, opts: ReliefOptions): void {
           "hillshade-method": "multidirectional",
           // Chiaro "svizzero": ombre leggere blu-viola e versanti al sole con luce calda
           // (un grigio ardesia pieno rende la carta sporca e monocromatica).
-          "hillshade-highlight-color": opts.dark ? "rgba(255,255,255,0.10)" : opts.winter ? "rgba(255,255,255,0.5)" : "rgba(255,247,220,0.42)",
-          "hillshade-shadow-color": opts.dark ? "rgba(0,0,0,0.55)" : opts.winter ? "rgba(71,85,105,0.5)" : "rgba(74,80,112,0.30)",
-          "hillshade-accent-color": opts.dark ? "rgba(0,0,0,0.3)" : "rgba(92,82,72,0.14)",
-          "hillshade-exaggeration": opts.dark ? 0.4 : 0.42,
+          // Scuro "notte": ombre blu-notte morbide (il nero pieno schiaccia interi versanti)
+          // e luce fredda lunare sui versanti esposti, così il rilievo resta leggibile.
+          "hillshade-highlight-color": opts.dark ? "rgba(196,212,236,0.16)" : opts.winter ? "rgba(255,255,255,0.5)" : "rgba(255,247,220,0.42)",
+          "hillshade-shadow-color": opts.dark ? "rgba(5,8,18,0.40)" : opts.winter ? "rgba(71,85,105,0.5)" : "rgba(74,80,112,0.30)",
+          "hillshade-accent-color": opts.dark ? "rgba(0,0,0,0.18)" : "rgba(92,82,72,0.14)",
+          "hillshade-exaggeration": opts.dark ? 0.38 : 0.42,
         },
       } as LayerSpecification,
       reliefInsertBefore(map),

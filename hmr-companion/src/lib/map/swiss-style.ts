@@ -84,13 +84,16 @@ export const SWISS: Palette = {
   hutIcon: "v2-hut",
 };
 
-/** Scura, coordinata con l'interfaccia (petrolio/viola smorzati). */
+/**
+ * Scura "notte svizzera", coordinata con l'interfaccia (petrolio/viola smorzati):
+ * boschi verde profondo ben distinti (altrimenti tutto è un unico grigio), roccia grigio-blu.
+ */
 export const SWISS_DARK: Palette = {
-  paper: "#1a1e22",
-  forest: "#212b27",
-  forestEdge: "#26312c",
-  meadow: "#1d2224",
-  rock: "#24282c",
+  paper: "#1b2024",
+  forest: "#22322a",
+  forestEdge: "#2a3d33",
+  meadow: "#1f2623",
+  rock: "#262a2e",
   scree: "#22262a",
   glacier: "#283038",
   glacierEdge: "#4f6b80",

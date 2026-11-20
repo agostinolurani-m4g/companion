@@ -57,7 +57,9 @@ export function ensureContourLayers(map: MaplibreMap, dark: boolean): void {
     maxzoom: 16,
   });
 
-  const lineColor = dark ? "rgba(160,178,184,0.32)" : "rgba(150,118,88,0.45)";
+  // Sul fondo scuro linee chiare e fitte diventano rumore: più sottili e trasparenti.
+  const lineColor = dark ? "rgba(150,172,178,0.22)" : "rgba(150,118,88,0.45)";
+  const [indexWidth, minorWidth] = dark ? [0.9, 0.45] : [1.1, 0.55];
   const before = reliefInsertBefore(map);
   map.addLayer(
     {
@@ -68,7 +70,7 @@ export function ensureContourLayers(map: MaplibreMap, dark: boolean): void {
       minzoom: 11,
       paint: {
         "line-color": lineColor,
-        "line-width": ["match", ["get", "level"], 1, 1.1, 0.55],
+        "line-width": ["match", ["get", "level"], 1, indexWidth, minorWidth],
         "line-opacity": ["interpolate", ["linear"], ["zoom"], 11, 0.5, 13, 0.85],
       },
       layout: { "line-join": "round" },

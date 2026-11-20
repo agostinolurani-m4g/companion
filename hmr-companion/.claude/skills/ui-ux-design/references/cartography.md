@@ -63,6 +63,7 @@ Casing = same geometry, wider line underneath, contrasting color, slight transpa
 ## Relief
 
 - Hillshade is context. Light mode, Swiss recipe: **light blue-violet shadows** `rgba(74,80,112,0.30)` + **warm sunlit highlights** `rgba(255,247,220,0.42)`, exaggeration ≈ 0.42. A full slate-grey shadow (`rgba(43,52,70,0.42)`) turns the whole map into dirty concrete; too much yellow in highlights reads as sand. If the route struggles, lower relief contrast before making the route louder.
+- Dark mode, "Swiss night" recipe: **soft blue-night shadows** `rgba(5,8,18,0.40)` + **cool moonlight highlights** `rgba(196,212,236,0.16)`, exaggeration ≈ 0.38; forest `#22322a` on paper `#1b2024`. Pure black shadows at 0.55 crush whole slopes into mud; light, dense contours on a dark ground become white noise, so keep them at ~0.22 opacity and thinner (0.45/0.9 px).
 - Landcover carries the life of a topo map: forests must be a readable green (`#d4e3c2`), paper warm ivory (`#f6f3ea`). A near-grey forest makes the map monochrome.
 - Color relief (tint) ≤ 0.45 opacity; off by default.
 - Precomputed relief replaces runtime hillshade only inside the corridor (see `reliefMode` in `src/lib/map/relief.ts`).
