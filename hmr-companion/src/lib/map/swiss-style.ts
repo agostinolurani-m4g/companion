@@ -122,6 +122,15 @@ export const SWISS_DARK: Palette = {
   hutIcon: "v2-hut",
 };
 
+/**
+ * Trame "disegnate" (tratteggio rupi, puntinato detriti, segni d'albero, grana della carta).
+ * Le immagini sono generate su canvas da src/components/v2/map/mapImages.ts su `styleimagemissing`.
+ */
+export const PATTERN_IDS = {
+  light: { rock: "v2-pat-rock-light", scree: "v2-pat-scree-light", forest: "v2-pat-forest-light", paper: "v2-pat-paper-light" },
+  dark: { rock: "v2-pat-rock-dark", scree: "v2-pat-scree-dark", forest: "v2-pat-forest-dark", paper: "v2-pat-paper-dark" },
+} as const;
+
 const name: ExpressionSpecification = ["coalesce", ["get", "name:it"], ["get", "name:latin"], ["get", "name"]];
 const cls = (...c: string[]): ExpressionSpecification => ["match", ["get", "class"], c, true, false];
 const notTunnel: ExpressionSpecification = ["!=", ["get", "brunnel"], "tunnel"];
@@ -156,8 +165,12 @@ function road(id: string, classes: string[], fill: string, casing: string, w: nu
 
 export function buildSwissTopoStyle(theme: "light" | "dark" = "light"): StyleSpecification {
   const P = theme === "dark" ? SWISS_DARK : SWISS;
+  const PAT = PATTERN_IDS[theme];
   const layers: LayerSpecification[] = [
     { id: "background", type: "background", paint: { "background-color": P.paper } },
+    // Grana della carta (effetto stampa): fill-pattern su un poligono mondo. Non `background-pattern`,
+    // che non emette `styleimagemissing` e perde l'immagine a ogni cambio stile.
+    { id: "paper-grain", type: "fill", source: "paper", paint: { "fill-pattern": PAT.paper } },
 
     /* ── Suolo ── */
     {
@@ -210,6 +223,34 @@ export function buildSwissTopoStyle(theme: "light" | "dark" = "light"): StyleSpe
       "source-layer": "landcover",
       filter: cls("sand"),
       paint: { "fill-color": P.scree },
+    },
+    /* Trame "disegnate" sopra le campiture: compaiono con lo zoom, così da lontano resta pulito. */
+    {
+      id: "landcover-rock-hatch",
+      type: "fill",
+      source: SRC,
+      "source-layer": "landcover",
+      minzoom: 11,
+      filter: cls("rock"),
+      paint: { "fill-pattern": PAT.rock, "fill-opacity": ["interpolate", ["linear"], ["zoom"], 11, 0.35, 13, 1] },
+    },
+    {
+      id: "landcover-scree-stipple",
+      type: "fill",
+      source: SRC,
+      "source-layer": "landcover",
+      minzoom: 12,
+      filter: cls("sand"),
+      paint: { "fill-pattern": PAT.scree, "fill-opacity": ["interpolate", ["linear"], ["zoom"], 12, 0.4, 14, 1] },
+    },
+    {
+      id: "landcover-wood-trees",
+      type: "fill",
+      source: SRC,
+      "source-layer": "landcover",
+      minzoom: 13,
+      filter: cls("wood"),
+      paint: { "fill-pattern": PAT.forest, "fill-opacity": ["interpolate", ["linear"], ["zoom"], 13, 0.3, 15, 1] },
     },
     {
       id: "landcover-wetland",
@@ -572,6 +613,14 @@ export function buildSwissTopoStyle(theme: "light" | "dark" = "light"): StyleSpe
     glyphs: "https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf",
     sources: {
       [SRC]: { type: "vector", url: "https://tiles.openfreemap.org/planet", attribution: "© OpenStreetMap · © OpenFreeMap" },
+      paper: {
+        type: "geojson",
+        data: {
+          type: "Feature",
+          properties: {},
+          geometry: { type: "Polygon", coordinates: [[[-180, -85.05], [180, -85.05], [180, 85.05], [-180, 85.05], [-180, -85.05]]] },
+        },
+      },
     },
     layers,
   };

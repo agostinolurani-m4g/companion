@@ -68,6 +68,15 @@ Casing = same geometry, wider line underneath, contrasting color, slight transpa
 - Color relief (tint) ≤ 0.45 opacity; off by default.
 - Precomputed relief replaces runtime hillshade only inside the corridor (see `reliefMode` in `src/lib/map/relief.ts`).
 
+## "Hand-drawn" Swiss textures
+
+Generated on canvas in `src/components/v2/map/mapImages.ts` (ids in `PATTERN_IDS`, `swiss-style.ts`), light and dark variants:
+- Rock: irregular groups of oblique hatch strokes (z11+), scree: variable stipple (z12+), forest: staggered "lollipop" tree marks (z13+), paper: faint grain on a world polygon.
+- Work in **canvas pixels at pixelRatio 2**: a radius of 2 px is 1 px on screen and vanishes. Tree crowns ≈ 4–6 canvas px, strokes ≥ 1.5.
+- Make patterns seamless (redraw marks near edges at ±size) and deterministic (seeded PRNG).
+- Fade textures in with zoom; far out they turn into noise.
+- Use `fill-pattern` (fires `styleimagemissing`), not `background-pattern`: the latter never asks for the image and loses it on every `setStyle`.
+
 ## Testing on the map
 
 ```js
