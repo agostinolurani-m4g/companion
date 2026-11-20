@@ -231,6 +231,8 @@ export default function V2RouteBuilder({ username }: Props) {
   const [visibility, setVisibility] = useState<UserRouteVisibility>("private");
   const [mapAction, setMapAction] = useState<MapAction | null>(null);
   const [activityOpen, setActivityOpen] = useState(false);
+  /** Il server ha instradato col ripiego per auto (chiave ORS mancante): il percorso non vale per lo sport scelto. */
+  const [routingDegraded, setRoutingDegraded] = useState(false);
   const poiTarget = useMemo(
     () => (mapAction?.kind === "poi" ? targetFromSearchPoi(mapAction.poi) : null),
     [mapAction],
@@ -408,9 +410,11 @@ export default function V2RouteBuilder({ username }: Props) {
         straight?: [number, number][][];
         popularity?: RoutePopularityDto | null;
         alternatives?: RouteAlternativeDto[];
+        degraded?: boolean;
       };
       if (ctrl.signal.aborted) return;
       if (!res.ok || !data.feature) throw new Error(data.error ?? "Routing fallito");
+      setRoutingDegraded(data.degraded === true);
       const spur = data.spurs?.[0];
       if (spur) {
         setNotice(
@@ -1139,6 +1143,15 @@ export default function V2RouteBuilder({ username }: Props) {
           </p>
         )}
       </div>
+      {routingDegraded && lengthKm > 0 ? (
+        <p
+          role="alert"
+          className="mt-2 rounded-lg border border-[color:var(--hmr-warn)]/40 bg-[color:var(--hmr-warn)]/10 px-2.5 py-1.5 text-[12px] font-medium text-[color:var(--hmr-warn)]"
+        >
+          Percorso approssimato: il servizio di instradamento per {sport.shortLabel.toLowerCase()} non è disponibile e il
+          tracciato segue solo le strade per auto. Non fidarti di ciclabili, sentieri e dislivello.
+        </p>
+      ) : null}
       {lengthKm > 0 ? (
         <V2RoutePopularity
           popularity={popularity}

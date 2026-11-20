@@ -43,7 +43,8 @@ function routeCacheKey(
   allowFerries: boolean,
 ): string {
   const rounded = coordinates.map(([lng, lat]) => `${Math.round(lng * 1e5)}_${Math.round(lat * 1e5)}`).join(";");
-  return `v2route:v8:${activity}:${preference}${preferCycleways ? ":cw3" : ""}${allowFerries ? ":ferry" : ""}:${rounded}`;
+  // v9: scarta i percorsi OSRM (auto) finiti in cache quando la chiave ORS mancava.
+  return `v2route:v9:${activity}:${preference}${preferCycleways ? ":cw3" : ""}${allowFerries ? ":ferry" : ""}:${rounded}`;
 }
 
 /** Popolarità (heatmap) calcolata a ogni richiesta: la heatmap cambia, la cache del routing no. */
@@ -138,8 +139,8 @@ export async function POST(req: Request) {
         straight = ors.straight;
       }
     } else if (!orsKey && activityPrefersOrs(activity)) {
-      console.warn(
-        `[v2/route] OPENROUTESERVICE_API_KEY mancante: attività "${activity}" instradata col fallback OSRM demo (solo profilo auto). Aggiungi la chiave in .env.local per il routing a piedi/MTB/gravel reale.`,
+      console.error(
+        `[v2/route] OPENROUTESERVICE_API_KEY mancante: attività "${activity}" instradata col fallback OSRM demo (solo strade per auto). Imposta la chiave nel .env del server (deploy/.env) e riavvia il container.`,
       );
     }
 
@@ -168,10 +169,14 @@ export async function POST(req: Request) {
 
     const coords = feature.geometry.coordinates as [number, number][];
     const length_km = lineLengthKm(coords);
+    // Ripiego OSRM (senza chiave ORS): percorso per auto, ignora lo sport. Va segnalato all'utente
+    // e NON va in cache, altrimenti resterebbe servito anche dopo aver messo la chiave.
+    const degraded = engine !== "openrouteservice";
     const payload = { feature, length_km, profile, engine, preference, routingMode: "snapped" as const, tech, snapped, spurs, straight };
-    geoCacheSet(cacheKey, payload);
+    if (!degraded) geoCacheSet(cacheKey, payload);
     return NextResponse.json({
       ...payload,
+      degraded,
       popularity: popularityFor(coords, activity, auth.email),
       ...(wantAlternatives ? { alternatives: await alternativesFor(coordinates, activity, preference, auth.email, allowFerries) } : {}),
     });
