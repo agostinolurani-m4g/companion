@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { DataOverlayLegend, useDataOverlays } from "@/components/v2/map/dataOverlays";
 import type { Map as MaplibreMap } from "maplibre-gl";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
@@ -198,6 +199,7 @@ export default function MapCore({
   });
 
   usePhotoMarkers(mapRef, mapReady, photosGeoJson, onPhotoSelectRef);
+  useDataOverlays(mapRef, mapReady, styleEpoch, sportOverlays);
 
   const handlerRefs = useMemo(
     () => ({
@@ -737,6 +739,7 @@ export default function MapCore({
     >
       <div ref={containerRef} className="h-full w-full min-h-0" />
       {busy || tilesLoading ? <div className="v2-progress" aria-hidden /> : null}
+      <DataOverlayLegend overlays={sportOverlays} />
 
       {/* Controlli mappa */}
       <div

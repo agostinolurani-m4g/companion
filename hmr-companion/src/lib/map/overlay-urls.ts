@@ -14,6 +14,8 @@ export const OVERLAY_TILE_URLS: Record<MapOverlayId, string | null> = {
   sac_trails: null,
   contours: null,
   rainviewer: null,
+  snow_depth: null,
+  ski_lines: null,
 };
 
 export const OVERLAY_ATTRIBUTION: Partial<Record<MapOverlayId, string>> = {
@@ -48,4 +50,6 @@ export const AVAILABLE_OVERLAYS: readonly OverlayDef[] = [
   { id: "slope", label: "Pendenza", hint: "Classi di inclinazione >27° (Alpi)", swatch: "#f97316" },
   { id: "opensnow", label: "Piste da sci", hint: "Piste e impianti (OpenSnowMap)", swatch: "#0ea5e9" },
   { id: "rainviewer", label: "Radar pioggia", hint: "Ultima scansione radar", swatch: "#22d3ee" },
+  { id: "snow_depth", label: "Altezza neve", hint: "Neve al suolo dal modello meteo (~2 km)", swatch: "#3b82f6" },
+  { id: "ski_lines", label: "Linee di sci", hint: "Discese degli itinerari, colore = difficoltà", swatch: "#dc2626" },
 ];

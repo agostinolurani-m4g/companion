@@ -51,7 +51,9 @@ export type MapOverlayId =
   | "ferrata"
   | "sac_trails"
   | "contours"
-  | "rainviewer";
+  | "rainviewer"
+  | "snow_depth"
+  | "ski_lines";
 
 export type ConditionWidgetId =
   | "weather_hourly"
@@ -204,7 +206,7 @@ export const SPORTS: Record<UserRouteActivity, SportDefinition> = {
     orsFootLike: true,
     usesCyclingOrs: false,
     skiTourMode: true,
-    defaultOverlays: ["slope", "avalanche", "opensnow", "aspect"],
+    defaultOverlays: ["slope", "avalanche", "opensnow", "aspect", "snow_depth", "ski_lines"],
     relevantReportKinds: [
       "avalanche",
       "cornice",
