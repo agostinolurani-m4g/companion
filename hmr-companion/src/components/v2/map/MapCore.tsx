@@ -668,6 +668,22 @@ export default function MapCore({
     };
   }, [mapReady, sportOverlays, styleEpoch]);
 
+  /* ── Mappe offline: area visibile e vai all'area ── */
+  const getViewBbox = useCallback(() => {
+    const map = mapRef.current;
+    return map ? bboxOf(map) : null;
+  }, []);
+  const flyToBbox = useCallback((b: { south: number; west: number; north: number; east: number }) => {
+    mapRef.current?.fitBounds(
+      [
+        [b.west, b.south],
+        [b.east, b.north],
+      ],
+      { padding: 20, duration: 800 },
+    );
+    setLayersOpen(false);
+  }, []);
+
   /* ── Geolocalizzazione ── */
   const updateUserPosition = useCallback((lng: number, lat: number, acc: number) => {
     const map = mapRef.current;
@@ -811,6 +827,8 @@ export default function MapCore({
         onToggleOverlay={toggleOverlay}
         recommended={recommended}
         sportLabel={mapSport ? SPORTS[mapSport].shortLabel : undefined}
+        getViewBbox={getViewBbox}
+        onFlyToBbox={flyToBbox}
         baseHasOwnRelief={baseDef.ownRelief}
         mapMode={prefs.mapMode}
         onMapModeChange={(m) => updatePrefs({ mapMode: m })}

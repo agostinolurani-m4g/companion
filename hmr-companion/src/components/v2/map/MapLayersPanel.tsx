@@ -6,6 +6,8 @@ import { AVAILABLE_OVERLAYS } from "@/lib/map/overlay-urls";
 import { listBaseMaps, type BaseStyleId } from "@/lib/map/topo-style";
 import type { MapOverlayId } from "@/lib/sports";
 import type { MapPrefs } from "./useMapPrefs";
+import OfflineAreasPanel from "./OfflineAreasPanel";
+import type { OfflineBbox } from "@/lib/offline/area";
 
 type Props = {
   open: boolean;
@@ -26,6 +28,9 @@ type Props = {
   appTheme: "light" | "dark";
   onAppThemeChange: (t: "light" | "dark") => void;
   baseSupportsDark: boolean;
+  /** Area visibile, per scaricarla offline. */
+  getViewBbox?: () => OfflineBbox | null;
+  onFlyToBbox?: (b: OfflineBbox) => void;
 };
 
 function Switch({ on }: { on: boolean }) {
@@ -107,6 +112,8 @@ export default function MapLayersPanel({
   appTheme,
   onAppThemeChange,
   baseSupportsDark,
+  getViewBbox,
+  onFlyToBbox,
 }: Props) {
   useEffect(() => {
     if (!open) return;
@@ -289,6 +296,16 @@ export default function MapLayersPanel({
             badge={recommended.includes(o.id) && sportLabel ? sportLabel : undefined}
           />
         ))}
+
+        {getViewBbox && onFlyToBbox ? (
+          <>
+            <div className="my-3 h-px bg-[color:var(--hmr-border)]/50" />
+            <p className="ui-eyebrow flex items-center gap-1 px-1 pb-1">
+              <Icon name="offline" size={13} /> Mappe offline
+            </p>
+            <OfflineAreasPanel getViewBbox={getViewBbox} onFlyTo={onFlyToBbox} />
+          </>
+        ) : null}
       </div>
     </>
   );
