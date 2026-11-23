@@ -1,5 +1,5 @@
 import { decodePolyline } from "@/lib/polyline";
-import { compactLine } from "@/lib/activities/geo";
+import { compactLine, compactTrack } from "@/lib/activities/geo";
 import { mapStravaSport } from "@/lib/activities/sport-map";
 import type { UserRouteActivity } from "@/lib/sports";
 
@@ -169,4 +169,36 @@ export function mapStravaActivity(a: StravaActivity): MappedStravaActivity | nul
     moving_time_s: a.moving_time ?? null,
     line: compactLine(coords.map(([lng, lat]) => ({ lng, lat }))),
   };
+}
+
+type StravaStreamSet = {
+  latlng?: { data: [number, number][] };
+  time?: { data: number[] };
+  altitude?: { data: number[] };
+};
+
+/**
+ * Traccia completa con orari (stream Strava): serve ai tempi sui segmenti,
+ * che il polyline riassuntivo non contiene. 1 richiesta per attività.
+ */
+export async function getStravaTrackWithTimes(
+  accessToken: string,
+  id: string | number,
+): Promise<{ line: GeoJSON.LineString; times: number[] | null } | null> {
+  const s = await apiGet<StravaStreamSet>(accessToken, `/activities/${id}/streams`, {
+    keys: "latlng,time,altitude",
+    key_by_type: "true",
+  });
+  const ll = s.latlng?.data ?? [];
+  if (ll.length < 2) return null;
+  const tt = s.time?.data;
+  const alt = s.altitude?.data;
+  return compactTrack(
+    ll.map(([lat, lng], i) => ({
+      lng,
+      lat,
+      ele: alt && Number.isFinite(alt[i]) ? alt[i] : undefined,
+      t: tt && Number.isFinite(tt[i]) ? tt[i] * 1000 : undefined,
+    })),
+  );
 }

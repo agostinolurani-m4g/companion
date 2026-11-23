@@ -49,3 +49,5 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+/data/relief/
+/public/vendor/maplibre-contour-worker.js

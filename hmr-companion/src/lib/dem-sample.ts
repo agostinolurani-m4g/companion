@@ -106,3 +106,54 @@ export async function demElevations(points: Array<[number, number]>, z = DEM_ZOO
   }
   return out;
 }
+
+/** Campionatore sincrono di quote su un'area già scaricata (null fuori area/tile mancante). */
+export type DemSampler = (lng: number, lat: number) => number | null;
+
+/**
+ * Scarica i tile DEM che coprono il bbox a zoom `z` e restituisce un
+ * campionatore sincrono (bilineare). Serve per calcoli con centinaia di
+ * migliaia di campioni (panorama), dove l'await per punto sarebbe troppo lento.
+ */
+export async function demSamplerForBbox(
+  bbox: { west: number; south: number; east: number; north: number },
+  z: number,
+): Promise<DemSampler | null> {
+  if (typeof window === "undefined" || typeof createImageBitmap === "undefined") return null;
+  const a = lngLatToPixel(bbox.west, bbox.north, z);
+  const b = lngLatToPixel(bbox.east, bbox.south, z);
+  const tx0 = Math.floor(a.px / TILE);
+  const ty0 = Math.floor(a.py / TILE);
+  const tx1 = Math.floor(b.px / TILE);
+  const ty1 = Math.floor(b.py / TILE);
+  if ((tx1 - tx0 + 1) * (ty1 - ty0 + 1) > 100) return null;
+  const tiles = new Map<string, Uint8ClampedArray>();
+  await Promise.all(
+    Array.from({ length: (tx1 - tx0 + 1) * (ty1 - ty0 + 1) }, async (_, i) => {
+      const tx = tx0 + (i % (tx1 - tx0 + 1));
+      const ty = ty0 + Math.floor(i / (tx1 - tx0 + 1));
+      const data = await loadTile(z, tx, ty);
+      if (data) tiles.set(`${tx}/${ty}`, data);
+    }),
+  );
+  if (!tiles.size) return null;
+  const at = (gx: number, gy: number): number | null => {
+    const d = tiles.get(`${Math.floor(gx / TILE)}/${Math.floor(gy / TILE)}`);
+    return d ? pixelElev(d, ((gx % TILE) + TILE) % TILE, ((gy % TILE) + TILE) % TILE) : null;
+  };
+  return (lng, lat) => {
+    const { px, py } = lngLatToPixel(lng, lat, z);
+    const fx = px - 0.5;
+    const fy = py - 0.5;
+    const x0 = Math.floor(fx);
+    const y0 = Math.floor(fy);
+    const tx = fx - x0;
+    const ty = fy - y0;
+    const s00 = at(x0, y0);
+    const s10 = at(x0 + 1, y0);
+    const s01 = at(x0, y0 + 1);
+    const s11 = at(x0 + 1, y0 + 1);
+    if (s00 == null || s10 == null || s01 == null || s11 == null) return null;
+    return (s00 * (1 - tx) + s10 * tx) * (1 - ty) + (s01 * (1 - tx) + s11 * tx) * ty;
+  };
+}

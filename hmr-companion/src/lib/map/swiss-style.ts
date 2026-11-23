@@ -46,14 +46,17 @@ type Palette = {
   hutIcon: string;
 };
 
-/** Chiara, pastello: pochi toni desaturati. */
+/**
+ * Chiara, carta svizzera: avorio caldo, boschi verdi leggibili (il colore che rende viva una topo),
+ * roccia e detriti beige. Paper/forest sono anche i campioni di contrasto in route-colors.ts.
+ */
 export const SWISS: Palette = {
-  paper: "#f4f3ef",
-  forest: "#dbe6d6",
-  forestEdge: "#c7d8c1",
-  meadow: "#eef0e8",
-  rock: "#e6e3de",
-  scree: "#ebe8e1",
+  paper: "#f6f3ea",
+  forest: "#d4e3c2",
+  forestEdge: "#bcd2a6",
+  meadow: "#edf0dc",
+  rock: "#e9e3d8",
+  scree: "#efe9dc",
   glacier: "#f2f6f9",
   glacierEdge: "#a9c3d6",
   water: "#c9dde8",
@@ -81,13 +84,16 @@ export const SWISS: Palette = {
   hutIcon: "v2-hut",
 };
 
-/** Scura, coordinata con l'interfaccia (petrolio/viola smorzati). */
+/**
+ * Scura "notte svizzera", coordinata con l'interfaccia (petrolio/viola smorzati):
+ * boschi verde profondo ben distinti (altrimenti tutto è un unico grigio), roccia grigio-blu.
+ */
 export const SWISS_DARK: Palette = {
-  paper: "#1a1e22",
-  forest: "#212b27",
-  forestEdge: "#26312c",
-  meadow: "#1d2224",
-  rock: "#24282c",
+  paper: "#1b2024",
+  forest: "#22322a",
+  forestEdge: "#2a3d33",
+  meadow: "#1f2623",
+  rock: "#262a2e",
   scree: "#22262a",
   glacier: "#283038",
   glacierEdge: "#4f6b80",
@@ -115,6 +121,15 @@ export const SWISS_DARK: Palette = {
   peakIcon: "v2-peak-light",
   hutIcon: "v2-hut",
 };
+
+/**
+ * Trame "disegnate" (tratteggio rupi, puntinato detriti, segni d'albero, grana della carta).
+ * Le immagini sono generate su canvas da src/components/v2/map/mapImages.ts su `styleimagemissing`.
+ */
+export const PATTERN_IDS = {
+  light: { rock: "v2-pat-rock-light", scree: "v2-pat-scree-light", forest: "v2-pat-forest-light", paper: "v2-pat-paper-light" },
+  dark: { rock: "v2-pat-rock-dark", scree: "v2-pat-scree-dark", forest: "v2-pat-forest-dark", paper: "v2-pat-paper-dark" },
+} as const;
 
 const name: ExpressionSpecification = ["coalesce", ["get", "name:it"], ["get", "name:latin"], ["get", "name"]];
 const cls = (...c: string[]): ExpressionSpecification => ["match", ["get", "class"], c, true, false];
@@ -150,8 +165,12 @@ function road(id: string, classes: string[], fill: string, casing: string, w: nu
 
 export function buildSwissTopoStyle(theme: "light" | "dark" = "light"): StyleSpecification {
   const P = theme === "dark" ? SWISS_DARK : SWISS;
+  const PAT = PATTERN_IDS[theme];
   const layers: LayerSpecification[] = [
     { id: "background", type: "background", paint: { "background-color": P.paper } },
+    // Grana della carta (effetto stampa): fill-pattern su un poligono mondo. Non `background-pattern`,
+    // che non emette `styleimagemissing` e perde l'immagine a ogni cambio stile.
+    { id: "paper-grain", type: "fill", source: "paper", paint: { "fill-pattern": PAT.paper } },
 
     /* ── Suolo ── */
     {
@@ -204,6 +223,34 @@ export function buildSwissTopoStyle(theme: "light" | "dark" = "light"): StyleSpe
       "source-layer": "landcover",
       filter: cls("sand"),
       paint: { "fill-color": P.scree },
+    },
+    /* Trame "disegnate" sopra le campiture: compaiono con lo zoom, così da lontano resta pulito. */
+    {
+      id: "landcover-rock-hatch",
+      type: "fill",
+      source: SRC,
+      "source-layer": "landcover",
+      minzoom: 11,
+      filter: cls("rock"),
+      paint: { "fill-pattern": PAT.rock, "fill-opacity": ["interpolate", ["linear"], ["zoom"], 11, 0.35, 13, 1] },
+    },
+    {
+      id: "landcover-scree-stipple",
+      type: "fill",
+      source: SRC,
+      "source-layer": "landcover",
+      minzoom: 12,
+      filter: cls("sand"),
+      paint: { "fill-pattern": PAT.scree, "fill-opacity": ["interpolate", ["linear"], ["zoom"], 12, 0.4, 14, 1] },
+    },
+    {
+      id: "landcover-wood-trees",
+      type: "fill",
+      source: SRC,
+      "source-layer": "landcover",
+      minzoom: 13,
+      filter: cls("wood"),
+      paint: { "fill-pattern": PAT.forest, "fill-opacity": ["interpolate", ["linear"], ["zoom"], 13, 0.3, 15, 1] },
     },
     {
       id: "landcover-wetland",
@@ -309,18 +356,58 @@ export function buildSwissTopoStyle(theme: "light" | "dark" = "light"): StyleSpe
       filter: ["all", ["==", ["get", "brunnel"], "tunnel"], cls("motorway", "trunk", "primary", "secondary", "tertiary", "minor")],
       paint: { "line-color": P.minorCase, "line-width": 1.2, "line-dasharray": [2, 2], "line-opacity": 0.6 },
     },
+    /*
+     * Sentieri. OpenMapTiles non espone `sac_scale` (le difficoltà le mostra il nostro overlay
+     * sentieri, src/lib/outdoor/trail-style.ts): qui la gerarchia segue `subclass`/`surface`,
+     * come la carta svizzera: sentiero escursionistico tratteggio nero marcato, percorso pedonale
+     * urbano fine e chiaro, scalinate a puntini.
+     */
     {
       id: "path",
       type: "line",
       source: SRC,
       "source-layer": "transportation",
       minzoom: 12,
-      filter: ["all", cls("path"), ["!=", ["get", "subclass"], "cycleway"], notTunnel],
+      filter: [
+        "all",
+        cls("path"),
+        ["match", ["get", "subclass"], ["cycleway", "footway", "pedestrian", "steps", "corridor", "platform"], false, true],
+        notTunnel,
+      ],
       paint: {
         "line-color": P.path,
-        "line-width": z(12, 0.6, 16, 1.4),
+        "line-width": z(12, 0.7, 14, 1.1, 17, 1.8),
         "line-dasharray": [3, 1.6],
-        "line-opacity": 0.85,
+        "line-opacity": ["match", ["get", "surface"], "paved", 0.6, 0.9],
+      },
+    },
+    {
+      id: "path-footway",
+      type: "line",
+      source: SRC,
+      "source-layer": "transportation",
+      minzoom: 14,
+      filter: ["all", cls("path"), ["match", ["get", "subclass"], ["footway", "pedestrian"], true, false], notTunnel],
+      paint: {
+        "line-color": P.path,
+        "line-width": z(14, 0.5, 17, 1.2),
+        "line-dasharray": [2, 1.2],
+        "line-opacity": 0.5,
+      },
+    },
+    {
+      id: "path-steps",
+      type: "line",
+      source: SRC,
+      "source-layer": "transportation",
+      minzoom: 15,
+      filter: ["all", cls("path"), ["==", ["get", "subclass"], "steps"], notTunnel],
+      layout: { "line-cap": "round" },
+      paint: {
+        "line-color": P.path,
+        "line-width": z(15, 1.2, 18, 2.4),
+        "line-dasharray": [0.1, 1.6],
+        "line-opacity": 0.8,
       },
     },
     {
@@ -526,6 +613,14 @@ export function buildSwissTopoStyle(theme: "light" | "dark" = "light"): StyleSpe
     glyphs: "https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf",
     sources: {
       [SRC]: { type: "vector", url: "https://tiles.openfreemap.org/planet", attribution: "© OpenStreetMap · © OpenFreeMap" },
+      paper: {
+        type: "geojson",
+        data: {
+          type: "Feature",
+          properties: {},
+          geometry: { type: "Polygon", coordinates: [[[-180, -85.05], [180, -85.05], [180, 85.05], [-180, 85.05], [-180, -85.05]]] },
+        },
+      },
     },
     layers,
   };

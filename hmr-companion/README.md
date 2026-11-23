@@ -56,6 +56,16 @@ npm run dev         # http://localhost:3002
 
 `npm run seed` è lo shortcut di `ingest` + `snapshot`.
 
+Opzionale, **rilievo pre-calcolato** sul corridoio della traccia (ombreggiatura più nitida di quella runtime):
+
+```bash
+npm run relief      # DEM Mapterhorn → gdaldem hillshade → public/relief/hmr-relief.pmtiles + manifest.json
+```
+
+Usa GDAL nativo se `gdaldem` è nel PATH, altrimenti Docker (`ghcr.io/osgeo/gdal:ubuntu-small-3.10.3`).
+Variabili: `HMR_RELIEF_TRACK_ID` (default `hmr-2026`), `HMR_RELIEF_BUFFER_KM` (8), `HMR_RELIEF_CELL_DEG` (0.02).
+Senza archivio, o fuori dal corridoio, la mappa usa l'hillshade runtime.
+
 ### Selezione gara e upload GPX (web)
 
 Dopo il login, la home (`/`) elenca le gare nel database SQLite. Puoi:

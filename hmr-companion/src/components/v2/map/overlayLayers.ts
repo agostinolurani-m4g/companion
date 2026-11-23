@@ -11,6 +11,7 @@ import { pickStyleFont } from "@/lib/map/topo-style";
 import {
   AVALANCHE_FILL_COLOR,
   EMPTY_FC,
+  ROUTE_CASING_WIDTH,
   ROUTE_LINE_WIDTH,
   WAYPOINT_HALO_RADIUS,
 } from "./constants";
@@ -19,6 +20,23 @@ import { addOutdoorFeatureLayers } from "./featuresLayers";
 /** Colore percorso di default (quando non colorato per superficie). */
 export const ROUTE_DEFAULT_COLOR = "#8f7fd1";
 const ARROW_IMAGE = "v2-route-arrow";
+const ROUTE_CASING_ID = "v2-route-casing";
+
+/** Contorno di percorso e marker: carta calda sulle mappe chiare, quasi-nero su scure/ortofoto. */
+const ROUTE_THEME = {
+  light: { casing: "#fbfaf7", casingOpacity: 0.92 },
+  dark: { casing: "#111417", casingOpacity: 0.8 },
+} as const;
+
+/** Allinea contorni e bordi dei marker alla basemap corrente (chiara/scura). */
+export function setRouteTheme(map: MaplibreMap, dark: boolean): void {
+  const t = dark ? ROUTE_THEME.dark : ROUTE_THEME.light;
+  if (map.getLayer(ROUTE_CASING_ID)) {
+    map.setPaintProperty(ROUTE_CASING_ID, "line-color", t.casing);
+    map.setPaintProperty(ROUTE_CASING_ID, "line-opacity", ["case", ["==", ["get", "dimmed"], true], 0.3, t.casingOpacity]);
+  }
+  if (map.getLayer("v2-route-markers")) map.setPaintProperty("v2-route-markers", "circle-stroke-color", t.casing);
+}
 
 function addRasterOverlay(
   map: MaplibreMap,
@@ -165,8 +183,20 @@ export function addOverlaySourcesAndLayers(map: MaplibreMap, opts: OverlayLayerO
     },
   });
 
-  /* ── Percorso: linea senza contorno, frecce di direzione ── */
+  /* ── Percorso: contorno (stacca la linea da ombreggiatura e strade), linea, frecce ── */
   map.addSource("v2-route", { type: "geojson", data: EMPTY_FC, lineMetrics: true });
+  map.addLayer({
+    id: ROUTE_CASING_ID,
+    type: "line",
+    source: "v2-route",
+    layout: { "line-join": "round", "line-cap": "round" },
+    paint: {
+      "line-color": ROUTE_THEME.light.casing,
+      "line-width": ROUTE_CASING_WIDTH,
+      // Contorno pieno anche sotto i tratti tratteggiati: si legge "percorso incerto", non "linea rotta".
+      "line-opacity": ["case", ["==", ["get", "dimmed"], true], 0.3, ROUTE_THEME.light.casingOpacity],
+    },
+  });
   map.addLayer({
     id: "v2-route",
     type: "line",
@@ -212,6 +242,8 @@ export function addOverlaySourcesAndLayers(map: MaplibreMap, opts: OverlayLayerO
     paint: {
       "circle-radius": 7,
       "circle-color": ["get", "color"],
+      "circle-stroke-width": 2,
+      "circle-stroke-color": ROUTE_THEME.light.casing,
     },
   });
 
@@ -272,11 +304,53 @@ export function addOverlaySourcesAndLayers(map: MaplibreMap, opts: OverlayLayerO
     },
   });
 
+  /* ── Segmenti (stile Strava): linea arancio con bordo, freccia nel verso ── */
+  map.addSource("v2-segments", { type: "geojson", data: EMPTY_FC });
+  map.addLayer({
+    id: "v2-segments-casing",
+    type: "line",
+    source: "v2-segments",
+    layout: { "line-cap": "round", "line-join": "round" },
+    paint: { "line-color": "#ffffff", "line-width": ["interpolate", ["linear"], ["zoom"], 9, 4, 15, 9], "line-opacity": 0.9 },
+  });
+  map.addLayer({
+    id: "v2-segments",
+    type: "line",
+    source: "v2-segments",
+    layout: { "line-cap": "round", "line-join": "round" },
+    paint: {
+      "line-color": ["case", ["boolean", ["get", "selected"], false], "#dc2626", "#f97316"],
+      "line-width": ["interpolate", ["linear"], ["zoom"], 9, 2.5, 15, 6],
+    },
+  });
+  map.addLayer({
+    id: "v2-segments-arrows",
+    type: "symbol",
+    source: "v2-segments",
+    minzoom: 12,
+    layout: {
+      "symbol-placement": "line",
+      "symbol-spacing": 90,
+      "text-field": "›",
+      "text-size": 18,
+      "text-keep-upright": false,
+      "text-allow-overlap": true,
+    },
+    paint: { "text-color": "#ffffff", "text-halo-color": "#c2410c", "text-halo-width": 1 },
+  });
+  map.addLayer({
+    id: "v2-segments-hit",
+    type: "line",
+    source: "v2-segments",
+    paint: { "line-width": 18, "line-opacity": 0 },
+  });
+
   map.addSource("v2-photos", { type: "geojson", data: EMPTY_FC });
   map.addLayer({
     id: "v2-photos",
     type: "circle",
     source: "v2-photos",
+    filter: ["!", ["has", "url"]],
     paint: {
       "circle-radius": 7,
       "circle-color": "#ec4899",

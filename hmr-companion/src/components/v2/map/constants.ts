@@ -3,7 +3,7 @@ import { AVALANCHE_LEGEND } from "@/lib/ski-overlays";
 
 export const EMPTY_FC: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
 
-export const OPEN_DEM_SOURCE_ID = "open-terrain-dem";
+export { OPEN_DEM_SOURCE_ID } from "@/lib/map/topo-style";
 export const TERRAIN_3D_PITCH = 55;
 export const TERRAIN_EXAGGERATION = 1.35;
 
@@ -72,30 +72,34 @@ export const WAYPOINT_STROKE_WIDTH = [
   3.5,
 ] as maplibregl.ExpressionSpecification;
 
-export const ROUTE_CASING_WIDTH = [
-  "interpolate",
-  ["linear"],
-  ["zoom"],
-  8,
-  5.5,
-  12,
-  7,
-  15,
-  9.5,
-  18,
-  12,
-] as maplibregl.ExpressionSpecification;
-
+/**
+ * Larghezze percorso: esponenziali (crescono con la scala della mappa) e sempre ≥ 2× i sentieri
+ * del basemap, così la traccia non si confonde con "un'altra strada". Contorno = linea + ~3 px.
+ */
 export const ROUTE_LINE_WIDTH = [
   "interpolate",
-  ["linear"],
+  ["exponential", 1.4],
   ["zoom"],
   8,
-  3,
+  2.6,
   12,
   4.2,
   15,
   6,
   18,
-  7.5,
+  8,
+] as maplibregl.ExpressionSpecification;
+
+export const ROUTE_CASING_WIDTH = [
+  "interpolate",
+  ["exponential", 1.4],
+  ["zoom"],
+  8,
+  5,
+  12,
+  7.2,
+  15,
+  9.4,
+  18,
+  12,
 ] as maplibregl.ExpressionSpecification;

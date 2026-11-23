@@ -209,6 +209,11 @@ export default function V2FeatureSheet({ pick, onClose, onFlyTo }: Props) {
                 Centra mappa
               </button>
             )}
+            {["peak", "saddle", "viewpoint", "alpine_hut", "wilderness_hut"].includes(pick.kind) && (
+              <a href={`/v2/panorama?lat=${pick.lat}&lng=${pick.lng}`} className="v2-btn-ghost">
+                Panorama da qui
+              </a>
+            )}
             {f.osmUrl && (
               <a href={f.osmUrl} target="_blank" rel="noreferrer" className="v2-btn-ghost">
                 OpenStreetMap

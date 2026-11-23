@@ -10,6 +10,7 @@ import { stopKindFromOutdoorKind, stopKindFromPoiCategory } from "@/lib/outings-
 import { useOutingDraft } from "@/lib/use-outing-draft";
 import V2ExploreAside from "@/components/v2/V2ExploreAside";
 import V2PhotoCapture from "@/components/v2/V2PhotoCapture";
+import V2PhotoLightbox from "@/components/v2/V2PhotoLightbox";
 import V2RoutePopularity, {
   untroddenFeatureCollection,
   type RouteAlternativeDto,
@@ -192,6 +193,7 @@ function SectionTitle({ children, right }: { children: React.ReactNode; right?: 
 
 export default function V2RouteBuilder({ username }: Props) {
   const router = useRouter();
+  const [lightbox, setLightbox] = useState<{ ids: string[]; index: number } | null>(null);
   const searchParams = useSearchParams();
   const routeId = searchParams.get("route");
   const activityParam = searchParams.get("activity");
@@ -1227,6 +1229,12 @@ export default function V2RouteBuilder({ username }: Props) {
           <Icon name="download" size={15} />
           GPX
         </button>
+        {routeId ? (
+          <Link href={`/v2/segmenti/nuovo?route=${encodeURIComponent(routeId)}`} className="ui-btn ui-btn-sm" title="Crea un segmento con classifica da un tratto">
+            <Icon name="trophy" size={15} />
+            Segmento
+          </Link>
+        ) : null}
       </div>
     </div>
   );
@@ -1791,6 +1799,9 @@ export default function V2RouteBuilder({ username }: Props) {
           exploreGeoJson={isExplore ? explore.displayGeoJson : undefined}
           routeMarkersGeoJson={isExplore ? explore.routeMarkersGeoJson : undefined}
           photosGeoJson={isExplore ? (explore.photosVisible ? explore.photosGeoJson : null) : undefined}
+          onPhotoSelect={isExplore ? (ids, index) => setLightbox({ ids, index }) : undefined}
+          segmentsGeoJson={isExplore && explore.segmentsVisible ? explore.segmentsGeoJson : null}
+          onSegmentSelect={isExplore ? (id) => router.push(`/v2/segmenti/${encodeURIComponent(id)}`) : undefined}
           onRouteSelect={isExplore ? explore.setSelectedRouteId : undefined}
           showWaypoints={!isExplore}
           outingStopsGeoJson={outingMode ? outingDraft.stopsGeoJson : null}
@@ -2151,6 +2162,16 @@ export default function V2RouteBuilder({ username }: Props) {
             explore.setSelectedReport(null);
             if (explore.mapBbox) void explore.loadOverlays(explore.mapBbox);
           }}
+        />
+      ) : null}
+
+      {lightbox ? (
+        <V2PhotoLightbox
+          photos={lightbox.ids
+            .map((id) => explore.photos.find((p) => p.id === id))
+            .filter((p): p is NonNullable<typeof p> => !!p)}
+          startIndex={lightbox.index}
+          onClose={() => setLightbox(null)}
         />
       ) : null}
 

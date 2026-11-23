@@ -26,12 +26,14 @@ import Icon from "@/components/v2/ui/Icon";
 import { EMPTY_FC } from "./constants";
 import { circlePolygon, setGeoJson } from "./geojson";
 import { attachGlobalHandlers, bindLayerHandlers } from "./mapHandlers";
-import { addOverlaySourcesAndLayers, setSportOverlayVisibility } from "./overlayLayers";
+import { addOverlaySourcesAndLayers, ROUTE_DEFAULT_COLOR, setRouteTheme, setSportOverlayVisibility } from "./overlayLayers";
+import { adaptLineColors } from "@/lib/map/route-colors";
 import { applyTerrain3d } from "./terrain";
 import type { V2PlanMapProps } from "./types";
 import MapLayersPanel from "./MapLayersPanel";
 import { ensureContourLayers, setContourLayerVisible } from "./contourLayer";
 import { useMapPrefs } from "./useMapPrefs";
+import { usePhotoMarkers } from "./photoMarkers";
 import { ensureHeatLayers, HEAT_SOURCE, setGeoJsonData, setHeatVisible, UNTRODDEN_SOURCE, type HeatScope } from "./heatmapLayer";
 import { heatSportFamily } from "@/lib/activities/sport-family";
 import { useV2Theme } from "@/components/v2/ui/theme";
@@ -73,6 +75,9 @@ export default function MapCore({
   showWaypoints = true,
   exploreGeoJson,
   photosGeoJson,
+  onPhotoSelect,
+  segmentsGeoJson,
+  onSegmentSelect,
   outingStopsGeoJson,
   reportsGeoJson,
   onRouteSelect,
@@ -132,6 +137,8 @@ export default function MapCore({
   const suppressClickRef = useRef(false);
   const onRouteSelectRef = useRef(onRouteSelect);
   const onReportSelectRef = useRef(onReportSelect);
+  const onSegmentSelectRef = useRef(onSegmentSelect);
+  const onPhotoSelectRef = useRef(onPhotoSelect);
   const outdoorFeaturesRef = useRef<GeoJSON.FeatureCollection | null>(featuresGeoJson ?? null);
   const allowOutdoorPickRef = useRef(pickOutdoorFeatures);
   const allowLabelPickRef = useRef(pickMapLabels);
@@ -139,6 +146,8 @@ export default function MapCore({
   useEffect(() => {
     onRouteSelectRef.current = onRouteSelect;
     onReportSelectRef.current = onReportSelect;
+    onSegmentSelectRef.current = onSegmentSelect;
+    onPhotoSelectRef.current = onPhotoSelect;
     onInteractionRef.current = onMapInteraction;
     onWaypointMoveRef.current = onWaypointMove;
     onRouteDragStartRef.current = onRouteDragStart;
@@ -184,6 +193,8 @@ export default function MapCore({
     optsRef.current = { slopeVisible, slopeOpacity, avalancheVisible, avalancheOpacity, sportOverlays, prefs, baseStyle, mapSport, mapMode };
   });
 
+  usePhotoMarkers(mapRef, mapReady, photosGeoJson, onPhotoSelectRef);
+
   const handlerRefs = useMemo(
     () => ({
       onInteractionRef,
@@ -195,6 +206,7 @@ export default function MapCore({
       suppressClickRef,
       onRouteSelectRef,
       onReportSelectRef,
+      onSegmentSelectRef,
       outdoorFeaturesRef,
       allowOutdoorPickRef,
       allowLabelPickRef,
@@ -512,14 +524,17 @@ export default function MapCore({
           }
         : EMPTY_FC;
 
-    setGeoJson(map, "v2-route", routeGeo);
+    // Colori sport pastello: sulla carta chiara vengono scuriti (stessa tinta) per restare leggibili.
+    setGeoJson(map, "v2-route", adaptLineColors(routeGeo, baseDark, ROUTE_DEFAULT_COLOR));
     setGeoJson(map, "v2-route-preview", previewGeo);
-    setGeoJson(map, "v2-route-markers", routeMarkersGeoJson ?? EMPTY_FC);
+    setGeoJson(map, "v2-route-markers", adaptLineColors(routeMarkersGeoJson ?? EMPTY_FC, baseDark, ROUTE_DEFAULT_COLOR));
+    setRouteTheme(map, baseDark);
     setGeoJson(map, "v2-waypoints", wpGeo);
     setGeoJson(map, "v2-pois", poiGeo);
     setGeoJson(map, "v2-pending", pendingGeo);
     setGeoJson(map, "v2-poi-radius", radiusGeo);
     setGeoJson(map, "v2-photos", photosGeoJson ?? EMPTY_FC);
+    setGeoJson(map, "v2-segments", segmentsGeoJson ?? EMPTY_FC);
     setGeoJson(map, "v2-outing-stops", outingStopsGeoJson ?? EMPTY_FC);
     setGeoJson(map, "v2-reports", reportsGeoJson ?? EMPTY_FC);
     setGeoJson(map, "v2-outdoor", featuresGeoJson ?? EMPTY_FC);
@@ -530,6 +545,7 @@ export default function MapCore({
     exploreGeoJson,
     routeMarkersGeoJson,
     photosGeoJson,
+    segmentsGeoJson,
     outingStopsGeoJson,
     reportsGeoJson,
     featuresGeoJson,
@@ -541,6 +557,7 @@ export default function MapCore({
     poiSearchBbox,
     mapReady,
     styleEpoch,
+    baseDark,
   ]);
 
   /* ── Marker hover (profilo altimetrico ↔ mappa) ── */

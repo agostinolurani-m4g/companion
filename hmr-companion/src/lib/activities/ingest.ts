@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import { syncActivityHeat } from "./heatmap";
-import { compactLine } from "./geo";
+import { compactTrack } from "./geo";
+import { matchActivityAgainstSegments } from "@/lib/segments/store";
 import { computeTrackStats, uploadExternalId, type ParsedTrack } from "./parse-files";
 import { getActivity, insertActivity, type ActivityProvider, type ActivityReviewState } from "./store";
 
@@ -19,6 +20,7 @@ export type IngestInput = {
   name: string;
   start_time: number;
   line: GeoJSON.LineString;
+  times?: number[] | null;
   distance_m: number;
   elev_gain_m: number;
   moving_time_s: number | null;
@@ -36,7 +38,10 @@ export function ingestActivity(db: Database.Database, input: IngestInput): { id:
   });
   if (res.inserted) {
     const row = getActivity(db, res.id);
-    if (row) syncActivityHeat(db, row);
+    if (row) {
+      syncActivityHeat(db, row);
+      matchActivityAgainstSegments(db, row, input.now);
+    }
   }
   return res;
 }
@@ -62,7 +67,7 @@ export function ingestUploadedTracks(
       out.skipped.push({ fileName: t.fileName, reason: "Traccia più corta di 100 m" });
       continue;
     }
-    const line = compactLine(t.points);
+    const { line, times } = compactTrack(t.points);
     const res = ingestActivity(db, {
       owner,
       provider: "upload",
@@ -71,6 +76,7 @@ export function ingestUploadedTracks(
       name: t.name.slice(0, 200),
       start_time: t.startTime ?? opts.now,
       line,
+      times,
       ...stats,
       community_consent: opts.communityConsent,
       meta: { file: t.fileName, points: t.points.length },

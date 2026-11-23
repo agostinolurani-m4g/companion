@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import V2PlanMap, { type V2MapClickTarget, type V2Waypoint } from "@/components/v2/V2PlanMap";
+import V2SkiTerrainPanel from "@/components/v2/V2SkiTerrainPanel";
 import V2OutingList, { outingHref } from "@/components/v2/V2OutingList";
 import V2OutingPlanPanel from "@/components/v2/V2OutingPlanPanel";
 import { useOutingDraft } from "@/lib/use-outing-draft";
@@ -80,6 +81,7 @@ export default function V2SkiTour({ isAdmin = false, username }: Props) {
   const [profileCoords, setProfileCoords] = useState<StoredCoord[]>([]);
   const [hoverKm, setHoverKm] = useState<number | null>(null);
   const [ascentSteep, setAscentSteep] = useState<SteepSegment[]>([]);
+  const [riskSegments, setRiskSegments] = useState<RouteColoredSegment[] | null>(null);
   const [descentSteep, setDescentSteep] = useState<SteepSegment[]>([]);
   const [ascentElevAligned, setAscentElevAligned] = useState<{
     distanceKm: number[];
@@ -789,6 +791,8 @@ export default function V2SkiTour({ isAdmin = false, username }: Props) {
             </section>
           )}
 
+          <V2SkiTerrainPanel ascentCoords={ascentCoords} descentCoords={descentCoords} onRiskSegments={setRiskSegments} />
+
           <div className="mt-auto space-y-2 border-t border-[color:var(--hmr-border)]/60 pt-3">
             <p className="text-[10px] font-medium uppercase tracking-wide text-[color:var(--hmr-faint)]">
               Traccia (pubblica)
@@ -873,7 +877,7 @@ export default function V2SkiTour({ isAdmin = false, username }: Props) {
             <V2PlanMap
               waypoints={mapWaypoints}
               routeCoords={null}
-              routeColoredSegments={routeColoredSegments}
+              routeColoredSegments={riskSegments ?? routeColoredSegments}
               routeMarkersGeoJson={routeMarkersGeoJson}
               pois={[]}
               onMapInteraction={onMapInteraction}

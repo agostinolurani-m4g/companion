@@ -1,11 +1,20 @@
 import type { LayerSpecification, Map as MaplibreMap, StyleSpecification } from "maplibre-gl";
 import type { UserRouteActivity } from "@/lib/sports";
 import { isWinterSport } from "@/lib/sports";
+import { isReliefManifest, RELIEF_MANIFEST_PATH, RELIEF_PMTILES_PATH, reliefMode, type ReliefManifest } from "@/lib/map/relief";
 import { buildOrthophotoStyle, buildSwissTopoStyle, buildSwisstopoStyle, RASTER_DARK_PAINT } from "@/lib/map/swiss-style";
 
 export const OPEN_FREE_MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty";
 export const OPEN_DEM_SOURCE_ID = "open-terrain-dem";
-export const OPEN_DEM_TILES = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png";
+/**
+ * DEM Mapterhorn (terrarium, webp 512 px). Il planet copre z0–12 ovunque; z13+ esiste solo
+ * nelle aree lidar (in Grecia risponde 404), quindi il maxzoom globale resta 12:
+ * MapLibre fa l'overzoom oltre. Una tile 512 px a z12 ≈ dettaglio di una 256 px a z13.
+ */
+export const OPEN_DEM_TILES = "https://tiles.mapterhorn.com/{z}/{x}/{y}.webp";
+export const DEM_TILE_SIZE = 512;
+export const DEM_MAXZOOM = 12;
+export const DEM_ATTRIBUTION = '<a href="https://mapterhorn.com/attribution" target="_blank" rel="noopener">© Mapterhorn</a>';
 const OFM_GLYPHS = "https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf";
 
 const MAPTILER_KEY = process.env.NEXT_PUBLIC_MAPTILER_KEY?.trim() || undefined;
@@ -78,7 +87,7 @@ export const BASE_MAPS: readonly BaseMapDef[] = [
     swatch: "#f7f5ef",
     label: "Topo",
     hint: "Carta topografica con rilievo e isoipse",
-    thumb: `https://tile.opentopomap.org/${THUMB.z}/${THUMB.x}/${THUMB.y}.png`,
+    thumb: "/basemaps/topo.png",
     dark: false,
     ownRelief: false,
     requiresKey: false,
@@ -249,10 +258,10 @@ export function ensureDemSource(map: MaplibreMap): void {
   map.addSource(OPEN_DEM_SOURCE_ID, {
     type: "raster-dem",
     tiles: [OPEN_DEM_TILES],
-    tileSize: 256,
+    tileSize: DEM_TILE_SIZE,
     encoding: "terrarium",
-    maxzoom: 15,
-    attribution: "© Mapzen / AWS Terrain Tiles",
+    maxzoom: DEM_MAXZOOM,
+    attribution: DEM_ATTRIBUTION,
   });
 }
 
@@ -306,11 +315,89 @@ export type ReliefOptions = {
 
 const HILLSHADE_ID = "topo-hillshade";
 const TINT_ID = "topo-color-relief";
+const PRE_RELIEF_ID = "topo-relief-pre";
+
+/* Rilievo pre-calcolato (public/relief): manifest caricato una volta, `null` se assente. */
+let reliefManifest: ReliefManifest | null | undefined;
+let reliefManifestPromise: Promise<ReliefManifest | null> | null = null;
+const lastReliefOpts = new WeakMap<MaplibreMap, ReliefOptions>();
+const reliefMoveBound = new WeakSet<MaplibreMap>();
+
+export function loadReliefManifest(): Promise<ReliefManifest | null> {
+  if (reliefManifest !== undefined) return Promise.resolve(reliefManifest);
+  reliefManifestPromise ??= (async () => {
+    try {
+      const res = await fetch(RELIEF_MANIFEST_PATH, { cache: "no-cache" });
+      const json: unknown = res.ok ? await res.json() : null;
+      if (!isReliefManifest(json)) return (reliefManifest = null);
+      const { ensurePmtilesProtocol } = await import("@/lib/map/pmtiles-protocol");
+      ensurePmtilesProtocol();
+      return (reliefManifest = json);
+    } catch {
+      return (reliefManifest = null);
+    }
+  })();
+  return reliefManifestPromise;
+}
+
+/** Nel corridoio mostra il rilievo pre-calcolato e nasconde l'ombreggiatura runtime (no doppia ombra). */
+function syncReliefMode(map: MaplibreMap): void {
+  const opts = lastReliefOpts.get(map);
+  if (!opts || !map.style) return;
+  const b = map.getBounds();
+  const view: [number, number, number, number] = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
+  const mode = opts.hillshade ? reliefMode(view, map.getZoom(), reliefManifest ?? null) : "runtime";
+  if (map.getLayer(PRE_RELIEF_ID)) {
+    map.setLayoutProperty(PRE_RELIEF_ID, "visibility", opts.hillshade && mode === "pre" ? "visible" : "none");
+  }
+  if (map.getLayer(HILLSHADE_ID)) {
+    map.setLayoutProperty(HILLSHADE_ID, "visibility", opts.hillshade && mode === "runtime" ? "visible" : "none");
+  }
+}
+
+function ensurePreRelief(map: MaplibreMap, opts: ReliefOptions): void {
+  const manifest = reliefManifest;
+  if (!manifest || !opts.hillshade || map.getLayer(PRE_RELIEF_ID)) return;
+  if (!map.getSource(PRE_RELIEF_ID)) {
+    map.addSource(PRE_RELIEF_ID, {
+      type: "raster",
+      url: `pmtiles://${RELIEF_PMTILES_PATH}`,
+      tileSize: 256,
+      bounds: manifest.bounds,
+      attribution: DEM_ATTRIBUTION,
+    });
+  }
+  map.addLayer(
+    {
+      id: PRE_RELIEF_ID,
+      type: "raster",
+      source: PRE_RELIEF_ID,
+      minzoom: manifest.minzoom,
+      paint: {
+        "raster-opacity": opts.dark ? 0.55 : 0.85,
+        "raster-resampling": "linear",
+        "raster-fade-duration": 0,
+      },
+    },
+    map.getLayer(HILLSHADE_ID) ? HILLSHADE_ID : reliefInsertBefore(map),
+  );
+}
 
 /** Ombreggiatura + tinta altimetrica sotto strade e acqua (mai sopra il basemap). */
 export function applyRelief(map: MaplibreMap, opts: ReliefOptions): void {
   if (!map.style) return;
   ensureDemSource(map);
+  lastReliefOpts.set(map, opts);
+  if (reliefManifest === undefined) {
+    void loadReliefManifest().then((m) => {
+      const last = lastReliefOpts.get(map);
+      if (m && last && map.style) applyRelief(map, last);
+    });
+  }
+  if (!reliefMoveBound.has(map)) {
+    reliefMoveBound.add(map);
+    map.on("moveend", () => syncReliefMode(map));
+  }
 
   if (opts.hillshade && !map.getLayer(HILLSHADE_ID)) {
     map.addLayer(
@@ -320,10 +407,14 @@ export function applyRelief(map: MaplibreMap, opts: ReliefOptions): void {
         source: OPEN_DEM_SOURCE_ID,
         paint: {
           "hillshade-method": "multidirectional",
-          "hillshade-highlight-color": opts.dark ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.55)",
-          "hillshade-shadow-color": opts.dark ? "rgba(0,0,0,0.55)" : opts.winter ? "rgba(71,85,105,0.55)" : "rgba(43,52,70,0.42)",
-          "hillshade-accent-color": opts.dark ? "rgba(0,0,0,0.3)" : "rgba(60,60,70,0.25)",
-          "hillshade-exaggeration": opts.dark ? 0.4 : 0.5,
+          // Chiaro "svizzero": ombre leggere blu-viola e versanti al sole con luce calda
+          // (un grigio ardesia pieno rende la carta sporca e monocromatica).
+          // Scuro "notte": ombre blu-notte morbide (il nero pieno schiaccia interi versanti)
+          // e luce fredda lunare sui versanti esposti, così il rilievo resta leggibile.
+          "hillshade-highlight-color": opts.dark ? "rgba(196,212,236,0.16)" : opts.winter ? "rgba(255,255,255,0.5)" : "rgba(255,247,220,0.42)",
+          "hillshade-shadow-color": opts.dark ? "rgba(5,8,18,0.40)" : opts.winter ? "rgba(71,85,105,0.5)" : "rgba(74,80,112,0.30)",
+          "hillshade-accent-color": opts.dark ? "rgba(0,0,0,0.18)" : "rgba(92,82,72,0.14)",
+          "hillshade-exaggeration": opts.dark ? 0.38 : 0.42,
         },
       } as LayerSpecification,
       reliefInsertBefore(map),
@@ -370,6 +461,12 @@ export function applyRelief(map: MaplibreMap, opts: ReliefOptions): void {
   if (map.getLayer(TINT_ID)) {
     map.setLayoutProperty(TINT_ID, "visibility", opts.tint && !opts.dark ? "visible" : "none");
   }
+
+  ensurePreRelief(map, opts);
+  if (map.getLayer(PRE_RELIEF_ID)) {
+    map.setPaintProperty(PRE_RELIEF_ID, "raster-opacity", opts.dark ? 0.55 : 0.85);
+  }
+  syncReliefMode(map);
 }
 
 /** Compat: vecchia API (ombreggiatura sempre attiva). */
