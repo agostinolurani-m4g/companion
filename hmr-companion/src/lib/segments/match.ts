@@ -314,3 +314,21 @@ export function detectClimbs(
   }
   return out;
 }
+
+/** Discese candidate (MTB, sci): come le salite ma sulla quota rovesciata. */
+export function detectDescents(
+  coords: GeoJSON.Position[],
+  opts: { minGain?: number; minGrade?: number } = {},
+): ClimbSuggestion[] {
+  const flipped = coords.map((c) => (c.length > 2 && Number.isFinite(c[2]) ? [c[0], c[1], -(c[2] as number)] : c));
+  return detectClimbs(flipped, { minGain: opts.minGain ?? 80, minGrade: opts.minGrade ?? 6 });
+}
+
+export type SegmentKind = "climb" | "descent" | "flat";
+
+/** Tipo di segmento dal profilo: salita/discesa se il dislivello netto supera il 2% della lunghezza. */
+export function segmentKind(st: Pick<SegmentStats, "length_m" | "avg_grade_pct">): SegmentKind {
+  if (st.avg_grade_pct >= 2) return "climb";
+  if (st.avg_grade_pct <= -2) return "descent";
+  return "flat";
+}

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ProfileLevel } from "@/lib/db";
 import { avatarUrl } from "@/lib/social-labels";
+import { V2NotificationsList } from "@/components/v2/V2Notifications";
 
 type Props = {
   username: string;
@@ -98,6 +99,7 @@ export default function V2Profile({ username, isAdmin = false }: Props) {
     bio: "",
     home_area: "",
     level: "intermediate" as ProfileLevel,
+    gender: "" as "" | "f" | "m" | "x",
   });
 
   const load = useCallback(async () => {
@@ -127,11 +129,19 @@ export default function V2Profile({ username, isAdmin = false }: Props) {
       setIsSelf(!!data.is_self);
       setIsFollowing(!!data.is_following);
       if (data.profile) {
+        let gender: "" | "f" | "m" | "x" = "";
+        if (data.is_self) {
+          const own = (await fetch("/api/v2/profile")
+            .then((r) => r.json())
+            .catch(() => null)) as { profile?: { gender?: "" | "f" | "m" | "x" } } | null;
+          gender = own?.profile?.gender ?? "";
+        }
         setForm({
           display_name: data.profile.display_name,
           bio: data.profile.bio,
           home_area: data.profile.home_area,
           level: data.profile.level,
+          gender,
         });
       }
     } catch (e) {
@@ -399,6 +409,22 @@ export default function V2Profile({ username, isAdmin = false }: Props) {
                   ))}
                 </select>
               </label>
+              <label className="grid gap-1 text-xs">
+                Classifiche dei segmenti (facoltativo)
+                <select
+                  value={form.gender}
+                  onChange={(e) => setForm((f) => ({ ...f, gender: e.target.value as typeof f.gender }))}
+                  className="rounded-lg border border-[color:var(--hmr-border)] bg-transparent px-3 py-2 text-sm"
+                >
+                  <option value="">Non dichiarato</option>
+                  <option value="f">Donne</option>
+                  <option value="m">Uomini</option>
+                  <option value="x">Non binario</option>
+                </select>
+                <span className="text-[10.5px] text-[color:var(--hmr-faint)]">
+                  Serve solo a filtrare le classifiche dei segmenti; non compare sul profilo.
+                </span>
+              </label>
               <button
                 type="button"
                 disabled={saving}
@@ -409,6 +435,13 @@ export default function V2Profile({ username, isAdmin = false }: Props) {
               </button>
             </div>
           </div>
+        ) : null}
+
+        {isSelf ? (
+          <details className="mt-4 hmr-panel rounded-lg border border-[color:var(--hmr-border)]/80 lg:hidden">
+            <summary className="cursor-pointer px-4 py-3 text-sm font-medium">Notifiche</summary>
+            <V2NotificationsList />
+          </details>
         ) : null}
 
         {routes.length > 0 ? (

@@ -24,6 +24,8 @@ export async function GET(req: Request) {
   const db = getDb();
   const bbox = url.searchParams.get("bbox");
   const sport = url.searchParams.get("sport") ?? undefined;
+  const kindRaw = url.searchParams.get("kind");
+  const kind = kindRaw === "climb" || kindRaw === "descent" || kindRaw === "flat" ? kindRaw : undefined;
   const geometry = url.searchParams.get("geometry") !== "0";
   if (bbox) {
     const parts = bbox.split(",").map(Number);
@@ -31,7 +33,7 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "bbox non valido (south,west,north,east)" }, { status: 400 });
     }
     const [south, west, north, east] = parts;
-    const rows = listSegmentsInBbox(db, auth.email, { south, west, north, east }, { sport: sport && SPORTS.has(sport) ? sport : undefined });
+    const rows = listSegmentsInBbox(db, auth.email, { south, west, north, east }, { sport: sport && SPORTS.has(sport) ? sport : undefined, kind });
     return NextResponse.json({ segments: rows.map((r) => serializeSegment(r, { geometry })) });
   }
   return NextResponse.json({ segments: listSegmentsForUser(db, auth.email).map((r) => serializeSegment(r, { geometry })) });

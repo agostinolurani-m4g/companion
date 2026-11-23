@@ -9,6 +9,8 @@ export type SegmentDto = {
   sport: string;
   length_m: number;
   elev_gain_m: number;
+  elev_loss_m: number;
+  kind: SegmentRow["kind"];
   avg_grade_pct: number;
   max_grade_pct: number;
   min_ele: number | null;
@@ -27,6 +29,8 @@ export function serializeSegment(row: SegmentRow, opts: { geometry?: boolean } =
     sport: row.sport,
     length_m: row.length_m,
     elev_gain_m: row.elev_gain_m,
+    elev_loss_m: row.elev_loss_m ?? 0,
+    kind: row.kind ?? "climb",
     avg_grade_pct: row.avg_grade_pct,
     max_grade_pct: row.max_grade_pct,
     min_ele: row.min_ele,

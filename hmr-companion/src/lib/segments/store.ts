@@ -1,7 +1,8 @@
 import crypto from "node:crypto";
 import type Database from "better-sqlite3";
 import { lineBbox, parseActivityLine, type ActivityRow } from "@/lib/activities/store";
-import { matchSegment, segmentStats, type SegmentStats } from "./match";
+import { addNotification, migrateNotifications } from "@/lib/notifications";
+import { matchSegment, segmentKind, segmentStats, type SegmentKind, type SegmentStats } from "./match";
 
 /**
  * Segmenti (stile Strava): tratti di traccia con classifica dei passaggi.
@@ -21,6 +22,8 @@ export type SegmentRow = {
   geojson: string;
   length_m: number;
   elev_gain_m: number;
+  elev_loss_m: number;
+  kind: SegmentKind;
   avg_grade_pct: number;
   max_grade_pct: number;
   min_ele: number | null;
@@ -96,7 +99,42 @@ export function migrateSegmentsStore(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_segment_efforts_seg ON segment_efforts(segment_id, elapsed_s);
     CREATE INDEX IF NOT EXISTS idx_segment_efforts_owner ON segment_efforts(owner, segment_id);
     CREATE INDEX IF NOT EXISTS idx_segment_efforts_activity ON segment_efforts(activity_id);
+
+    -- Genere facoltativo per le classifiche separate (vuoto = non dichiarato).
+    CREATE TABLE IF NOT EXISTS athlete_profiles (
+      username TEXT PRIMARY KEY,
+      gender TEXT NOT NULL DEFAULT '' CHECK(gender IN ('', 'f', 'm', 'x')),
+      updated_at INTEGER NOT NULL
+    );
   `);
+  const segCols = new Set((db.prepare(`PRAGMA table_info(segments)`).all() as { name: string }[]).map((c) => c.name));
+  if (!segCols.has("elev_loss_m")) db.exec(`ALTER TABLE segments ADD COLUMN elev_loss_m REAL NOT NULL DEFAULT 0`);
+  if (!segCols.has("kind")) {
+    db.exec(`ALTER TABLE segments ADD COLUMN kind TEXT NOT NULL DEFAULT 'climb'`);
+    db.exec(
+      `UPDATE segments SET kind = CASE WHEN avg_grade_pct >= 2 THEN 'climb' WHEN avg_grade_pct <= -2 THEN 'descent' ELSE 'flat' END`,
+    );
+  }
+  migrateNotifications(db);
+}
+
+export type Gender = "" | "f" | "m" | "x";
+export const GENDER_LABELS: Record<Exclude<Gender, "">, string> = { f: "Donne", m: "Uomini", x: "Non binario" };
+
+export function isGender(raw: unknown): raw is Gender {
+  return raw === "" || raw === "f" || raw === "m" || raw === "x";
+}
+
+export function getAthleteGender(db: Database.Database, username: string): Gender {
+  const r = db.prepare(`SELECT gender FROM athlete_profiles WHERE username = ?`).get(username) as { gender: Gender } | undefined;
+  return r?.gender ?? "";
+}
+
+export function setAthleteGender(db: Database.Database, username: string, gender: Gender, now: number): void {
+  db.prepare(
+    `INSERT INTO athlete_profiles (username, gender, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(username) DO UPDATE SET gender = excluded.gender, updated_at = excluded.updated_at`,
+  ).run(username, gender, now);
 }
 
 export function parseActivityTimes(row: { times_json?: string | null }): number[] | null {
@@ -147,9 +185,9 @@ export function insertSegment(db: Database.Database, input: NewSegment): Segment
   const id = crypto.randomUUID();
   db.prepare(
     `INSERT INTO segments
-       (id, owner, name, sport, geojson, length_m, elev_gain_m, avg_grade_pct, max_grade_pct, min_ele, max_ele,
+       (id, owner, name, sport, geojson, length_m, elev_gain_m, elev_loss_m, kind, avg_grade_pct, max_grade_pct, min_ele, max_ele,
         bbox_w, bbox_s, bbox_e, bbox_n, visibility, source_kind, source_id, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     input.owner,
@@ -158,6 +196,8 @@ export function insertSegment(db: Database.Database, input: NewSegment): Segment
     JSON.stringify(line),
     st.length_m,
     st.elev_gain_m,
+    st.elev_loss_m,
+    segmentKind(st),
     st.avg_grade_pct,
     st.max_grade_pct,
     st.min_ele,
@@ -191,7 +231,7 @@ export function listSegmentsInBbox(
   db: Database.Database,
   viewer: string,
   bbox: { west: number; south: number; east: number; north: number },
-  opts: { sport?: string; limit?: number } = {},
+  opts: { sport?: string; kind?: SegmentKind; limit?: number } = {},
 ): SegmentRow[] {
   const args: unknown[] = [bbox.west, bbox.east, bbox.south, bbox.north, viewer];
   let sql = `SELECT * FROM segments
@@ -200,6 +240,10 @@ export function listSegmentsInBbox(
   if (opts.sport) {
     sql += ` AND sport = ?`;
     args.push(opts.sport);
+  }
+  if (opts.kind) {
+    sql += ` AND kind = ?`;
+    args.push(opts.kind);
   }
   sql += ` ORDER BY created_at DESC LIMIT ?`;
   args.push(Math.min(Math.max(opts.limit ?? 200, 1), 500));
@@ -226,16 +270,91 @@ function effortPublicOk(act: Pick<ActivityRow, "provider" | "community_consent">
   return act.provider !== "strava" && act.community_consent === 1;
 }
 
+type SegmentStanding = { leader: { owner: string; elapsed_s: number } | null; pr: number | null };
+
+/** Chi ha la corona (miglior tempo pubblico) e il record personale di `owner`. */
+function standing(db: Database.Database, segmentId: string, owner: string): SegmentStanding {
+  const leader = db
+    .prepare(
+      `SELECT owner, elapsed_s FROM segment_efforts
+       WHERE segment_id = ? AND public_ok = 1 AND elapsed_s IS NOT NULL
+       ORDER BY elapsed_s ASC, start_time ASC LIMIT 1`,
+    )
+    .get(segmentId) as { owner: string; elapsed_s: number } | undefined;
+  const pr = db
+    .prepare(`SELECT MIN(elapsed_s) AS pr FROM segment_efforts WHERE segment_id = ? AND owner = ? AND elapsed_s IS NOT NULL`)
+    .get(segmentId, owner) as { pr: number | null };
+  return { leader: leader ?? null, pr: pr.pr };
+}
+
+export function formatEffortTime(s: number): string {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return h ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}` : `${m}:${String(sec).padStart(2, "0")}`;
+}
+
+/**
+ * Notifiche dopo nuovi passaggi: record personale battuto, corona presa, corona persa.
+ * Solo se prima c'era già un riferimento (il primo passaggio non è una "notizia").
+ */
+function notifyStandingChange(
+  db: Database.Database,
+  seg: { id: string; name: string },
+  owner: string,
+  before: SegmentStanding,
+  after: SegmentStanding,
+  activityId: string,
+  now: number,
+): void {
+  const href = `/v2/segmenti/${seg.id}`;
+  if (before.pr != null && after.pr != null && after.pr < before.pr) {
+    addNotification(db, {
+      username: owner,
+      kind: "segment_pr",
+      title: `Nuovo record personale su ${seg.name}`,
+      body: `${formatEffortTime(after.pr)} (prima ${formatEffortTime(before.pr)})`,
+      href,
+      dedupKey: `pr:${seg.id}:${activityId}`,
+      now,
+    });
+  }
+  const prev = before.leader;
+  const next = after.leader;
+  if (next && prev && next.owner === owner && prev.owner !== owner) {
+    addNotification(db, {
+      username: owner,
+      kind: "segment_crown",
+      title: `Hai la corona su ${seg.name}`,
+      body: `Miglior tempo: ${formatEffortTime(next.elapsed_s)}`,
+      href,
+      dedupKey: `crown:${seg.id}:${activityId}`,
+      now,
+    });
+    addNotification(db, {
+      username: prev.owner,
+      kind: "segment_crown_lost",
+      title: `Hai perso la corona su ${seg.name}`,
+      body: `Nuovo miglior tempo: ${formatEffortTime(next.elapsed_s)} (il tuo ${formatEffortTime(prev.elapsed_s)})`,
+      href,
+      dedupKey: `lost:${seg.id}:${activityId}`,
+      now,
+    });
+  }
+}
+
 /** Ricalcola i passaggi di un'attività su un segmento (idempotente). Restituisce quanti. */
 export function matchActivityOnSegment(
   db: Database.Database,
-  seg: Pick<SegmentRow, "id" | "geojson">,
+  seg: Pick<SegmentRow, "id" | "geojson"> & { name?: string },
   act: ActivityRow & { times_json?: string | null },
   now: number,
+  opts: { notify?: boolean } = {},
 ): number {
   const segLine = JSON.parse(seg.geojson) as GeoJSON.LineString;
   const line = parseActivityLine(act);
   const matches = matchSegment(segLine.coordinates, line.coordinates, parseActivityTimes(act));
+  const before = opts.notify ? standing(db, seg.id, act.owner) : null;
   db.prepare(`DELETE FROM segment_efforts WHERE segment_id = ? AND activity_id = ?`).run(seg.id, act.id);
   const ins = db.prepare(
     `INSERT OR IGNORE INTO segment_efforts
@@ -255,6 +374,11 @@ export function matchActivityOnSegment(
       m.distance_m,
       now,
     );
+  }
+  if (before && matches.length) {
+    const name =
+      seg.name ?? (db.prepare(`SELECT name FROM segments WHERE id = ?`).get(seg.id) as { name: string } | undefined)?.name ?? "segmento";
+    notifyStandingChange(db, { id: seg.id, name }, act.owner, before, standing(db, seg.id, act.owner), act.id, now);
   }
   return matches.length;
 }
@@ -284,15 +408,16 @@ export function matchSegmentAgainstActivities(db: Database.Database, seg: Segmen
 export function matchActivityAgainstSegments(db: Database.Database, act: ActivityWithTimes, now: number): number {
   const segs = db
     .prepare(
-      `SELECT id, geojson FROM segments
+      `SELECT id, geojson, name FROM segments
        WHERE bbox_w >= ? AND bbox_e <= ? AND bbox_s >= ? AND bbox_n <= ?`,
     )
     .all(act.bbox_w - 0.001, act.bbox_e + 0.001, act.bbox_s - 0.001, act.bbox_n + 0.001) as Pick<
     SegmentRow,
-    "id" | "geojson"
+    "id" | "geojson" | "name"
   >[];
   let n = 0;
-  for (const s of segs) n += matchActivityOnSegment(db, s, act, now);
+  // Attività nuova: è una notizia (record, corona). La scansione retroattiva di un segmento nuovo no.
+  for (const s of segs) n += matchActivityOnSegment(db, s, act, now, { notify: true });
   return n;
 }
 
@@ -325,21 +450,23 @@ export type LeaderboardEntry = { owner: string; elapsed_s: number; start_time: n
 export type LegendEntry = { owner: string; efforts: number; rank: number };
 
 const VISIBLE = `(e.public_ok = 1 OR e.owner = @viewer)`;
+const GENDER_FILTER = ` AND e.owner IN (SELECT username FROM athlete_profiles WHERE gender = @gender)`;
 
 /** Miglior tempo per persona (periodo opzionale). */
 export function segmentLeaderboard(
   db: Database.Database,
   segmentId: string,
   viewer: string,
-  opts: { since?: number; limit?: number } = {},
+  opts: { since?: number; limit?: number; gender?: Exclude<Gender, ""> } = {},
 ): LeaderboardEntry[] {
+  const genderSql = opts.gender ? GENDER_FILTER : "";
   const rows = db
     .prepare(
       `SELECT e.owner, MIN(e.elapsed_s) AS elapsed_s FROM segment_efforts e
-       WHERE e.segment_id = @seg AND e.elapsed_s IS NOT NULL AND ${VISIBLE} AND e.start_time >= @since
+       WHERE e.segment_id = @seg AND e.elapsed_s IS NOT NULL AND ${VISIBLE} AND e.start_time >= @since${genderSql}
        GROUP BY e.owner ORDER BY elapsed_s ASC LIMIT @limit`,
     )
-    .all({ seg: segmentId, viewer, since: opts.since ?? 0, limit: opts.limit ?? 50 }) as {
+    .all({ seg: segmentId, viewer, since: opts.since ?? 0, limit: opts.limit ?? 50, ...(opts.gender ? { gender: opts.gender } : {}) }) as {
     owner: string;
     elapsed_s: number;
   }[];
@@ -366,14 +493,18 @@ export function segmentLegends(
   viewer: string,
   now: number,
   limit = 20,
+  gender?: Exclude<Gender, "">,
 ): LegendEntry[] {
   const rows = db
     .prepare(
       `SELECT e.owner, COUNT(*) AS efforts, MAX(e.start_time) AS last FROM segment_efforts e
-       WHERE e.segment_id = @seg AND ${VISIBLE} AND e.start_time >= @since
+       WHERE e.segment_id = @seg AND ${VISIBLE} AND e.start_time >= @since${gender ? GENDER_FILTER : ""}
        GROUP BY e.owner ORDER BY efforts DESC, last DESC LIMIT @limit`,
     )
-    .all({ seg: segmentId, viewer, since: now - LEGEND_WINDOW_MS, limit }) as { owner: string; efforts: number }[];
+    .all({ seg: segmentId, viewer, since: now - LEGEND_WINDOW_MS, limit, ...(gender ? { gender } : {}) }) as {
+    owner: string;
+    efforts: number;
+  }[];
   return rows.map((r, i) => ({ owner: r.owner, efforts: r.efforts, rank: i + 1 }));
 }
 

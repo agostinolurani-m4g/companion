@@ -6,6 +6,7 @@ import { usePathname, useSearchParams } from "next/navigation";
 import Icon, { type IconName } from "@/components/v2/ui/Icon";
 import { activeNavId, V2_NAV_LINKS } from "@/lib/v2-nav";
 import { useV2Theme, V2ThemeProvider } from "@/components/v2/ui/theme";
+import V2NotificationBell, { useUnreadNotifications } from "@/components/v2/V2Notifications";
 
 function ThemeToggle() {
   const { theme, toggle } = useV2Theme();
@@ -68,6 +69,7 @@ function ShellNav({ username, isAdmin }: { username?: string; isAdmin: boolean }
   const active = activeNavId(pathname, searchParams.get("mode"));
   const profileHref = username ? `/v2/u/${encodeURIComponent(username)}` : "/v2/me";
   const initial = (username ?? "?").slice(0, 1).toUpperCase();
+  const unread = useUnreadNotifications();
 
   return (
     <>
@@ -79,6 +81,7 @@ function ShellNav({ username, isAdmin }: { username?: string; isAdmin: boolean }
           <RailLink key={l.id} href={l.href} label={l.label} icon={l.icon} active={active === l.id} />
         ))}
         <div className="flex-1" />
+        <V2NotificationBell />
         <ThemeToggle />
         {isAdmin ? <RailLink href="/v2/admin" label="Admin" icon="settings" active={active === "admin"} /> : null}
         <Link
@@ -112,7 +115,17 @@ function ShellNav({ username, isAdmin }: { username?: string; isAdmin: boolean }
               }`}
             >
               {on ? <span className="absolute inset-x-5 top-0 h-[2px] bg-[color:var(--hmr-accent)]" aria-hidden /> : null}
-              <Icon name={l.icon} size={20} strokeWidth={on ? 2 : 1.7} />
+              <span className="relative">
+                <Icon name={l.icon} size={20} strokeWidth={on ? 2 : 1.7} />
+                {l.id === "profile" && unread > 0 ? (
+                  <span
+                    className="absolute -right-2 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-[color:var(--hmr-danger)] px-1 text-[9px] font-bold text-white"
+                    aria-label={`${unread} notifiche non lette`}
+                  >
+                    {unread > 9 ? "9+" : unread}
+                  </span>
+                ) : null}
+              </span>
               {l.label}
             </Link>
           );

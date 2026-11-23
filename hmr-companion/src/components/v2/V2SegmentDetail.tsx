@@ -27,6 +27,7 @@ type Detail = {
   my_rank: number | null;
   my_strava_missing_times: number;
   can_delete: boolean;
+  my_gender?: "" | "f" | "m" | "x";
 };
 
 type Tab = "board" | "legend" | "mine";
@@ -59,19 +60,21 @@ export default function V2SegmentDetail({ segmentId }: { segmentId: string }) {
   const [err, setErr] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("board");
   const [period, setPeriod] = useState<Period>("all");
+  const [gender, setGender] = useState<"" | "f" | "m" | "x">("");
   const [hydrating, setHydrating] = useState(false);
 
   const load = useCallback(
     async (opts: { hydrate?: boolean } = {}) => {
       try {
         const q = new URLSearchParams({ period });
+        if (gender) q.set("gender", gender);
         if (opts.hydrate) q.set("hydrate", "1");
         setD(await fetchJson<Detail>(`/api/v2/segments/${encodeURIComponent(segmentId)}?${q}`));
       } catch (e) {
         setErr(e instanceof Error ? e.message : "Errore");
       }
     },
-    [segmentId, period],
+    [segmentId, period, gender],
   );
 
   useEffect(() => {
@@ -189,13 +192,30 @@ export default function V2SegmentDetail({ segmentId }: { segmentId: string }) {
 
         {tab === "board" ? (
           <section>
-            <div className="mb-2 flex gap-1.5">
+            <div className="mb-2 flex flex-wrap gap-1.5">
               {(Object.keys(PERIOD_LABEL) as Period[]).map((p) => (
                 <button key={p} type="button" className="ui-chip" aria-pressed={period === p} onClick={() => setPeriod(p)}>
                   {PERIOD_LABEL[p]}
                 </button>
               ))}
+              <span className="mx-1 w-px self-stretch bg-[color:var(--hmr-border)]" aria-hidden />
+              {(
+                [
+                  ["", "Tutti"],
+                  ["f", "Donne"],
+                  ["m", "Uomini"],
+                ] as const
+              ).map(([g, label]) => (
+                <button key={g || "all"} type="button" className="ui-chip" aria-pressed={gender === g} onClick={() => setGender(g)}>
+                  {label}
+                </button>
+              ))}
             </div>
+            {gender && !d.my_gender ? (
+              <p className="mb-2 text-[11px] text-[color:var(--hmr-muted)]">
+                Le classifiche per genere usano solo chi l&apos;ha indicato nel profilo (facoltativo).
+              </p>
+            ) : null}
             {d.leaderboard.length ? (
               <ol className="space-y-1">
                 {d.leaderboard.map((r) => (

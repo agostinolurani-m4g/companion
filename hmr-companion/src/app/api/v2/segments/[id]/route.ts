@@ -5,6 +5,8 @@ import { personLabel, serializeSegment } from "@/lib/segments/serialize";
 import {
   canViewSegment,
   deleteSegment,
+  getAthleteGender,
+  type Gender,
   getSegment,
   matchActivityOnSegment,
   myEfforts,
@@ -40,6 +42,8 @@ export async function GET(req: Request, ctx: Ctx) {
   const now = Date.now();
   const period = url.searchParams.get("period") ?? "all";
   const since = PERIODS[period] ? now - PERIODS[period] : 0;
+  const g = url.searchParams.get("gender");
+  const gender = g === "f" || g === "m" || g === "x" ? (g as Exclude<Gender, "">) : undefined;
 
   // Strava: il polyline riassuntivo non ha orari. Completa con gli stream
   // (poche attività per volta) e ricalcola i passaggi di quelle.
@@ -56,8 +60,8 @@ export async function GET(req: Request, ctx: Ctx) {
     }
   }
 
-  const leaderboard = segmentLeaderboard(db, id, auth.email, { since, limit: 50 });
-  const legends = segmentLegends(db, id, auth.email, now);
+  const leaderboard = segmentLeaderboard(db, id, auth.email, { since, limit: 50, gender });
+  const legends = segmentLegends(db, id, auth.email, now, 20, gender);
   const mine = myEfforts(db, id, auth.email);
   const timed = mine.filter((e) => e.elapsed_s != null);
   const pr = timed.length ? Math.min(...timed.map((e) => e.elapsed_s as number)) : null;
@@ -74,6 +78,8 @@ export async function GET(req: Request, ctx: Ctx) {
     my_rank: leaderboard.find((e) => e.owner === auth.email)?.rank ?? null,
     my_strava_missing_times: missingTimes,
     can_delete: seg.owner === auth.email,
+    my_gender: getAthleteGender(db, auth.email),
+    gender: gender ?? null,
   });
 }
 

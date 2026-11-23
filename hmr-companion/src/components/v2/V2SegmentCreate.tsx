@@ -7,7 +7,7 @@ import type { Position } from "geojson";
 import V2PlanMap, { type V2MapClickTarget } from "@/components/v2/V2PlanMap";
 import { fetchJson } from "@/lib/fetch-json";
 import { sampleElevationsForLine } from "@/lib/elevation";
-import { detectClimbs, segmentStats } from "@/lib/segments/match";
+import { detectClimbs, detectDescents, segmentStats } from "@/lib/segments/match";
 import { formatDistance, segmentsToGeoJson } from "@/lib/segments/geo";
 import { activityLabel, isUserRouteActivity, USER_ROUTE_ACTIVITIES, type UserRouteActivity } from "@/lib/sports";
 import { haversineKm } from "@/lib/track-geometry";
@@ -94,11 +94,16 @@ export default function V2SegmentCreate({ source }: { source: Source | null }) {
         const pts = el.sampled.map((c, i) => (el.available ? [c[0], c[1], el.elevationM[i]] : [c[0], c[1]]));
         setSamples({ pts, km: el.distanceKm });
         // Selezione iniziale: la salita più dura, altrimenti il terzo centrale.
+        // MTB e sci: proponi prima la discesa più lunga; per gli altri la salita più dura.
+        const downhillFirst = ["mtb", "ski"].includes(l.sport);
         const climbs = detectClimbs(pts);
-        const best = [...climbs].sort((x, y) => y.gain_m - x.gain_m)[0];
+        const descents = detectDescents(pts);
+        const bestUp = [...climbs].sort((x, y) => y.gain_m - x.gain_m)[0];
+        const bestDown = [...descents].sort((x, y) => y.gain_m - x.gain_m)[0];
+        const best = downhillFirst ? (bestDown ?? bestUp) : (bestUp ?? bestDown);
         if (best) {
           setRange([best.start, best.end]);
-          setName(`Salita da ${l.name}`.slice(0, 120));
+          setName(`${best === bestDown ? "Discesa" : "Salita"} da ${l.name}`.slice(0, 120));
         } else {
           const n = pts.length;
           setRange([Math.floor(n / 3), Math.floor((2 * n) / 3)]);
@@ -114,6 +119,7 @@ export default function V2SegmentCreate({ source }: { source: Source | null }) {
   }, [source]);
 
   const climbs = useMemo(() => (samples ? detectClimbs(samples.pts) : []), [samples]);
+  const descents = useMemo(() => (samples ? detectDescents(samples.pts) : []), [samples]);
   const slice = useMemo(() => (samples ? samples.pts.slice(range[0], range[1] + 1) : []), [samples, range]);
   const stats = useMemo(() => (slice.length >= 2 ? segmentStats(slice) : null), [slice]);
   const fit = useMemo(() => {
@@ -261,11 +267,30 @@ export default function V2SegmentCreate({ source }: { source: Source | null }) {
               </div>
             ) : null}
 
+            {descents.length ? (
+              <div>
+                <div className="ui-eyebrow mb-1.5">Discese trovate (MTB, sci)</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {descents.map((c) => (
+                    <button
+                      key={`d-${c.start}-${c.end}`}
+                      type="button"
+                      className="ui-chip"
+                      aria-pressed={range[0] === c.start && range[1] === c.end}
+                      onClick={() => setRange([c.start, c.end])}
+                    >
+                      {formatDistance(c.length_m)} · −{c.gain_m} m · −{c.avg_grade_pct}%
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
             {stats ? (
               <div className="grid grid-cols-4 gap-2 text-center">
                 {[
                   [formatDistance(stats.length_m), "lunghezza"],
-                  [`${stats.elev_gain_m} m`, "D+"],
+                  stats.avg_grade_pct < -2 ? [`${stats.elev_loss_m} m`, "D−"] : [`${stats.elev_gain_m} m`, "D+"],
                   [`${stats.avg_grade_pct}%`, "media"],
                   [`${stats.max_grade_pct}%`, "max"],
                 ].map(([v, l]) => (
