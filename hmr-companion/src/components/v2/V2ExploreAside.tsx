@@ -40,6 +40,10 @@ export default function V2ExploreAside({ explore }: Props) {
     setPhotosVisible,
     segmentsVisible,
     setSegmentsVisible,
+    highlightsVisible,
+    setHighlightsVisible,
+    highlightMode,
+    setHighlightMode,
     slopeVisible,
     setSlopeVisible,
     avalancheVisible,
@@ -119,6 +123,17 @@ export default function V2ExploreAside({ explore }: Props) {
             <Icon name="camera" size={15} />
             Aggiungi foto
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              setReportMode(false);
+              setHighlightMode(!highlightMode);
+            }}
+            className={`ui-btn ui-btn-sm col-span-2 ${highlightMode ? "!border-amber-500/50 !bg-amber-500/10 !text-amber-700" : ""}`}
+          >
+            <Icon name="star" size={15} />
+            {highlightMode ? "Tocca il punto sulla mappa…" : "Consiglia un posto (highlight)"}
+          </button>
         </div>
         <div className="mt-2 flex flex-wrap gap-1.5">
           <button type="button" className="ui-chip" aria-pressed={reportsVisible} onClick={() => setReportsVisible(!reportsVisible)}>
@@ -129,6 +144,9 @@ export default function V2ExploreAside({ explore }: Props) {
           </button>
           <button type="button" className="ui-chip" aria-pressed={segmentsVisible} onClick={() => setSegmentsVisible(!segmentsVisible)}>
             Segmenti
+          </button>
+          <button type="button" className="ui-chip" aria-pressed={highlightsVisible} onClick={() => setHighlightsVisible(!highlightsVisible)}>
+            Highlights
           </button>
           {activity === "ski" ? (
             <>

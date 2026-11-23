@@ -22,6 +22,7 @@ export type MapHandlerRefs = {
   onRouteSelectRef: MutableRefObject<((routeId: string) => void) | undefined>;
   onReportSelectRef: MutableRefObject<((reportId: string) => void) | undefined>;
   onSegmentSelectRef?: MutableRefObject<((segmentId: string) => void) | undefined>;
+  onHighlightSelectRef?: MutableRefObject<((highlightId: string) => void) | undefined>;
   outdoorFeaturesRef?: MutableRefObject<GeoJSON.FeatureCollection | null>;
   allowOutdoorPickRef: MutableRefObject<boolean>;
   allowLabelPickRef?: MutableRefObject<boolean>;
@@ -119,7 +120,7 @@ function pickBaseLabel(map: MaplibreMap, point: { x: number; y: number }) {
 }
 
 export function bindLayerHandlers(map: MaplibreMap, refs: MapHandlerRefs): () => void {
-  const interactiveLayers = ["v2-pois-hit", "v2-outdoor-hit", "v2-waypoints", "v2-waypoints-halo", "v2-reports-hit", "v2-segments-hit"];
+  const interactiveLayers = ["v2-pois-hit", "v2-outdoor-hit", "v2-waypoints", "v2-waypoints-halo", "v2-reports-hit", "v2-segments-hit", "v2-highlights-hit"];
   const onLayerEnter = () => {
     if (!refs.dragRef.current) map.getCanvas().style.cursor = "pointer";
   };
@@ -359,6 +360,15 @@ export function attachGlobalHandlers(map: MaplibreMap, refs: MapHandlerRefs): vo
           refs.onReportSelectRef.current(reportId);
           return;
         }
+      }
+    }
+
+    if (refs.onHighlightSelectRef?.current && map.getLayer("v2-highlights-hit")) {
+      const hHits = map.queryRenderedFeatures(e.point, { layers: ["v2-highlights-hit"] });
+      const highlightId = (hHits[0]?.properties as { highlightId?: string } | undefined)?.highlightId;
+      if (highlightId) {
+        refs.onHighlightSelectRef.current(highlightId);
+        return;
       }
     }
 

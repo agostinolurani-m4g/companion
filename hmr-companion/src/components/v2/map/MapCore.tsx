@@ -78,6 +78,8 @@ export default function MapCore({
   onPhotoSelect,
   segmentsGeoJson,
   onSegmentSelect,
+  highlightsGeoJson,
+  onHighlightSelect,
   outingStopsGeoJson,
   reportsGeoJson,
   onRouteSelect,
@@ -138,6 +140,7 @@ export default function MapCore({
   const onRouteSelectRef = useRef(onRouteSelect);
   const onReportSelectRef = useRef(onReportSelect);
   const onSegmentSelectRef = useRef(onSegmentSelect);
+  const onHighlightSelectRef = useRef(onHighlightSelect);
   const onPhotoSelectRef = useRef(onPhotoSelect);
   const outdoorFeaturesRef = useRef<GeoJSON.FeatureCollection | null>(featuresGeoJson ?? null);
   const allowOutdoorPickRef = useRef(pickOutdoorFeatures);
@@ -147,6 +150,7 @@ export default function MapCore({
     onRouteSelectRef.current = onRouteSelect;
     onReportSelectRef.current = onReportSelect;
     onSegmentSelectRef.current = onSegmentSelect;
+    onHighlightSelectRef.current = onHighlightSelect;
     onPhotoSelectRef.current = onPhotoSelect;
     onInteractionRef.current = onMapInteraction;
     onWaypointMoveRef.current = onWaypointMove;
@@ -207,6 +211,7 @@ export default function MapCore({
       onRouteSelectRef,
       onReportSelectRef,
       onSegmentSelectRef,
+      onHighlightSelectRef,
       outdoorFeaturesRef,
       allowOutdoorPickRef,
       allowLabelPickRef,
@@ -535,6 +540,7 @@ export default function MapCore({
     setGeoJson(map, "v2-poi-radius", radiusGeo);
     setGeoJson(map, "v2-photos", photosGeoJson ?? EMPTY_FC);
     setGeoJson(map, "v2-segments", segmentsGeoJson ?? EMPTY_FC);
+    setGeoJson(map, "v2-highlights", highlightsGeoJson ?? EMPTY_FC);
     setGeoJson(map, "v2-outing-stops", outingStopsGeoJson ?? EMPTY_FC);
     setGeoJson(map, "v2-reports", reportsGeoJson ?? EMPTY_FC);
     setGeoJson(map, "v2-outdoor", featuresGeoJson ?? EMPTY_FC);
@@ -546,6 +552,7 @@ export default function MapCore({
     routeMarkersGeoJson,
     photosGeoJson,
     segmentsGeoJson,
+    highlightsGeoJson,
     outingStopsGeoJson,
     reportsGeoJson,
     featuresGeoJson,

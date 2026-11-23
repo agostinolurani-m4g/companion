@@ -345,6 +345,55 @@ export function addOverlaySourcesAndLayers(map: MaplibreMap, opts: OverlayLayerO
     paint: { "line-width": 18, "line-opacity": 0 },
   });
 
+  /* ── Highlights della community: stella ambra, etichetta da vicino ── */
+  map.addSource("v2-highlights", { type: "geojson", data: EMPTY_FC });
+  map.addLayer({
+    id: "v2-highlights",
+    type: "circle",
+    source: "v2-highlights",
+    paint: {
+      "circle-radius": ["interpolate", ["linear"], ["zoom"], 8, 6, 14, 10],
+      "circle-color": "#f59e0b",
+      "circle-stroke-width": 2.5,
+      "circle-stroke-color": "#ffffff",
+    },
+  });
+  map.addLayer({
+    id: "v2-highlights-star",
+    type: "symbol",
+    source: "v2-highlights",
+    layout: {
+      "text-field": "★",
+      "text-size": ["interpolate", ["linear"], ["zoom"], 8, 9, 14, 13],
+      "text-allow-overlap": true,
+      "text-ignore-placement": true,
+      ...(font ? { "text-font": font } : {}),
+    },
+    paint: { "text-color": "#ffffff" },
+  });
+  map.addLayer({
+    id: "v2-highlights-label",
+    type: "symbol",
+    source: "v2-highlights",
+    minzoom: 12.5,
+    layout: {
+      "text-field": ["get", "name"],
+      "text-size": 11.5,
+      "text-offset": [0, 1.3],
+      "text-anchor": "top",
+      "text-max-width": 9,
+      "text-optional": true,
+      ...(font ? { "text-font": font } : {}),
+    },
+    paint: { "text-color": "#92400e", "text-halo-color": "#ffffff", "text-halo-width": 1.6 },
+  });
+  map.addLayer({
+    id: "v2-highlights-hit",
+    type: "circle",
+    source: "v2-highlights",
+    paint: { "circle-radius": 16, "circle-opacity": 0 },
+  });
+
   map.addSource("v2-photos", { type: "geojson", data: EMPTY_FC });
   map.addLayer({
     id: "v2-photos",

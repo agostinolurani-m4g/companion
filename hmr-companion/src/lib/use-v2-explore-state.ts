@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { photosToGeoJson, type MapPhoto } from "@/lib/photo-geo";
 import { segmentsToGeoJson } from "@/lib/segments/geo";
 import type { SegmentDto } from "@/lib/segments/serialize";
+import { highlightsToGeoJson, type HighlightDto } from "@/lib/highlights/serialize";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { V2MapClickTarget } from "@/components/v2/V2PlanMap";
 import type { UserRouteActivity } from "@/lib/db";
@@ -64,6 +65,11 @@ export function useV2ExploreState(enabled: boolean, username?: string) {
   const [photos, setPhotos] = useState<MapPhoto[]>([]);
   const [segmentsVisible, setSegmentsVisible] = useState(true);
   const [segmentsGeoJson, setSegmentsGeoJson] = useState<GeoJSON.FeatureCollection | null>(null);
+  const [highlightsVisible, setHighlightsVisible] = useState(true);
+  const [highlightsGeoJson, setHighlightsGeoJson] = useState<GeoJSON.FeatureCollection | null>(null);
+  const [highlightMode, setHighlightMode] = useState(false);
+  const [createHighlightAt, setCreateHighlightAt] = useState<{ lng: number; lat: number } | null>(null);
+  const [selectedHighlightId, setSelectedHighlightId] = useState<string | null>(null);
 
   const [reportMode, setReportMode] = useState(false);
   const [createReportAt, setCreateReportAt] = useState<{ lng: number; lat: number } | null>(null);
@@ -112,12 +118,14 @@ export function useV2ExploreState(enabled: boolean, username?: string) {
     if (!bbox) return;
     const q = `${bbox.south},${bbox.west},${bbox.north},${bbox.east}`;
     try {
-      const [rep, pho, seg] = await Promise.all([
+      const [rep, pho, seg, hl] = await Promise.all([
         fetchJson<{ geojson?: GeoJSON.FeatureCollection }>(`/api/v2/reports?bbox=${q}`),
         fetchJson<{ photos?: MapPhoto[] }>(`/api/v2/photos?bbox=${q}`),
         fetchJson<{ segments?: SegmentDto[] }>(`/api/v2/segments?bbox=${q}`).catch(() => ({ segments: [] })),
+        fetchJson<{ highlights?: HighlightDto[] }>(`/api/v2/highlights?bbox=${q}`).catch(() => ({ highlights: [] })),
       ]);
       setSegmentsGeoJson(segmentsToGeoJson(seg.segments ?? []));
+      setHighlightsGeoJson(highlightsToGeoJson(hl.highlights ?? []));
       setReportsGeoJson(rep.geojson ?? { type: "FeatureCollection", features: [] });
       setPhotos(pho.photos ?? []);
       setPhotosGeoJson(photosToGeoJson(pho.photos ?? []));
@@ -272,9 +280,24 @@ export function useV2ExploreState(enabled: boolean, username?: string) {
       if (target.kind === "map" && reportMode) {
         setCreateReportAt({ lng: target.lng, lat: target.lat });
         setReportMode(false);
+        return;
+      }
+      if (highlightMode) {
+        const at =
+          target.kind === "map"
+            ? { lng: target.lng, lat: target.lat }
+            : target.kind === "place"
+              ? { lng: target.place.lng, lat: target.place.lat }
+              : target.kind === "feature"
+                ? { lng: target.feature.lng, lat: target.feature.lat }
+                : null;
+        if (at) {
+          setCreateHighlightAt(at);
+          setHighlightMode(false);
+        }
       }
     },
-    [reportMode],
+    [reportMode, highlightMode],
   );
 
   const scopeLabel = useMemo(() => {
@@ -323,6 +346,15 @@ export function useV2ExploreState(enabled: boolean, username?: string) {
     segmentsVisible,
     setSegmentsVisible,
     segmentsGeoJson,
+    highlightsVisible,
+    setHighlightsVisible,
+    highlightsGeoJson,
+    highlightMode,
+    setHighlightMode,
+    createHighlightAt,
+    setCreateHighlightAt,
+    selectedHighlightId,
+    setSelectedHighlightId,
     reportMode,
     setReportMode,
     createReportAt,

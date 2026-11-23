@@ -71,6 +71,9 @@ export type V2PlanMapProps = {
   /** Segmenti (properties: segmentId, name, mine): linee arancio cliccabili. */
   segmentsGeoJson?: GeoJSON.FeatureCollection | null;
   onSegmentSelect?: (segmentId: string) => void;
+  /** Highlights della community (stelle): clic → scheda. */
+  highlightsGeoJson?: GeoJSON.FeatureCollection | null;
+  onHighlightSelect?: (highlightId: string) => void;
   /** Soste della gita pianificata (properties: role, kind, name). */
   outingStopsGeoJson?: GeoJSON.FeatureCollection | null;
   reportsGeoJson?: GeoJSON.FeatureCollection | null;

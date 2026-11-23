@@ -20,6 +20,7 @@ import {
 } from "./field-reports";
 import { migrateOutdoorStore } from "./outdoor/store";
 import { migrateActivitiesStore } from "./activities/store";
+import { migrateHighlights } from "./highlights/store";
 import { activityFilterSql } from "./sport-affinity";
 
 const DEFAULT_FILENAME = "hmr.db";
@@ -387,6 +388,7 @@ function initSchema(db: Database.Database): void {
   migrateOutingsPlanReport(db);
   migrateOutdoorStore(db);
   migrateActivitiesStore(db);
+  migrateHighlights(db);
   seedAppUsers(db);
 }
 

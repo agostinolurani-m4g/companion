@@ -11,6 +11,7 @@ import { useOutingDraft } from "@/lib/use-outing-draft";
 import V2ExploreAside from "@/components/v2/V2ExploreAside";
 import V2PhotoCapture from "@/components/v2/V2PhotoCapture";
 import V2PhotoLightbox from "@/components/v2/V2PhotoLightbox";
+import { V2HighlightCreateSheet, V2HighlightSheet } from "@/components/v2/V2HighlightSheet";
 import V2RoutePopularity, {
   untroddenFeatureCollection,
   type RouteAlternativeDto,
@@ -23,6 +24,8 @@ import V2PoiBanner, { targetFromMapPlace, targetFromSearchPoi } from "@/componen
 import V2FeatureSheet from "@/components/v2/V2FeatureSheet";
 import V2AreaDataPanel from "@/components/v2/V2AreaDataPanel";
 import V2AlongRoutePanel from "@/components/v2/V2AlongRoutePanel";
+import V2AlongMediaPanel, { useAlongMedia } from "@/components/v2/V2AlongMediaPanel";
+import { photosToGeoJson } from "@/lib/photo-geo";
 import V2WaypointList from "@/components/v2/V2WaypointList";
 import V2PlaceSearch, { type PlaceSearchResult } from "@/components/v2/V2PlaceSearch";
 import ElevationProfile from "@/components/v2/ui/ElevationProfile";
@@ -1037,6 +1040,23 @@ export default function V2RouteBuilder({ username }: Props) {
   /* ─────────────── Gita su questa traccia ─────────────── */
   // La bozza segue la traccia anche non salvata: giorni, tappe e meteo si vedono subito, salvare serve solo per tenerla.
   const outingDraft = useOutingDraft(routeCoords, outingId, searchParams.get("group"));
+  const alongMedia = useAlongMedia(isExplore ? null : routeCoords, activity);
+  const alongPhotos = alongMedia.photos;
+  const alongHighlightsGeoJson = alongMedia.highlightsGeoJson;
+  const alongPhotosGeoJson = useMemo(() => (alongPhotos.length ? photosToGeoJson(alongPhotos) : null), [alongPhotos]);
+  const [planHighlightId, setPlanHighlightId] = useState<string | null>(null);
+  /** Highlight come tappa: inserito nel punto del percorso più vicino. */
+  const addHighlightWaypoint = useCallback(
+    (h: { lng: number; lat: number; name: string }) => {
+      commitWaypoints((wps) => {
+        const wp = { lng: h.lng, lat: h.lat, label: h.name };
+        if (wps.length < 2) return [...wps, wp];
+        const { index } = insertIndexForPoint(wps, { lng: h.lng, lat: h.lat }, routeCoordsRef.current);
+        return [...wps.slice(0, index), wp, ...wps.slice(index)];
+      });
+    },
+    [commitWaypoints],
+  );
   /** Scheda Gita aperta su una traccia salvata: i luoghi scelti diventano soste, la traccia non cambia. */
   const outingMode = tab === "outing" && !!routeId && !isExplore;
   const saveOuting = async () => {
@@ -1535,6 +1555,19 @@ export default function V2RouteBuilder({ username }: Props) {
 
           {hasRoute ? (
             <>
+              <SectionTitle>Foto e highlights della community</SectionTitle>
+              <V2AlongMediaPanel
+                photos={alongMedia.photos}
+                highlights={alongMedia.highlights}
+                busy={alongMedia.busy}
+                onOpenPhoto={(i) => setLightbox({ ids: alongMedia.photos.map((p) => p.id), index: i })}
+                onOpenHighlight={(h) => {
+                  setPlanHighlightId(h.id);
+                  flyKeyRef.current += 1;
+                  setFlyTo({ lng: h.lng, lat: h.lat, zoom: 15, key: flyKeyRef.current });
+                }}
+                onAddHighlight={addHighlightWaypoint}
+              />
               <SectionTitle>Lungo il percorso</SectionTitle>
               <V2AlongRoutePanel
                 routeCoords={routeCoords}
@@ -1798,9 +1831,11 @@ export default function V2RouteBuilder({ username }: Props) {
           untroddenGeoJson={isExplore ? null : untroddenGeo}
           exploreGeoJson={isExplore ? explore.displayGeoJson : undefined}
           routeMarkersGeoJson={isExplore ? explore.routeMarkersGeoJson : undefined}
-          photosGeoJson={isExplore ? (explore.photosVisible ? explore.photosGeoJson : null) : undefined}
-          onPhotoSelect={isExplore ? (ids, index) => setLightbox({ ids, index }) : undefined}
+          photosGeoJson={isExplore ? (explore.photosVisible ? explore.photosGeoJson : null) : alongPhotosGeoJson}
+          onPhotoSelect={(ids, index) => setLightbox({ ids, index })}
           segmentsGeoJson={isExplore && explore.segmentsVisible ? explore.segmentsGeoJson : null}
+          highlightsGeoJson={isExplore ? (explore.highlightsVisible ? explore.highlightsGeoJson : null) : alongHighlightsGeoJson}
+          onHighlightSelect={isExplore ? explore.setSelectedHighlightId : setPlanHighlightId}
           onSegmentSelect={isExplore ? (id) => router.push(`/v2/segmenti/${encodeURIComponent(id)}`) : undefined}
           onRouteSelect={isExplore ? explore.setSelectedRouteId : undefined}
           showWaypoints={!isExplore}
@@ -2165,10 +2200,45 @@ export default function V2RouteBuilder({ username }: Props) {
         />
       ) : null}
 
+      {isExplore && explore.createHighlightAt ? (
+        <V2HighlightCreateSheet
+          lng={explore.createHighlightAt.lng}
+          lat={explore.createHighlightAt.lat}
+          defaultSport={explore.activity === "all" ? undefined : explore.activity}
+          onClose={() => explore.setCreateHighlightAt(null)}
+          onCreated={(h) => {
+            explore.setCreateHighlightAt(null);
+            explore.setSelectedHighlightId(h.id);
+            if (explore.mapBbox) void explore.loadOverlays(explore.mapBbox);
+          }}
+        />
+      ) : null}
+
+      {isExplore && explore.selectedHighlightId ? (
+        <V2HighlightSheet
+          highlightId={explore.selectedHighlightId}
+          onClose={() => explore.setSelectedHighlightId(null)}
+          onChanged={() => {
+            if (explore.mapBbox) void explore.loadOverlays(explore.mapBbox);
+          }}
+        />
+      ) : null}
+
+      {!isExplore && planHighlightId ? (
+        <V2HighlightSheet
+          highlightId={planHighlightId}
+          onClose={() => setPlanHighlightId(null)}
+          onAddToRoute={(h) => {
+            addHighlightWaypoint(h);
+            setPlanHighlightId(null);
+          }}
+        />
+      ) : null}
+
       {lightbox ? (
         <V2PhotoLightbox
           photos={lightbox.ids
-            .map((id) => explore.photos.find((p) => p.id === id))
+            .map((id) => explore.photos.find((p) => p.id === id) ?? alongPhotos.find((p) => p.id === id))
             .filter((p): p is NonNullable<typeof p> => !!p)}
           startIndex={lightbox.index}
           onClose={() => setLightbox(null)}
