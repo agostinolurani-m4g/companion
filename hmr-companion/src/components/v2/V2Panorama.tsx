@@ -15,6 +15,7 @@ import {
   type PanoramaPeak,
   type VisiblePeak,
 } from "@/lib/panorama";
+import { sunPath, sunPosition, terrainSunTimes, type SunPathPoint } from "@/lib/sun";
 
 const PX_PER_DEG = 11;
 const WRAP_DEG = 40;
@@ -33,7 +34,7 @@ function bboxAround(lng: number, lat: number, km: number) {
 }
 
 /** Bussola del telefono (iOS chiede il permesso; altrove `deviceorientationabsolute`). */
-async function startCompass(onHeading: (deg: number) => void): Promise<() => void> {
+async function startCompass(onHeading: (deg: number, beta: number | null) => void): Promise<() => void> {
   type IOSOrientation = typeof DeviceOrientationEvent & { requestPermission?: () => Promise<"granted" | "denied"> };
   const D = (typeof DeviceOrientationEvent !== "undefined" ? DeviceOrientationEvent : null) as IOSOrientation | null;
   if (!D) throw new Error("Bussola non disponibile su questo dispositivo");
@@ -41,8 +42,8 @@ async function startCompass(onHeading: (deg: number) => void): Promise<() => voi
     throw new Error("Permesso bussola negato");
   }
   const handler = (e: DeviceOrientationEvent & { webkitCompassHeading?: number }) => {
-    if (typeof e.webkitCompassHeading === "number") onHeading(e.webkitCompassHeading);
-    else if (e.absolute && e.alpha != null) onHeading((360 - e.alpha) % 360);
+    if (typeof e.webkitCompassHeading === "number") onHeading(e.webkitCompassHeading, e.beta);
+    else if (e.absolute && e.alpha != null) onHeading((360 - e.alpha) % 360, e.beta);
   };
   const evt = "ondeviceorientationabsolute" in window ? "deviceorientationabsolute" : "deviceorientation";
   window.addEventListener(evt, handler as EventListener);
@@ -54,17 +55,25 @@ function PanoramaView({
   selected,
   onSelect,
   heading,
+  sun,
+  sunNow,
 }: {
   pano: Panorama;
   selected: VisiblePeak | null;
   onSelect: (p: VisiblePeak) => void;
   heading: number | null;
+  sun: SunPathPoint[] | null;
+  sunNow: { azimuth: number; elevation: number } | null;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const n = pano.horizon.length;
   const step = pano.stepDeg;
   const labels = useMemo(() => declutterPeaks(pano.peaks, 1.6, 120), [pano]);
-  const maxA = Math.max(3, ...Array.from(pano.horizon), ...labels.map((p) => p.angle)) + 0.8;
+  const sunUp = useMemo(() => (sun ?? []).filter((p) => p.elevation > -2), [sun]);
+  const terrainMax = Math.max(3, ...Array.from(pano.horizon), ...labels.map((p) => p.angle));
+  // Il sole alto d'estate schiaccerebbe le montagne: si allarga la scala solo fino a +14°, il resto esce in alto.
+  const sunMax = sunUp.length ? Math.max(...sunUp.map((p) => p.elevation)) : -90;
+  const maxA = Math.max(terrainMax, Math.min(sunMax, terrainMax + 14)) + 0.8;
   const minA = Math.max(-8, Math.min(...Array.from(pano.horizon)) - 1.2);
   const W = (360 + 2 * WRAP_DEG) * PX_PER_DEG;
   const x = (az: number) => (az + WRAP_DEG) * PX_PER_DEG;
@@ -154,12 +163,233 @@ function PanoramaView({
               );
             }),
         )}
+        {sunUp.length > 1
+          ? [-360, 0, 360].map((k) => {
+              let d = "";
+              let prevAz: number | null = null;
+              for (const p of sunUp) {
+                const az = p.azimuth + k;
+                // L'azimut non torna indietro: un salto vuol dire che si esce dalla fascia disegnata.
+                d += `${prevAz == null || Math.abs(az - prevAz) > 30 ? "M" : "L"}${x(az).toFixed(1)},${y(p.elevation).toFixed(1)}`;
+                prevAz = az;
+              }
+              return <path key={`sun-${k}`} d={d} fill="none" stroke="#f59e0b" strokeWidth={1.6} strokeDasharray="5 4" opacity={0.95} />;
+            })
+          : null}
+        {sunUp
+          .filter((p) => new Date(p.time).getMinutes() === 0)
+          .flatMap((p) =>
+            [-360, 0, 360].map((k) => {
+              const az = p.azimuth + k;
+              if (az < -WRAP_DEG || az > 360 + WRAP_DEG) return null;
+              const hidden = p.elevation <= angleAt(pano.horizon, p.azimuth);
+              return (
+                <g key={`h-${p.time}-${k}`} opacity={hidden ? 0.45 : 1}>
+                  <circle cx={x(az)} cy={y(p.elevation)} r={2.6} fill="#f59e0b" stroke="#fff" strokeWidth={0.8} />
+                  <text x={x(az)} y={y(p.elevation) - 5} fontSize={9.5} fontWeight={600} textAnchor="middle" fill="#92400e">
+                    {new Date(p.time).getHours()}
+                  </text>
+                </g>
+              );
+            }),
+          )}
+        {sunNow && sunNow.elevation > minA
+          ? [-360, 0, 360].map((k) => (
+              <circle key={`now-${k}`} cx={x(sunNow.azimuth + k)} cy={y(sunNow.elevation)} r={7} fill="#fbbf24" stroke="#fff" strokeWidth={1.5} />
+            ))
+          : null}
         {heading != null ? (
           <line x1={x(heading)} x2={x(heading)} y1={0} y2={H} stroke="#dc2626" strokeDasharray="4 4" strokeWidth={1.5} />
         ) : null}
       </svg>
     </div>
   );
+}
+
+const AR_FOV_KEY = "hmr-pano-ar-fov";
+
+function wrap180(d: number): number {
+  return ((((d + 180) % 360) + 360) % 360) - 180;
+}
+
+/**
+ * Panorama in realtà aumentata: fotocamera posteriore a schermo intero, nomi
+ * delle vette posizionati con bussola (azimut) e inclinazione del telefono.
+ * Campo visivo e correzione della bussola regolabili (ogni telefono è diverso).
+ */
+function PanoramaAR({ pano, sun, onClose }: { pano: Panorama; sun: SunPathPoint[] | null; onClose: () => void }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [orient, setOrient] = useState<{ heading: number; pitch: number } | null>(null);
+  const [fov, setFov] = useState(52);
+  const [offsetDeg, setOffsetDeg] = useState(0);
+  const [size, setSize] = useState({ w: 360, h: 640 });
+  const labels = useMemo(() => declutterPeaks(pano.peaks, 1.2, 150), [pano]);
+
+  useEffect(() => {
+    try {
+      const v = Number(localStorage.getItem(AR_FOV_KEY));
+      if (v >= 30 && v <= 90) setFov(v);
+    } catch {
+      /* preferenza facoltativa */
+    }
+  }, []);
+
+  useEffect(() => {
+    let stream: MediaStream | null = null;
+    let stop: (() => void) | null = null;
+    let alive = true;
+    void (async () => {
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) throw new Error("Fotocamera non disponibile in questo browser");
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
+        if (!alive) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play().catch(() => undefined);
+        }
+        let last = 0;
+        // Media mobile sull'azimut (attraverso 0/360) per togliere il tremolio della bussola.
+        let hx = 0;
+        let hy = 0;
+        let pitchS: number | null = null;
+        stop = await startCompass((h, beta) => {
+          const r = (h * Math.PI) / 180;
+          hx = hx * 0.8 + Math.sin(r) * 0.2;
+          hy = hy * 0.8 + Math.cos(r) * 0.2;
+          const pitch = beta == null ? 0 : beta - 90;
+          pitchS = pitchS == null ? pitch : pitchS * 0.8 + pitch * 0.2;
+          const t = Date.now();
+          if (t - last < 50) return;
+          last = t;
+          setOrient({ heading: ((Math.atan2(hx, hy) * 180) / Math.PI + 360) % 360, pitch: pitchS });
+        });
+        if (!alive) stop();
+      } catch (e) {
+        setErr(e instanceof Error ? e.message : "Fotocamera o bussola non disponibili");
+      }
+    })();
+    return () => {
+      alive = false;
+      stop?.();
+      stream?.getTracks().forEach((t) => t.stop());
+    };
+  }, []);
+
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setSize({ w: el.clientWidth, h: el.clientHeight }));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const saveFov = (v: number) => {
+    setFov(v);
+    try {
+      localStorage.setItem(AR_FOV_KEY, String(v));
+    } catch {
+      /* facoltativo */
+    }
+  };
+
+  const heading = orient ? (orient.heading + offsetDeg + 360) % 360 : null;
+  const vfov = (fov * size.h) / size.w;
+  const px = (az: number) => size.w / 2 + (wrap180(az - (heading ?? 0)) / fov) * size.w;
+  const py = (a: number) => size.h / 2 - ((a - (orient?.pitch ?? 0)) / vfov) * size.h;
+
+  let horizonD = "";
+  if (heading != null) {
+    const n = pano.horizon.length;
+    for (let dx = -fov / 2 - 2; dx <= fov / 2 + 2; dx += pano.stepDeg) {
+      const az = (heading + dx + 360) % 360;
+      const a = pano.horizon[Math.round(az / pano.stepDeg) % n];
+      horizonD += `${horizonD ? "L" : "M"}${(size.w / 2 + (dx / fov) * size.w).toFixed(1)},${py(a).toFixed(1)}`;
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[80] bg-black text-white" role="dialog" aria-label="Panorama in realtà aumentata">
+      <div ref={boxRef} className="absolute inset-0 overflow-hidden">
+        <video ref={videoRef} className="absolute inset-0 h-full w-full object-cover" playsInline muted />
+        {heading != null ? (
+          <svg className="absolute inset-0" width={size.w} height={size.h}>
+            <path d={horizonD} fill="none" stroke="#fff" strokeWidth={1.2} strokeDasharray="6 5" opacity={0.6} />
+            {sun
+              ?.filter((p) => p.elevation > -1 && Math.abs(wrap180(p.azimuth - heading)) < fov / 2 + 5)
+              .map((p) => (
+                <circle key={p.time} cx={px(p.azimuth)} cy={py(p.elevation)} r={new Date(p.time).getMinutes() === 0 ? 3 : 1.4} fill="#fbbf24" />
+              ))}
+            {labels
+              .filter((p) => Math.abs(wrap180(p.azimuth - heading)) < fov / 2 + 3)
+              .map((p) => {
+                const x = px(p.azimuth);
+                const y = py(p.angle);
+                const top = Math.max(40, y - 70);
+                return (
+                  <g key={p.id}>
+                    <line x1={x} x2={x} y1={y - 4} y2={top} stroke="#fff" strokeWidth={1} opacity={0.85} />
+                    <circle cx={x} cy={y} r={3} fill="#fff" stroke="#0f172a" />
+                    <text
+                      transform={`translate(${x + 3},${top - 4}) rotate(-50)`}
+                      fontSize={13}
+                      fontWeight={600}
+                      fill="#fff"
+                      stroke="#0f172a"
+                      strokeWidth={3}
+                      paintOrder="stroke"
+                    >
+                      {p.name} {p.ele_used} m · {(p.distance_m / 1000).toFixed(p.distance_m < 10_000 ? 1 : 0)} km
+                    </text>
+                  </g>
+                );
+              })}
+          </svg>
+        ) : null}
+      </div>
+      <div className="absolute inset-x-0 top-0 flex items-center justify-between gap-2 bg-gradient-to-b from-black/70 to-transparent p-3 pt-[max(12px,env(safe-area-inset-top))]">
+        <span className="text-sm font-semibold">
+          {heading != null && orient
+            ? `${Math.round(heading)}° · inclinazione ${Math.round(orient.pitch)}°`
+            : "Punta il telefono verso le montagne…"}
+        </span>
+        <button type="button" className="rounded-full bg-white/20 px-3 py-1 text-sm" onClick={onClose}>
+          Chiudi
+        </button>
+      </div>
+      <div className="absolute inset-x-0 bottom-0 space-y-1.5 bg-gradient-to-t from-black/75 to-transparent p-3 pb-[max(12px,env(safe-area-inset-bottom))] text-[12px]">
+        {err ? <p className="text-red-300">{err}</p> : null}
+        <label className="flex items-center gap-2">
+          Campo visivo {fov}°
+          <input type="range" min={30} max={90} value={fov} onChange={(e) => saveFov(Number(e.target.value))} className="flex-1" />
+        </label>
+        <label className="flex items-center gap-2">
+          Correggi bussola {offsetDeg > 0 ? "+" : ""}
+          {offsetDeg}°
+          <input type="range" min={-30} max={30} value={offsetDeg} onChange={(e) => setOffsetDeg(Number(e.target.value))} className="flex-1" />
+        </label>
+        <p className="text-white/70">La linea tratteggiata è l&apos;orizzonte calcolato: allineala alle creste con i due cursori.</p>
+      </div>
+    </div>
+  );
+}
+
+function hhmm(t: number | null): string {
+  return t == null ? "—" : new Date(t).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
+}
+
+function todayIso(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function dayFromIso(iso: string): Date {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, (m || 1) - 1, d || 1);
 }
 
 export default function V2Panorama({ initial }: { initial: { lng: number; lat: number } | null }) {
@@ -170,7 +400,31 @@ export default function V2Panorama({ initial }: { initial: { lng: number; lat: n
   const [selected, setSelected] = useState<VisiblePeak | null>(null);
   const [heading, setHeading] = useState<number | null>(null);
   const [peaksLoading, setPeaksLoading] = useState(false);
+  const [arOpen, setArOpen] = useState(false);
+  const [sunDay, setSunDay] = useState<string>(() => todayIso());
+  const [now, setNow] = useState(() => Date.now());
   const stopCompass = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const sun = useMemo(
+    () => (pano ? sunPath(dayFromIso(sunDay), pano.observer.lat, pano.observer.lng, 10) : null),
+    [pano, sunDay],
+  );
+  const sunTimes = useMemo(() => {
+    if (!pano) return null;
+    const n = pano.horizon.length;
+    // Passo di 2 minuti per orari precisi; il disegno usa quello da 10.
+    const fine = sunPath(dayFromIso(sunDay), pano.observer.lat, pano.observer.lng, 2);
+    return terrainSunTimes(fine, (az) => pano.horizon[Math.round(az / pano.stepDeg) % n]);
+  }, [pano, sunDay]);
+  const sunNow = useMemo(
+    () => (pano && sunDay === todayIso() ? sunPosition(now, pano.observer.lat, pano.observer.lng) : null),
+    [pano, sunDay, now],
+  );
 
   useEffect(() => () => stopCompass.current?.(), []);
 
@@ -291,6 +545,11 @@ export default function V2Panorama({ initial }: { initial: { lng: number; lat: n
             <button type="button" className="ui-btn ui-btn-sm" aria-pressed={heading != null} onClick={toggleCompass}>
               <Icon name="compass" size={14} /> {heading != null ? `${Math.round(heading)}°` : "Bussola"}
             </button>
+            {pano && status === "ready" ? (
+              <button type="button" className="ui-btn ui-btn-sm" onClick={() => setArOpen(true)} title="Nomi delle vette sulla fotocamera">
+                <Icon name="panorama" size={14} /> AR
+              </button>
+            ) : null}
           </div>
         </div>
       </div>
@@ -298,7 +557,26 @@ export default function V2Panorama({ initial }: { initial: { lng: number; lat: n
       <div className="border-t border-[color:var(--hmr-border)] bg-[color:var(--hmr-surface)]">
         {status === "ready" && pano ? (
           <>
-            <PanoramaView pano={pano} selected={selected} onSelect={setSelected} heading={heading} />
+            <PanoramaView pano={pano} selected={selected} onSelect={setSelected} heading={heading} sun={sun} sunNow={sunNow} />
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-[color:var(--hmr-border)] px-3 py-1.5 text-[11.5px]">
+              <span className="inline-flex items-center gap-1 font-medium">
+                <span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-400" /> Sole
+              </span>
+              <input
+                type="date"
+                value={sunDay}
+                onChange={(e) => e.target.value && setSunDay(e.target.value)}
+                className="rounded border border-[color:var(--hmr-border)] bg-transparent px-1 py-0.5 text-[11.5px]"
+                aria-label="Giorno per il percorso del sole"
+              />
+              {sunTimes?.sunrise != null ? (
+                <span>
+                  Sole da qui: <b>{hhmm(sunTimes.sunrise)}</b> → <b>{hhmm(sunTimes.sunset)}</b> · {sunTimes.hours} h sopra le creste
+                </span>
+              ) : (
+                <span>In questo giorno il sole non supera le creste</span>
+              )}
+            </div>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-[11.5px] text-[color:var(--hmr-muted)]">
               <span>
                 Da {pano.observer.ele} m · {peaksLoading ? "carico i nomi delle vette…" : `${pano.peaks.length} vette visibili`}
@@ -325,6 +603,7 @@ export default function V2Panorama({ initial }: { initial: { lng: number; lat: n
         )}
         {msg && status !== "error" ? <p className="px-3 pb-2 text-[11.5px] text-[color:var(--hmr-danger)]">{msg}</p> : null}
       </div>
+      {arOpen && pano ? <PanoramaAR pano={pano} sun={sun} onClose={() => setArOpen(false)} /> : null}
     </div>
   );
 }

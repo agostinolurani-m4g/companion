@@ -39,3 +39,59 @@ export function sunTimes(lat: number, lng: number, date: string): SunTimes {
     daylight_hours: Math.round(((2 * omega) / 15) * 10) / 10,
   };
 }
+
+const J1970 = 2440588;
+const DAY_MS = 86_400_000;
+const OBLIQUITY = 23.4397 * RAD;
+
+/** Posizione del sole: azimut da nord in senso orario e altezza sull'orizzonte astronomico (gradi). */
+export function sunPosition(time: Date | number, lat: number, lng: number): { azimuth: number; elevation: number } {
+  const d = (typeof time === "number" ? time : time.getTime()) / DAY_MS - 0.5 + J1970 - JD_J2000;
+  const M = RAD * (357.5291 + 0.98560028 * d);
+  const C = RAD * (1.9148 * Math.sin(M) + 0.02 * Math.sin(2 * M) + 0.0003 * Math.sin(3 * M));
+  const L = M + C + RAD * 102.9372 + Math.PI;
+  const dec = Math.asin(Math.sin(OBLIQUITY) * Math.sin(L));
+  const ra = Math.atan2(Math.sin(L) * Math.cos(OBLIQUITY), Math.cos(L));
+  const phi = RAD * lat;
+  const H = RAD * (280.16 + 360.9856235 * d) + RAD * lng - ra;
+  const alt = Math.asin(Math.sin(phi) * Math.sin(dec) + Math.cos(phi) * Math.cos(dec) * Math.cos(H));
+  const azSouth = Math.atan2(Math.sin(H), Math.cos(H) * Math.sin(phi) - Math.tan(dec) * Math.cos(phi));
+  return { azimuth: ((azSouth / RAD + 180) % 360 + 360) % 360, elevation: alt / RAD };
+}
+
+export type SunPathPoint = { time: number; azimuth: number; elevation: number };
+
+/** Percorso del sole nel giorno (00:00–24:00 del fuso del browser per `day`), ogni `stepMin` minuti. */
+export function sunPath(day: Date, lat: number, lng: number, stepMin = 10): SunPathPoint[] {
+  const start = new Date(day);
+  start.setHours(0, 0, 0, 0);
+  const out: SunPathPoint[] = [];
+  for (let m = 0; m <= 24 * 60; m += stepMin) {
+    const time = start.getTime() + m * 60_000;
+    out.push({ time, ...sunPosition(time, lat, lng) });
+  }
+  return out;
+}
+
+/**
+ * Alba e tramonto "veri" dietro le montagne: il primo e l'ultimo istante in cui
+ * il sole sta sopra la linea dell'orizzonte reale (`horizonAt(azimut)` in gradi).
+ */
+export function terrainSunTimes(
+  path: SunPathPoint[],
+  horizonAt: (azimuth: number) => number,
+): { sunrise: number | null; sunset: number | null; hours: number } {
+  let sunrise: number | null = null;
+  let sunset: number | null = null;
+  let up = 0;
+  for (let i = 0; i < path.length; i++) {
+    const p = path[i];
+    const visible = p.elevation > horizonAt(p.azimuth);
+    if (visible) {
+      if (sunrise == null) sunrise = p.time;
+      sunset = p.time;
+      if (i > 0) up += p.time - path[i - 1].time;
+    }
+  }
+  return { sunrise, sunset, hours: Math.round((up / 3_600_000) * 10) / 10 };
+}
