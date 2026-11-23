@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { photosToGeoJson, type MapPhoto } from "@/lib/photo-geo";
 import { segmentsToGeoJson } from "@/lib/segments/geo";
 import type { SegmentDto } from "@/lib/segments/serialize";
-import { highlightsToGeoJson, type HighlightDto } from "@/lib/highlights/serialize";
+import { highlightsToGeoJson, type HighlightDto } from "@/lib/highlights/types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { V2MapClickTarget } from "@/components/v2/V2PlanMap";
 import type { UserRouteActivity } from "@/lib/db";

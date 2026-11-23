@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import V2PhotoLightbox from "@/components/v2/V2PhotoLightbox";
 import Icon from "@/components/v2/ui/Icon";
 import { fetchJson } from "@/lib/fetch-json";
-import type { HighlightDto, HighlightPhotoDto } from "@/lib/highlights/serialize";
+import type { HighlightDto, HighlightPhotoDto } from "@/lib/highlights/types";
 import { activityLabel, isUserRouteActivity, USER_ROUTE_ACTIVITIES } from "@/lib/sports";
 
 function sportName(s: string) {

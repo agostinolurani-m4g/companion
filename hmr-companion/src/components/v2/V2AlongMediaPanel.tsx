@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Icon from "@/components/v2/ui/Icon";
 import { fetchJson } from "@/lib/fetch-json";
-import { highlightsToGeoJson, type HighlightDto } from "@/lib/highlights/serialize";
+import { highlightsToGeoJson, type HighlightDto } from "@/lib/highlights/types";
 import type { MapPhoto } from "@/lib/photo-geo";
 
 export type AlongPhoto = MapPhoto & { along_km: number; dist_m: number };

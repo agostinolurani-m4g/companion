@@ -2,24 +2,9 @@ import { getUserPhoto, listUserPhotosInBbox } from "@/lib/db";
 import { personLabel } from "@/lib/segments/serialize";
 import { avatarUrl } from "@/lib/social-labels";
 import type { HighlightWithVotes } from "./store";
+import type { HighlightDto, HighlightPhotoDto } from "./types";
 
-export type HighlightPhotoDto = { id: string; url: string | null; caption: string; owner: string; lng: number; lat: number };
-
-export type HighlightDto = {
-  id: string;
-  name: string;
-  tip: string;
-  sport: string;
-  lat: number;
-  lng: number;
-  votes: number;
-  voted: boolean;
-  mine: boolean;
-  owner: { username: string; display_name: string; avatar_url: string | null };
-  cover_url: string | null;
-  created_at: number;
-  photos?: HighlightPhotoDto[];
-};
+export type { HighlightDto, HighlightPhotoDto } from "./types";
 
 /** Foto della community entro ~120 m dall'highlight (galleria della scheda). */
 export function photosNear(lat: number, lng: number, radiusM = 120, limit = 12): HighlightPhotoDto[] {
@@ -52,16 +37,5 @@ export function serializeHighlight(h: HighlightWithVotes, viewer: string, opts: 
     cover_url: cover ? avatarUrl(cover.photo_path) : (photos?.[0]?.url ?? null),
     created_at: h.created_at,
     ...(photos ? { photos } : {}),
-  };
-}
-
-export function highlightsToGeoJson(items: Pick<HighlightDto, "id" | "name" | "votes" | "lat" | "lng">[]): GeoJSON.FeatureCollection {
-  return {
-    type: "FeatureCollection",
-    features: items.map((h) => ({
-      type: "Feature",
-      properties: { highlightId: h.id, name: h.name, votes: h.votes },
-      geometry: { type: "Point", coordinates: [h.lng, h.lat] },
-    })),
   };
 }

@@ -33,15 +33,24 @@ precisione, gruppi. Tutto gratis e su dati aperti (OSM, DEM Terrarium).
 | Nessun modo di sapere "che vetta è quella?" | PeakFinder / PeakVisor | **Panorama vette** (`/v2/panorama`, oppure "Panorama da qui" su vette, passi, rifugi, punti panoramici): orizzonte calcolato dal DEM fino a 80 km con curvatura e rifrazione, creste a tono per distanza, vette visibili con quota e distanza (OSM via DB locale + Overpass con cache), **bussola del telefono** per orientare il panorama |
 | Esposizioni solo dai metadati camptocamp; pendenza solo come overlay | PeakVisor (riepilogo esposizioni), Skitourenguru (rischio per tratto) | **Terreno valanghivo** nel planner scialpinismo: pendenza ed esposizione del **versante** in ogni punto dal DEM, rosa delle esposizioni (tratti ≥30° evidenziati), classi di pendenza, **rischio per tratto a 3 colori** incrociando il bollettino del giorno (grado per quota/esposizione, problemi valanghivi) con un metodo di riduzione semplificato; opzione "Colora la traccia per rischio" |
 
-## Prossimi passi consigliati (non ancora fatti)
+## Secondo giro (novembre 2026): fatto
 
-1. **Highlights community** (Komoot): punti/tratti consigliati con foto e voto, da proporre in pianificazione.
-2. **Foto lungo il percorso** in pianificazione (strip di foto entro ~300 m dalla traccia).
-3. **Mappe offline** (Mountain Maps, Gaia): oggi c'è solo cache PWA; servirebbe download di un'area (tile raster + DEM).
-4. **Layer altezza neve** (Mountain Maps) e linee di sci tipo FATMAP.
-5. **Panorama in AR** sulla fotocamera (PeakFinder) e linea del sole sul panorama.
-6. **Segmenti**: notifiche "nuovo record / hai perso la corona", segmenti in discesa per MTB/sci, filtri per sport e genere opzionale.
-7. **Skitourenguru completo**: forma e dimensione del pendio e terreno sopra la traccia nel calcolo del rischio.
+| Lacuna | Ispirazione | Implementato |
+|---|---|---|
+| Nessun "posto da non perdere" condiviso | Komoot Highlights | **Highlights** (Esplora → "Consiglia un posto"): nome, consiglio, sport, copertina dalle foto vicine, "consigliato da N" con voto. Stelle sulla mappa; nel planner l'elenco degli highlights entro 400 m dal percorso con **"Tappa"** per passarci |
+| Foto solo sulla mappa di Esplora | Komoot | **Foto lungo il percorso** nel planner: striscia delle foto entro 300 m con il km, miniature sulla mappa, galleria |
+| Offline solo come cache PWA del v1 | Gaia, Mountain Maps | **Mappe offline** (Livelli → Mappe offline): scarica l'area visibile (carta vettoriale fino a z14, DEM per rilievo e curve, font), avanzamento, elenco e cancellazione; pagine e API v2 già viste restano disponibili senza rete |
+| Niente neve, niente linee di discesa | Mountain Maps, FATMAP | Livelli **Altezza neve** (modello Open-Meteo su griglia ~2 km, cache 3 h) e **Linee di sci** (discese degli itinerari pubblici colorate per grado Toponeige) |
+| Panorama solo disegnato | PeakFinder | **Linea del sole** sul panorama con ore, scelta del giorno e **alba/tramonto reali dietro le creste**; modalità **AR** con fotocamera, bussola e inclinazione (campo visivo e correzione regolabili) |
+| Segmenti senza notizie, solo salite | Strava | **Notifiche** (campanella): nuovo record personale, corona presa e persa. **Discese** proposte per MTB/sci, filtri per sport e tipo, classifiche per **genere facoltativo** (impostato nel profilo) |
+| Rischio solo dalla pendenza sotto i piedi | Skitourenguru | **Dimensione** del pendio ripido collegato, **forma** (canale/conca vs cresta) e **pendii a monte** entro 500 m visti con angolo ≥ 22° (una valanga può arrivare anche su una traccia in piano) |
+
+## Prossimi passi possibili
+
+1. Highlights come **tratti** (non solo punti) e proposta automatica durante il routing.
+2. Offline: anche il **rilievo pre-calcolato** e le sovrapposizioni raster (pendenza) nell'area scaricata.
+3. Neve: osservazioni delle stazioni (dove ci sono dati aperti) accanto al modello.
+4. AR: calibrazione automatica della bussola allineando l'orizzonte calcolato.
 
 ## Fonti
 
