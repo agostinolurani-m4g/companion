@@ -189,6 +189,19 @@ export default function V2SkiTerrainPanel({ ascentCoords, descentCoords, onRiskS
             ))}
           </ul>
           <div className="text-[10.5px] text-[color:var(--hmr-muted)]">Max {summary.max_slope ?? "—"}° · rosso nella rosa = tratti ≥ 30°</div>
+          <ul className="space-y-0.5 text-[10.5px]">
+            <li title="Tratti in piano o poco ripidi sotto un pendio ≥ 30° da cui una valanga può arrivare (angolo ≥ 22°)">
+              Sotto pendii ripidi a monte: <b>{summary.exposed_above_km.toFixed(2)} km</b>
+            </li>
+            <li title="Canali e conche: la neve si accumula e il seppellimento è più profondo">
+              In canali o conche: <b>{summary.gully_km.toFixed(2)} km</b>
+            </li>
+            {summary.max_steep_area > 0 ? (
+              <li>
+                Pendio ≥ 30° più grande: <b>{summary.max_steep_area >= 10_000 ? `${(summary.max_steep_area / 10_000).toFixed(1)} ha` : `${Math.round(summary.max_steep_area / 100) * 100} m²`}</b>
+              </li>
+            ) : null}
+          </ul>
         </div>
       </div>
 
@@ -200,8 +213,11 @@ export default function V2SkiTerrainPanel({ ascentCoords, descentCoords, onRiskS
               {flagged.map((s, i) => (
                 <li key={i} className="flex items-center gap-1.5">
                   <span className="inline-block h-2 w-2 rounded-full" style={{ background: RISK_COLORS[s.level] }} />
-                  {s.leg} km {s.kmStart.toFixed(2)}–{s.kmEnd.toFixed(2)} · versante fino a {Math.round(s.maxSlope)}° · rischio{" "}
-                  {RISK_LABELS[s.level]}
+                  <span>
+                    {s.leg} km {s.kmStart.toFixed(2)}–{s.kmEnd.toFixed(2)} · versante fino a {Math.round(s.maxSlope)}° · rischio{" "}
+                    {RISK_LABELS[s.level]}
+                    {s.reasons.length ? <span className="text-[color:var(--hmr-muted)]"> · {s.reasons.join(", ")}</span> : null}
+                  </span>
                 </li>
               ))}
             </ul>
@@ -217,7 +233,8 @@ export default function V2SkiTerrainPanel({ ascentCoords, descentCoords, onRiskS
         <p className="text-[11px] text-[color:var(--hmr-muted)]">Nessun bollettino per la zona oggi: mostro solo pendenze ed esposizioni.</p>
       )}
       <p className="text-[10px] leading-snug text-[color:var(--hmr-faint)]">
-        Calcolo indicativo (DEM ~15 m, metodo di riduzione semplificato sul bollettino del punto di partenza). Non
+        Calcolo indicativo (DEM ~15 m, metodo di riduzione semplificato sul bollettino del punto di partenza; considera
+        anche dimensione e forma del pendio e i pendii a monte entro 500 m). Non
         sostituisce la valutazione sul posto né la formazione.
       </p>
     </section>
